@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@calc3d/api", "start"],
+      "port": 3001,
+      "autoPort": false,
+      "env": { "PORT": "3001", "WEB_ORIGIN": "http://localhost:5180" }
+    }
+  ]
+}

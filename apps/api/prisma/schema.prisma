@@ -1,0 +1,642 @@
+// Schema de Prisma para Calc3D.
+// Multi-tenant: cada catálogo y presupuesto pertenece a una Organization.
+// Dinero como Decimal(12,4) (sub-centavo); el motor de cálculo usa decimal.js.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  COLLABORATOR
+}
+
+// Plan de la organización (Fase 7 SaaS). TRIAL al registrarse (14 días); tras un
+// pago aprobado pasa a TALLER/PRO con vencimiento. Vencido = solo lectura.
+enum PlanTier {
+  TRIAL
+  TALLER
+  PRO
+}
+
+// Método de pago manual reportado por el taller (cobro analógico, sin pasarela).
+enum PaymentMethod {
+  PAGO_MOVIL
+  ZELLE
+  TRANSFER
+  CASH
+  OTHER
+}
+
+// Estado de un reporte de pago manual (lo aprueba/rechaza el superadmin).
+enum PaymentReportStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+}
+
+// Tipo de contacto en el directorio/CRM (Fase 5). CLIENT es el default para no
+// romper los clientes existentes; SUPPLIER/ALLY/COMPETITOR se activan en la UI.
+enum ContactType {
+  CLIENT
+  SUPPLIER
+  ALLY
+  COMPETITOR
+}
+
+// Venta: COUNTER = mostrador/venta directa, ENCARGO = pedido personalizado.
+enum SaleKind {
+  COUNTER
+  ENCARGO
+}
+
+// Categorías de gasto general (la impresora es EQUIPMENT + isInvestment).
+enum ExpenseCategory {
+  EQUIPMENT
+  CONSUMABLE
+  MAINTENANCE
+  SHIPPING
+  OTHER
+  ADVERTISING
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  // Estado de plan (Fase 7). TRIAL con `trialEndsAt`; tras pago aprobado, TALLER/PRO
+  // con `planExpiresAt`. El plan está ACTIVO si la fecha límite vigente > ahora.
+  plan          PlanTier  @default(TRIAL)
+  trialEndsAt   DateTime?
+  planExpiresAt DateTime?
+
+  members           Membership[]
+  settings           Settings?
+  materials          Material[]
+  printers           Printer[]
+  components         Component[]
+  clients            Client[]
+  providers          Provider[]
+  quotes             Quote[]
+  sales              Sale[]
+  expenses           Expense[]
+  exchangeRates      ExchangeRate[]
+  orders             Order[]
+  products           Product[]
+  paymentReports     PaymentReport[]
+  catalogOptions     CatalogOption[]
+  campaigns          Campaign[]
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  emailVerified Boolean        @default(false)
+  // Superadmin de la PLATAFORMA (Fase 7C), distinto de los roles por-organización.
+  // Solo se asigna por semilla/DB, nunca desde la app.
+  isSuperadmin  Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  authTokens    AuthToken[]
+  reviewedPayments PaymentReport[] @relation("PaymentReviewer")
+}
+
+// Reporte de pago MANUAL (Fase 7B): el taller declara que pagó (método + referencia
+// + monto) y el superadmin lo aprueba/rechaza. Aprobar extiende el plan. Sin subida
+// de comprobantes (la referencia + monto basta para cotejar contra el banco).
+model PaymentReport {
+  id             String              @id @default(cuid())
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  plan           PlanTier // plan solicitado (TALLER/PRO)
+  months         Int // período pagado (1 = mensual, 12 = anual)
+  method         PaymentMethod
+  reference      String // referencia/últimos dígitos declarados
+  amount         Decimal             @db.Decimal(12, 4)
+  currency       String              @default("USD")
+  note           String?
+  status         PaymentReportStatus @default(PENDING)
+  reviewedBy     User?               @relation("PaymentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedById   String?
+  reviewedAt     DateTime?
+  reviewNote     String? // motivo del rechazo o nota de aprobación
+  createdAt      DateTime            @default(now())
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+// Propósito de un token de un solo uso enviado por correo.
+enum AuthTokenPurpose {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+// Refresh token rotatorio persistido (revocable). Se guarda el HASH (sha256),
+// nunca el token en claro. `family` agrupa la cadena de rotaciones de un login;
+// si un token ya revocado se reusa, se revoca toda la familia (posible robo).
+model RefreshToken {
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String    @unique
+  family    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([family])
+}
+
+// Token de un solo uso para verificar email o restablecer contraseña. Se guarda
+// el HASH; expira y se marca `usedAt` al consumirse.
+model AuthToken {
+  id        String           @id @default(cuid())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String           @unique
+  purpose   AuthTokenPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  role           Role         @default(OWNER)
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+// Configuración global del usuario/negocio. Valores por defecto sensatos.
+model Settings {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+
+  currency               String   @default("USD")
+  locale                 String   @default("en-US")
+  secondaryCurrency      String?  @default("VES") // (legado) moneda secundaria; el default vivo es defaultRateLabel
+  // Tasa con NOMBRE usada por defecto en la vista ambiental (RateBadge, monto dual
+  // en vivo). null = mostrar solo USD. Los documentos pueden elegir otra.
+  defaultRateLabel       String?
+  // Tasa con NOMBRE de REFERENCIA para proteger el margen al cobrar en bolívares
+  // (el "dólar real", típicamente el paralelo/Binance). Define los bolívares
+  // objetivo a recibir. null = usar el default de la app (Binance/USDT).
+  protectionRateLabel    String?
+  kwhPrice               Decimal  @default(0) @db.Decimal(12, 4)
+  defaultWastePct        Float    @default(0.08)
+  wasteAppliesTo         String[] @default(["MATERIAL", "WEAR", "POWER"])
+  defaultMargins         Float[]  @default([0.3, 0.5, 1.0])
+  marginMode             String   @default("MARKUP") // MARKUP | MARGIN
+  componentProrationMode String   @default("FULL_PACKAGE") // USED | FULL_PACKAGE
+  roundingMode           String   @default("NONE") // NONE | NEAREST | UP | DOWN
+  roundingIncrement      Float    @default(1)
+  taxPercent             Float? // reservado para fase 2 (IVA)
+
+  // Costos fijos mensuales (alquiler, internet, luz base…) como lista JSON
+  // [{ concept, monthlyAmount }] y el margen de contribución para el punto de
+  // equilibrio (fracción, 0.4 = 40 %). Solo se usan para análisis en el dashboard;
+  // NO entran en el precio por pieza.
+  fixedCosts         Json  @default("[]")
+  breakEvenMarginPct Float @default(0.4)
+
+  // Datos del negocio para la nota de entrega (el nombre sale de Organization).
+  businessRif     String?
+  businessPhone   String?
+  businessAddress String?
+  businessSigner  String? // nombre de quien firma la entrega
+
+  // Piso de margen (markup, fracción) bajo el cual un producto del catálogo
+  // dispara alerta de rentabilidad al recostear con precios/tasa de hoy.
+  productAlertMinMarginPct Float @default(0.15)
+}
+
+model Material {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  type           String?
+  brand          String?
+  rollPrice      Decimal      @db.Decimal(12, 4)
+  rollGrams      Int          @default(1000)
+  color          String?
+  createdAt      DateTime     @default(now())
+
+  expenses Expense[]
+
+  @@index([organizationId])
+}
+
+model Printer {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  price          Decimal      @db.Decimal(12, 4)
+  lifetimeHours  Int          @default(5000)
+  powerKw        Decimal      @default(0) @db.Decimal(12, 4)
+  maintPerHour   Decimal      @default(0) @db.Decimal(12, 4)
+  createdAt      DateTime     @default(now())
+
+  expenses Expense[]
+
+  @@index([organizationId])
+}
+
+model Component {
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId  String
+  name            String
+  packagePrice    Decimal      @db.Decimal(12, 4)
+  unitsPerPackage Int
+  scope           String       @default("PER_PIECE") // PER_PIECE | PER_ORDER
+  createdAt       DateTime     @default(now())
+
+  expenses Expense[]
+
+  @@index([organizationId])
+}
+
+model Client {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  contact        String?
+  // Tipo de contacto en el directorio/CRM (Fase 5). Default CLIENT.
+  type           ContactType  @default(CLIENT)
+  // Datos opcionales (nota de entrega, futuro CRM/mapa). El flujo rápido de
+  // WhatsApp solo exige nombre + teléfono.
+  phone          String?
+  rif            String?
+  address        String?
+  municipality   String?
+  city           String?
+  notes          String?
+  // Ubicación en el mapa (se fija haciendo click en el mapa; sin geocodificación).
+  lat            Float?
+  lng            Float?
+  createdAt      DateTime     @default(now())
+  quotes         Quote[]
+  sales          Sale[]
+  orders         Order[]
+
+  @@index([organizationId])
+  @@index([organizationId, type])
+}
+
+// Proveedor de cualquier gasto (tienda, marca, mayorista…). Enlace OPCIONAL.
+model Provider {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  contact        String?
+  createdAt      DateTime     @default(now())
+  expenses       Expense[]
+
+  @@index([organizationId])
+}
+
+// Un presupuesto guarda un SNAPSHOT del CalcInput y de los totales calculados,
+// para integridad histórica de precios (no cambia si luego editas un catálogo).
+model Quote {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId       String?
+
+  name     String
+  quantity Int
+  status   QuoteStatus @default(DRAFT)
+
+  // Versionado: las versiones comparten el mismo originalQuoteId (o su propio id la v1).
+  version         Int     @default(1)
+  originalQuoteId String?
+
+  input  Json // CalcInput (snapshot de entradas)
+  totals Json // CalcResult (snapshot de resultados)
+
+  currencyLabel String? // moneda de presentación elegida (null = solo USD)
+  exchangeRates Json? // snapshot de tasas al crear: { <moneda>: { rate, source, at, label } }
+
+  // Atribución de publicidad (Fase 1). null = "Sin atribuir".
+  originChannel AttributionChannel?
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  @@index([organizationId])
+  @@index([originalQuoteId])
+  @@index([campaignId])
+}
+
+// Venta registrada (transacción individual). El total del día/periodo se agrega
+// al vuelo. Puede venir de un presupuesto (quoteId) o registrarse a mano.
+model Sale {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId       String?
+  quote          Quote?       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  quoteId        String?
+
+  date   DateTime
+  amount Decimal  @db.Decimal(12, 4)
+  kind   SaleKind @default(COUNTER)
+  note   String?
+
+  exchangeRates Json? // snapshot de tasas al registrar la venta
+
+  // Atribución de publicidad (Fase 1). null = "Sin atribuir".
+  originChannel AttributionChannel?
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([organizationId, date])
+  @@index([campaignId])
+}
+
+// Ledger ÚNICO de dinero que sale (gastos, inversiones, compras de insumos).
+// Enlace OPCIONAL a un item de catálogo (impresora/material/componente/empaque):
+// la identidad vive en el catálogo, el gasto solo guarda el evento (monto, fecha,
+// cantidad). Un catálogo ↔ muchos gastos (compra inicial + recompras/mantenimientos).
+model Expense {
+  id             String          @id @default(cuid())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  date           DateTime
+  category       ExpenseCategory @default(OTHER)
+  description    String
+  amount         Decimal         @db.Decimal(12, 4)
+  isInvestment   Boolean         @default(false)
+  quantity       Int? // unidades/rollos comprados (consumibles)
+  endDate        DateTime? // fin del período (p. ej. publicidad: de `date` a `endDate`)
+
+  // Enlace polimórfico opcional al catálogo (solo uno por fila).
+  material    Material?  @relation(fields: [materialId], references: [id], onDelete: SetNull)
+  materialId  String?
+  printer     Printer?   @relation(fields: [printerId], references: [id], onDelete: SetNull)
+  printerId   String?
+  component   Component? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+  componentId String?
+
+  // Proveedor opcional (independiente del enlace de catálogo).
+  provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  providerId String?
+
+  // Publicidad (Fase 1): un gasto ADVERTISING puede enlazar a una campaña. La tasa
+  // Bs se congela aquí si el gasto se pagó en bolívares (amount sigue en USD base).
+  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId   String?
+  rate         Decimal?  @db.Decimal(18, 6)
+  currencyCode String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([organizationId, date])
+  @@index([campaignId])
+}
+
+enum ExchangeRateSource {
+  AUTO
+  MANUAL
+}
+
+// Estado del pedido a lo largo de su vida (encargo → entrega).
+enum OrderStatus {
+  QUOTED
+  CONFIRMED
+  IN_PRODUCTION
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+// Pedido (encargo): saca el trabajo de WhatsApp. Las líneas viven como JSON
+// [{ description, quantity, unit, unitPrice }] (no se consultan por separado);
+// los abonos son filas propias. El SALDO se DERIVA (total de líneas − abonos),
+// no se almacena, para no quedar obsoleto. Congela snapshot de tasas para Bs.
+model Order {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  client         Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  clientId       String
+
+  code         Int // correlativo por organización (para la nota de entrega)
+  publicToken  String?   @unique // token no adivinable para el link público de solo lectura
+  deliveryDate DateTime?
+  status       OrderStatus @default(QUOTED)
+  notes        String?
+  lines        Json        @default("[]")
+  currencyLabel String?    // moneda de presentación elegida (null = solo USD)
+  exchangeRates Json?
+  // Cierre en bolívares (Fase 2): mientras es null, los Bs se muestran EN VIVO
+  // (tasa de hoy para `currencyLabel`); al emitir la nota de entrega se re-congela
+  // `exchangeRates` a la tasa del momento y se marca `settledAt` (Bs finales).
+  settledAt    DateTime?
+
+  // Atribución de publicidad (Fase 1). null = "Sin atribuir".
+  originChannel AttributionChannel?
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([organizationId, deliveryDate])
+  @@index([campaignId])
+}
+
+// Abono/pago de un pedido. Monto en la moneda BASE de la organización (USD).
+// Congela la tasa usada al momento del pago (Fase 2) para reconciliar en Bs: el
+// saldo/total se muestran EN VIVO, pero cada abono conserva su equivalente en Bs.
+model Payment {
+  id             String   @id @default(cuid())
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        String
+  organizationId String // desnormalizado para scoping directo
+  date           DateTime
+  amount         Decimal  @db.Decimal(12, 4)
+  note           String?
+  // Tasa congelada al pagar (moneda destino por 1 USD) + su moneda/nombre. Null si
+  // el pedido cobra solo en USD (sin moneda elegida).
+  rate           Decimal? @db.Decimal(18, 6)
+  currencyCode   String?
+  currencyLabel  String?
+  createdAt      DateTime @default(now())
+
+  @@index([orderId])
+  @@index([organizationId])
+}
+
+// Producto: una pieza YA COSTEADA y reutilizable (Fase 4). Guarda el snapshot
+// del CalcInput con el que se costeó, el precio de venta que fijó el dueño
+// (`priceSet`) y el costo unitario al guardarlo (`costAtSave`, ancla del delta).
+// El recosteo re-resuelve el CalcInput contra el catálogo de HOY (por nombre) y
+// corre el motor; la alerta de rentabilidad es ese delta hecho aviso. Nunca se
+// recostea silenciosamente: el dueño decide cuándo cambia el precio de venta.
+model Product {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  name       String
+  imageUrl   String? // solo URL (http/https); sin subida de archivos en esta fase
+  notes      String?
+  input      Json // snapshot del CalcInput
+  priceSet   Decimal @db.Decimal(12, 4) // precio de venta por unidad fijado por el dueño
+  costAtSave Decimal @db.Decimal(12, 4) // costo unitario al guardar (calculado por el motor)
+
+  currencyLabel String? // moneda de presentación elegida (null = solo USD)
+  exchangeRates Json? // snapshot de tasas al guardar (para el equivalente en Bs)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// Tasas de cambio con NOMBRE (Fase 3 multi-moneda). Append-only: la fila más
+// reciente por `label` es la vigente; el resto es histórico. La IDENTIDAD de una
+// tasa es su `label` (ej. "Dólar BCV", "Euro neto"), no la moneda — puede haber
+// dos tasas distintas de la misma moneda (BCV vs paralelo). `currencyCode` es la
+// moneda DESTINO (para formatear) y `rate` = unidades de esa moneda por 1 USD
+// (la base siempre es USD). El costeo y las estadísticas nunca dejan de ser USD.
+model ExchangeRate {
+  id             String             @id @default(cuid())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  label          String             @default("") // identidad de la tasa (nombre libre)
+  currencyCode   String // ISO 4217 de la moneda destino, ej. "VES"
+  rate           Decimal            @db.Decimal(18, 6)
+  source         ExchangeRateSource @default(MANUAL)
+  createdAt      DateTime           @default(now())
+
+  @@index([organizationId, label, createdAt(sort: Desc)])
+  @@index([organizationId, currencyCode, createdAt(sort: Desc)])
+}
+
+// Opción reutilizable de un campo de catálogo (lista administrada aparte): p. ej.
+// marca / tipo / color de filamento. Vive por sí sola (persiste aunque no haya
+// material que la use) y es editable. `kind` agrupa la lista (MATERIAL_BRAND…);
+// `value` es la etiqueta libre. Única por (org, kind, value) para no duplicar.
+model CatalogOption {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  kind           String // MATERIAL_BRAND | MATERIAL_TYPE | MATERIAL_COLOR (validado en la API)
+  value          String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, kind, value])
+  @@index([organizationId, kind])
+}
+
+// ----- Publicidad / ROI (Fase 1) -----
+
+enum CampaignPlatform {
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+  GOOGLE
+  WHATSAPP
+  OTHER
+}
+
+enum CampaignObjective {
+  SALES
+  MESSAGES
+  VISITS
+  FOLLOWERS
+  AWARENESS
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+}
+
+// Canal de origen para atribuir un documento (cotización/pedido/venta) a publicidad.
+// null = "Sin atribuir". Un canal genérico O una campaña específica (campaignId).
+enum AttributionChannel {
+  ORGANIC
+  INSTAGRAM_ADS
+  FACEBOOK_ADS
+  TIKTOK_ADS
+  GOOGLE_ADS
+  WHATSAPP
+  REFERRAL
+  OTHER
+}
+
+// Campaña publicitaria. El "gastado real" NO se almacena: se DERIVA de los Expense
+// enlazados (categoría ADVERTISING + campaignId), como el saldo de un pedido. El
+// presupuesto es estimado (USD). Base siempre USD; el Bs del gasto se congela en el
+// Expense. Aditivo: las ventas/cotizaciones/pedidos pueden existir sin campaña.
+model Campaign {
+  id             String             @id @default(cuid())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  platform       CampaignPlatform   @default(OTHER)
+  objective      CampaignObjective?
+  status         CampaignStatus     @default(ACTIVE)
+  startDate      DateTime
+  endDate        DateTime?
+  budget         Decimal?           @db.Decimal(12, 4) // presupuesto estimado (USD)
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  expenses Expense[]
+  quotes   Quote[]
+  orders   Order[]
+  sales    Sale[]
+
+  @@index([organizationId])
+}

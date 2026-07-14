@@ -1,0 +1,59 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { SettingsModule } from './settings/settings.module';
+import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
+import { MaterialsModule } from './materials/materials.module';
+import { PrintersModule } from './printers/printers.module';
+import { ComponentsModule } from './components/components.module';
+import { CatalogOptionsModule } from './catalog-options/catalog-options.module';
+import { ClientsModule } from './clients/clients.module';
+import { ProvidersModule } from './providers/providers.module';
+import { CalcModule } from './calc/calc.module';
+import { QuotesModule } from './quotes/quotes.module';
+import { ExportModule } from './export/export.module';
+import { SalesModule } from './sales/sales.module';
+import { ExpensesModule } from './expenses/expenses.module';
+import { OrdersModule } from './orders/orders.module';
+import { ProductsModule } from './products/products.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { BackupModule } from './backup/backup.module';
+import { PlanModule } from './plan/plan.module';
+import { BillingModule } from './billing/billing.module';
+import { AdminModule } from './admin/admin.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    OrganizationsModule,
+    SettingsModule,
+    ExchangeRatesModule,
+    MaterialsModule,
+    PrintersModule,
+    ComponentsModule,
+    CatalogOptionsModule,
+    ClientsModule,
+    ProvidersModule,
+    CalcModule,
+    QuotesModule,
+    ExportModule,
+    SalesModule,
+    ExpensesModule,
+    OrdersModule,
+    ProductsModule,
+    OnboardingModule,
+    BackupModule,
+    PlanModule,
+    BillingModule,
+    AdminModule,
+    CampaignsModule,
+  ],
+})
+export class AppModule {}

@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Settings" ADD COLUMN     "breakEvenMarginPct" DOUBLE PRECISION NOT NULL DEFAULT 0.4,
+ADD COLUMN     "fixedCosts" JSONB NOT NULL DEFAULT '[]';
