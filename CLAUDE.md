@@ -24,10 +24,12 @@ en el repo web: se sobrescribe al sincronizar.
     `POST /sales/from-quote` (convierte un presupuesto en venta). Modelos `Sale`
     (fecha, monto, tipo COUNTER/ENCARGO, cliente?, quote?) y `Expense` —
     **ledger ÚNICO de dinero que sale** (fecha, categoría, descripción, monto,
-    isInvestment, quantity?) con **enlace polimórfico OPCIONAL** a un item de
-    catálogo (`materialId`/`printerId`/`componentId`/`packagingId`). No existe
-    una tabla de compras de filamento aparte: una compra de filamento es un
-    `Expense` con `materialId` + cantidad. Relación **1 catálogo ↔ N gastos**
+    isInvestment, quantity?, `endDate?` = fin de período p. ej. publicidad) con
+    **enlace polimórfico OPCIONAL** a un item de catálogo (`materialId`/`printerId`/
+    `componentId` — **ya NO hay `packagingId`**: la tabla `Packaging` se fusionó en
+    `Component` con un campo `scope`, ver "Catálogos"). No existe una tabla de compras
+    de filamento aparte: una compra de filamento es un `Expense` con `materialId` +
+    cantidad. Relación **1 catálogo ↔ N gastos**
     (compra inicial + recompras/mantenimientos), así no se duplica la identidad.
     Visible a OWNER y COLLABORATOR. Nota: los `Decimal` de Prisma llegan como
     **string** en JSON; el front los convierte con `Number()`.
@@ -154,15 +156,19 @@ en el repo web: se sobrescribe al sincronizar.
       la migración quedaron `true` por backfill; el seed pone el demo en `true`).
       `register` manda a verificar; `verify-email`/`resend-verification`. Enforcement
       SUAVE con `EmailVerifiedGuard`: se puede entrar, pero acciones sensibles
-      (crear **link público** de pedido, **invitar** miembros) exigen verificar.
+      (crear **link público** de pedido, invitar miembros vía `POST /users`) exigen
+      verificar. **OJO**: el otro camino de invitación, `POST /organization/invite`,
+      hoy NO aplica `EmailVerifiedGuard` (inconsistencia conocida — ver "Gestión de equipo").
     - **Recuperación de contraseña**: `forgot-password` (respuesta SIEMPRE genérica,
       no revela si el correo existe) + `reset-password` (revoca TODAS las sesiones).
       Tokens `AuthToken` de **un solo uso** con propósito y expiración.
     - **Correos con Resend** (`MailService`): usa Resend si `RESEND_API_KEY` está
       configurada; si no, **modo dev** (registra el enlace en el log, NO lo expone en
       la respuesta HTTP). Vars: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL`.
-    - **Rate limiting** (`@nestjs/throttler` + `ProxyThrottlerGuard`): login/register/
-      refresh/forgot a 10/min por **IP real**. La IP real sale de `req.ip` (honra
+    - **Rate limiting** (`@nestjs/throttler` + `ProxyThrottlerGuard`): grupo estricto
+      (login / register / resend-verification / forgot-password / reset-password) a
+      **10/min** por **IP real**; el resto (incluido `refresh`) usa el default del
+      módulo (60/min). La IP real sale de `req.ip` (honra
       `trust proxy`, configurable con `TRUST_PROXY` en `main.ts`); `cf-connecting-ip`
       solo se usa si hay proxy confiable (si no, sería falsificable).
     - **Auditoría multi-tenant**: `common/multi-tenant.audit.spec.ts` fija que las
@@ -176,8 +182,8 @@ en el repo web: se sobrescribe al sincronizar.
       a PRO/2100. Helper puro `shared/calc/plan.ts` (`planStatus` → active/daysLeft).
       **`PlanGuard` GLOBAL** (APP_GUARD, hace su propia verificación JWT porque corre
       antes que los guards de controlador): con plan vencido, las ESCRITURAS responden
-      **402**; lectura, export (`/backup`), auth, `/plan`, `/admin` y `/users` SIEMPRE
-      abiertos (whitelist). "Tus datos son tuyos": exportar nunca se bloquea.
+      **402**; lectura, export (`/backup`), auth, `/plan`, `/admin`, `/users` y
+      `/public` SIEMPRE abiertos (whitelist). "Tus datos son tuyos": exportar nunca se bloquea.
     - **Pago MANUAL** (`billing/`, sin pasarela): `GET /plan` (estado+historial),
       `POST /plan/report` (el taller declara método+referencia+monto → PENDING). Modelo
       `PaymentReport`.
@@ -250,6 +256,25 @@ en el repo web: se sobrescribe al sincronizar.
     default 0.4). NO entran en el precio por pieza. Helpers puros en
     `shared/calc/breakeven.ts` (`fixedCostsTotal`, `breakEvenRevenue` = fijos÷margen,
     `breakEvenProgress`).
+  - **Presupuestos / cotizaciones (Quotes)** (`quotes/quotes.controller.ts`): CRUD
+    `/quotes`; cada presupuesto guarda un **snapshot JSON** del `CalcInput` + `totals`
+    (integridad histórica de precios, NO tablas-línea normalizadas). **Versionado**:
+    `Quote.version` + `Quote.originalQuoteId` (todas las versiones comparten el mismo
+    `originalQuoteId`; la v1 usa su propio id). Endpoints extra: `GET /quotes/:id/versions`
+    (historial), `POST /quotes/:id/duplicate` (crea versión nueva), `PATCH /quotes/:id/status`
+    (ciclo DRAFT/SENT/ACCEPTED/…). El front deriva conversión / "por seguir" (SENT) /
+    "vencido" (>7 días) desde estos datos.
+  - **Gestión de equipo** (`users/`, `organizations/`): `GET/PATCH /users/me`, `GET /users`
+    (lista de miembros), `POST /users` (invita colaborador, **con** `EmailVerifiedGuard`),
+    `PATCH/DELETE /users/:id`. En `organizations/`: `GET /organization/members` y
+    `POST /organization/invite` (solo valida rol OWNER; **NO** aplica `EmailVerifiedGuard`
+    — inconsistencia con `POST /users`). Roles OWNER/COLLABORATOR por organización.
+  - **Catálogos** (`materials/`, `printers/`, `components/`, `providers/`, `settings/`,
+    `catalog-options/`): un módulo CRUD por catálogo. El **empaque ya no es un catálogo
+    aparte**: se fusionó en `Component` con un campo `scope` (PER_PIECE = por pieza /
+    PER_ORDER = por pedido); la migración `merge_insumos` eliminó la tabla `Packaging`
+    (por eso `Expense` ya no tiene `packagingId`). Los `PATCH` de catálogo son PARCIALES
+    (`XSchema.partial()`).
 
 ## Comandos (desde la raíz de este repo)
 - `pnpm install`
@@ -267,6 +292,9 @@ en el repo web: se sobrescribe al sincronizar.
 - Porcentajes como **fracción** (0.08 = 8 %, 0.3 = 30 %).
 - Costos "por lote" (material, desgaste, luz) vs "por pieza" (componentes,
   empaque, mano de obra). NO dividir ciegamente entre la cantidad.
+- Los 3 datos que aporta el **slicer** (cantidad de piezas, gramos totales del
+  lote, horas de impresión) son inputs del `CalcInput`, **no viven en catálogos**:
+  se pasan en cada cálculo.
 - Material: `grams` es el **total del lote/trabajo** (como las horas de la
   tanda, tal como lo reporta el slicer); el costo por pieza = total / cantidad.
 - El desglose (`breakdown`) muestra cada categoría EN CRUDO y la merma como
