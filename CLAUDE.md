@@ -17,9 +17,11 @@ en el repo web: se sobrescribe al sincronizar.
   cálculo puro** (decimal.js). Sin Nest ni DB. Tests Jest (caso del llavero).
   Emite **doble build**: CJS (`dist/cjs`, lo consume Nest) y ESM (`dist/esm`,
   lo consume el front). Si cambias `shared`, recompílalo antes de usarlo en api.
-- `apps/api` — NestJS + Prisma (PostgreSQL). Auth JWT multi-tenant por
-  organización (roles OWNER/COLLABORATOR). CRUD de catálogos, presupuestos,
-  `POST /calc` y export PDF/CSV. Prefijo global `/api`.
+- `apps/api` — NestJS + Prisma (PostgreSQL). **App de un solo dueño**: hay login
+  (JWT + refresh tokens) pero **sin registro público** — la cuenta del dueño se crea
+  con el `seed`. La plomería multi-tenant (`organizationId` en todas las tablas, rol
+  OWNER/COLLABORATOR) se conserva pero fijada a **una sola organización**. CRUD de
+  catálogos, presupuestos, `POST /calc` y export PDF/CSV. Prefijo global `/api`.
   - **Módulo de finanzas** (`sales`, `expenses`): CRUD con filtro `?from&to` +
     `POST /sales/from-quote` (convierte un presupuesto en venta). Modelos `Sale`
     (fecha, monto, tipo COUNTER/ENCARGO, cliente?, quote?) y `Expense` —
@@ -73,10 +75,7 @@ en el repo web: se sobrescribe al sincronizar.
     re-congela `exchangeRates` a la tasa de hoy y marca `settledAt` (idempotente);
     re-descargar solo baja el PDF. **Cada abono congela su tasa** al pagar
     (`Payment.rate/currencyCode/currencyLabel`, capturados en `addPayment` de la
-    moneda del pedido). **PublicOrder**: el endpoint público `getByToken` devuelve
-    `liveRate` (tasa de hoy) si el pedido sigue vivo, o null + `settled:true` si
-    está cerrado (el público no puede consultar `/exchange-rates`). El motor NO
-    convierte; USD sigue siendo la base y las estadísticas.
+    moneda del pedido). El motor NO convierte; USD sigue siendo la base y las estadísticas.
   - **Pedidos / encargos (Fase 3, fundación)** (`orders/orders.module.ts`,
     `features/orders/api.ts`): modelo `Order` (cliente obligatorio, `code`
     correlativo por organización a prueba de concurrencia = max+1, `deliveryDate?`,
@@ -97,16 +96,12 @@ en el repo web: se sobrescribe al sincronizar.
     `GET /orders/:id/delivery-note.pdf`. `Settings` gana `businessRif/Phone/Address/Signer`
     (sección "Negocio"). Calendario mensual UTC por `deliveryDate`, coloreado por estado.
   - **Pedidos avanzado (Fase 3C)**: **cuentas por cobrar** (pedidos con saldo>0 por
-    antigüedad). **WhatsApp-out** (botón `wa.me` con resumen; teléfono 0→58). **Link
-    público** de solo lectura: `Order.publicToken` (48 hex, `randomBytes(24)`);
-    `POST /orders/:id/public-link` (con auth) genera/reusa el token;
-    `PublicOrdersController` (`/public/orders/:token`, **SIN guard**) expone solo
-    campos del documento + `POST .../accept` (QUOTED→CONFIRMED). **Editar líneas**
-    del pedido. **Abonos→dashboard**: `GET /orders/payments?from&to` (ruta literal
-    ANTES de `:id`); el Dashboard suma ventas + abonos como INGRESOS (flujo
-    separado, sin generar `Sale`, sin doble conteo). **Ciclo de cotización**:
+    antigüedad). **WhatsApp-out** (botón `wa.me` con resumen; teléfono 0→58).
+    **Editar líneas** del pedido. **Abonos→dashboard**: `GET /orders/payments?from&to`
+    (ruta literal ANTES de `:id`); el Dashboard suma ventas + abonos como INGRESOS
+    (flujo separado, sin generar `Sale`, sin doble conteo). **Ciclo de cotización**:
     conversión (aceptados/decididos), "por seguir" (SENT), "vencido" (DRAFT/SENT >
-    7 días → recotizar).
+    7 días → recotizar). *(El link público de pedidos se eliminó con la capa SaaS.)*
   - **Catálogo de productos (Fase 4)** (`products/products.module.ts`,
     `features/products/api.ts`): modelo `Product` (nombre, `imageUrl?` SOLO url
     http/https — sin subida de archivos; snapshot `input` del `CalcInput`;
@@ -140,58 +135,31 @@ en el repo web: se sobrescribe al sincronizar.
     - **Plantillas/onboarding** (`onboarding/onboarding.module.ts`): `POST
       /onboarding/seed-templates` siembra materiales (PLA/PETG/ABS/TPU), 1 impresora
       e insumos comunes, **idempotente por nombre** (no duplica).
-    - **Research SaaS**: documento `docs/superpowers/specs/2026-07-06-fase5-research-saas.md`
-      (competencia, precio, prerequisitos BLOQUEANTES: verificación email, refresh
-      tokens, recuperación de contraseña, rate-limit tras proxy, auditoría multi-tenant,
-      billing).
-  - **Seguridad de cuentas (Fase 6)** — `auth/` + `mail/mail.module.ts` +
-    `common/email-verified.guard.ts`:
+  - **Autenticación y seguridad de cuentas** — `auth/` + `mail/mail.module.ts`:
+    - **Login del dueño** (`POST /auth/login`): **no hay registro público**; la cuenta
+      se crea con el `seed` (ver Comandos). Roles OWNER/COLLABORATOR se conservan en el
+      modelo (un solo usuario = OWNER).
     - **Refresh tokens rotatorios** (`auth/token.service.ts`, tablas `RefreshToken`
-      /`AuthToken`): access token JWT **corto** (15 min, `JWT_EXPIRES_IN`) + refresh
-      opaco (48 bytes) guardado como **hash sha256** (nunca en claro). `POST /auth/refresh`
+      /`AuthToken`): access token JWT **corto** (`JWT_EXPIRES_IN`) + refresh opaco
+      (48 bytes) guardado como **hash sha256** (nunca en claro). `POST /auth/refresh`
       **rota** (revoca el viejo, emite nuevo en la misma `family`); `POST /auth/logout`
       revoca. **Detección de reuso**: si llega un refresh ya revocado → se revoca TODA
       la familia (defensa ante robo).
-    - **Verificación de email** (soft): `User.emailVerified` (los usuarios previos a
-      la migración quedaron `true` por backfill; el seed pone el demo en `true`).
-      `register` manda a verificar; `verify-email`/`resend-verification`. Enforcement
-      SUAVE con `EmailVerifiedGuard`: se puede entrar, pero acciones sensibles
-      (crear **link público** de pedido, invitar miembros vía `POST /users`) exigen
-      verificar. **OJO**: el otro camino de invitación, `POST /organization/invite`,
-      hoy NO aplica `EmailVerifiedGuard` (inconsistencia conocida — ver "Gestión de equipo").
     - **Recuperación de contraseña**: `forgot-password` (respuesta SIEMPRE genérica,
       no revela si el correo existe) + `reset-password` (revoca TODAS las sesiones).
       Tokens `AuthToken` de **un solo uso** con propósito y expiración.
-    - **Correos con Resend** (`MailService`): usa Resend si `RESEND_API_KEY` está
-      configurada; si no, **modo dev** (registra el enlace en el log, NO lo expone en
-      la respuesta HTTP). Vars: `RESEND_API_KEY`, `MAIL_FROM`, `APP_URL`.
+    - **Correos con Resend** (`MailService`): SOLO para el enlace de reset de contraseña.
+      Usa Resend si `RESEND_API_KEY` está configurada; si no, **modo dev** (registra el
+      enlace en el log, NO lo expone en la respuesta HTTP). Vars: `RESEND_API_KEY`,
+      `MAIL_FROM`, `APP_URL`.
     - **Rate limiting** (`@nestjs/throttler` + `ProxyThrottlerGuard`): grupo estricto
-      (login / register / resend-verification / forgot-password / reset-password) a
-      **10/min** por **IP real**; el resto (incluido `refresh`) usa el default del
-      módulo (60/min). La IP real sale de `req.ip` (honra
-      `trust proxy`, configurable con `TRUST_PROXY` en `main.ts`); `cf-connecting-ip`
-      solo se usa si hay proxy confiable (si no, sería falsificable).
+      (login / forgot-password / reset-password) a **10/min** por **IP real**; el resto
+      (incluido `refresh`) usa el default del módulo (60/min). La IP real sale de
+      `req.ip` (honra `trust proxy`, configurable con `TRUST_PROXY` en `main.ts`);
+      `cf-connecting-ip` solo se usa si hay proxy confiable (si no, sería falsificable).
     - **Auditoría multi-tenant**: `common/multi-tenant.audit.spec.ts` fija que las
-      lecturas por id filtran por `organizationId` (una org no lee recursos de otra).
-    - **Pendiente/infra (NO código)**: endurecer el origen (firewall, bindear a
-      127.0.0.1) y billing/planes.
-  - **SaaS: planes + pago manual + panel admin (Fase 7A-C)** — `plan/` + `billing/`
-    + `admin/`:
-    - **Planes/trial** (`plan/plan.module.ts`): `Organization.plan` (TRIAL/TALLER/PRO)
-      + `trialEndsAt`/`planExpiresAt`. Registro = TRIAL 14 días; orgs previas backfilled
-      a PRO/2100. Helper puro `shared/calc/plan.ts` (`planStatus` → active/daysLeft).
-      **`PlanGuard` GLOBAL** (APP_GUARD, hace su propia verificación JWT porque corre
-      antes que los guards de controlador): con plan vencido, las ESCRITURAS responden
-      **402**; lectura, export (`/backup`), auth, `/plan`, `/admin`, `/users` y
-      `/public` SIEMPRE abiertos (whitelist). "Tus datos son tuyos": exportar nunca se bloquea.
-    - **Pago MANUAL** (`billing/`, sin pasarela): `GET /plan` (estado+historial),
-      `POST /plan/report` (el taller declara método+referencia+monto → PENDING). Modelo
-      `PaymentReport`.
-    - **Panel superadmin** (`admin/`): `User.isSuperadmin` (solo por DB/seed) +
-      `SuperadminGuard`. `GET /admin/payments/pending`, `POST
-      /admin/payments/:id/review` (aprobar **extiende el plan ACUMULANDO** sobre lo que
-      quede + correo; **idempotente**: 409 si ya se revisó), `/admin/organizations`,
-      `/admin/metrics`. **El demo es superadmin.**
+      lecturas por id filtran por `organizationId`.
+    - **Pendiente/infra (NO código)**: endurecer el origen (firewall, bindear a 127.0.0.1).
   - **Publicidad / ROI (Fase 1)** (`campaigns/campaigns.module.ts`,
     `features/campaigns/`): modelo `Campaign` (nombre, plataforma, objetivo, estado,
     fechas, presupuesto USD). El **"gastado real" se DERIVA** de los `Expense`
@@ -217,8 +185,8 @@ en el repo web: se sobrescribe al sincronizar.
       `{action, title, reason}` (español). **Export** (reusa `fast-csv`+`pdfkit`, sin
       deps nuevas): `GET /campaigns/export.csv` (todas las campañas + métricas + salud +
       recomendación, Excel-compatible) y `GET /campaigns/:id/report.pdf` (informe por
-      campaña); **rutas literales declaradas ANTES de `:id`**; los helpers son GET →
-      PlanGuard no los bloquea. **Bs del gasto congelado**: `ExpenseCreateSchema` gana
+      campaña); **rutas literales declaradas ANTES de `:id`**. **Bs del gasto congelado**:
+      `ExpenseCreateSchema` gana
       `rate`/`currencyCode` (columnas ya existían); el tipo Publicidad guarda `amount`
       en USD base (= Bs ÷ tasa) + `rate`/`currencyCode='VES'` para presentación. Tests:
       `campaign.spec.ts` (recomendación).
@@ -264,11 +232,10 @@ en el repo web: se sobrescribe al sincronizar.
     (historial), `POST /quotes/:id/duplicate` (crea versión nueva), `PATCH /quotes/:id/status`
     (ciclo DRAFT/SENT/ACCEPTED/…). El front deriva conversión / "por seguir" (SENT) /
     "vencido" (>7 días) desde estos datos.
-  - **Gestión de equipo** (`users/`, `organizations/`): `GET/PATCH /users/me`, `GET /users`
-    (lista de miembros), `POST /users` (invita colaborador, **con** `EmailVerifiedGuard`),
-    `PATCH/DELETE /users/:id`. En `organizations/`: `GET /organization/members` y
-    `POST /organization/invite` (solo valida rol OWNER; **NO** aplica `EmailVerifiedGuard`
-    — inconsistencia con `POST /users`). Roles OWNER/COLLABORATOR por organización.
+  - **Cuenta del dueño** (`users/`): solo `GET /users/me` y `PATCH /users/me` (editar
+    el propio perfil: nombre, correo, contraseña). **No hay gestión de equipo** ni
+    invitaciones (se quitó al pasar a app de un solo dueño; el módulo `organizations/`
+    se eliminó).
   - **Catálogos** (`materials/`, `printers/`, `components/`, `providers/`, `settings/`,
     `catalog-options/`): un módulo CRUD por catálogo. El **empaque ya no es un catálogo
     aparte**: se fusionó en `Component` con un campo `scope` (PER_PIECE = por pieza /
@@ -283,10 +250,11 @@ en el repo web: se sobrescribe al sincronizar.
 - `pnpm --filter @calc3d/api exec prisma generate`
 - `pnpm --filter @calc3d/api exec prisma migrate dev`
 - `pnpm dev` — levanta la API (antes `pnpm dev:api` en el monorepo).
-- `pnpm --filter @calc3d/api seed` — por DEFECTO NO crea el demo; solo asegura las
-  tasas de protección (Bs) en las orgs existentes. Para (re)crear el negocio demo
-  (demo@calc3d.dev / demo1234, catálogo del llavero):
-  `SEED_DEMO=1 pnpm --filter @calc3d/api seed`.
+- `pnpm --filter @calc3d/api seed` — asegura (idempotente) la cuenta del **dueño**
+  (org + usuario OWNER + settings + tasas de protección Bs) desde `OWNER_EMAIL` /
+  `OWNER_PASSWORD` (defaults de desarrollo: `dueno@calc3d.local` / `calc3d1234`).
+  Como no hay registro público, **el seed es la única vía de crear la cuenta**. Con
+  `SEED_DEMO=1` además siembra un catálogo de ejemplo (caso del llavero) en su org.
 
 ## Convenciones del motor de cálculo
 - Porcentajes como **fracción** (0.08 = 8 %, 0.3 = 30 %).

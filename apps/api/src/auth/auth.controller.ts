@@ -4,15 +4,11 @@ import {
   ForgotPasswordSchema,
   LoginSchema,
   RefreshSchema,
-  RegisterSchema,
   ResetPasswordSchema,
-  VerifyEmailSchema,
   type ForgotPasswordDto,
   type LoginDto,
   type RefreshDto,
-  type RegisterDto,
   type ResetPasswordDto,
-  type VerifyEmailDto,
 } from '@calc3d/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
@@ -29,13 +25,6 @@ const TIGHT = { default: { limit: 10, ttl: 60_000 } };
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  @Post('register')
-  @Throttle(TIGHT)
-  @UsePipes(new ZodValidationPipe(RegisterSchema))
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto);
-  }
-
   @Post('login')
   @Throttle(TIGHT)
   @UsePipes(new ZodValidationPipe(LoginSchema))
@@ -51,18 +40,6 @@ export class AuthController {
   @Post('logout')
   logout(@Body(new ZodValidationPipe(RefreshSchema)) dto: RefreshDto) {
     return this.auth.logout(dto.refreshToken);
-  }
-
-  @Post('verify-email')
-  verifyEmail(@Body(new ZodValidationPipe(VerifyEmailSchema)) dto: VerifyEmailDto) {
-    return this.auth.verifyEmail(dto.token);
-  }
-
-  @Post('resend-verification')
-  @Throttle(TIGHT)
-  @UseGuards(JwtAuthGuard)
-  resend(@CurrentUser() user: AuthUser) {
-    return this.auth.resendVerification(user.userId);
   }
 
   @Post('forgot-password')

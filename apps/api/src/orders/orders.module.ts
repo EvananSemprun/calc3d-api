@@ -27,10 +27,8 @@ import {
   type PaymentCreateDto,
 } from '@calc3d/shared';
 import { Prisma } from '@prisma/client';
-import { randomBytes } from 'node:crypto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
-import { EmailVerifiedGuard } from '../common/email-verified.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -207,64 +205,6 @@ export class OrdersService {
     return this.get(organizationId, orderId);
   }
 
-  /** Genera (o reusa) el token del link público de solo lectura del pedido. */
-  async ensurePublicToken(organizationId: string, id: string): Promise<{ token: string }> {
-    const order = await this.prisma.order.findFirst({ where: { id, organizationId } });
-    if (!order) throw new NotFoundException('Pedido no encontrado');
-    if (order.publicToken) return { token: order.publicToken };
-    const token = randomBytes(24).toString('hex'); // 192 bits, no enumerable
-    await this.prisma.order.update({ where: { id }, data: { publicToken: token } });
-    return { token };
-  }
-
-  /** Vista pública de SOLO LECTURA por token (el token es la credencial). */
-  async getByToken(token: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { publicToken: token },
-      include: { client: { select: { name: true } }, payments: { select: { amount: true } } },
-    });
-    if (!order) throw new NotFoundException('Enlace no válido');
-    const org = await this.prisma.organization.findUnique({
-      where: { id: order.organizationId },
-      select: { name: true },
-    });
-    const t = withTotals(order);
-    // Bs: si el pedido está CERRADO, se sirve la tasa congelada; si sigue vivo, la
-    // tasa de HOY para su moneda (el público no puede consultar /exchange-rates).
-    const liveRate =
-      order.currencyLabel && !order.settledAt
-        ? await this.rateForLabel(order.organizationId, order.currencyLabel)
-        : null;
-    // Solo se exponen los campos del documento; nada de la organización ni de otros pedidos.
-    return {
-      code: order.code,
-      businessName: org?.name ?? '',
-      clientName: order.client.name,
-      deliveryDate: order.deliveryDate,
-      status: order.status,
-      lines: order.lines,
-      total: t.total,
-      paid: t.paid,
-      balance: t.balance,
-      exchangeRates: order.exchangeRates,
-      liveRate: liveRate
-        ? { rate: liveRate.rate, currencyCode: liveRate.currencyCode, label: liveRate.label }
-        : null,
-      settled: !!order.settledAt,
-      createdAt: order.createdAt,
-    };
-  }
-
-  /** El cliente acepta el presupuesto desde el link (QUOTED → CONFIRMED). */
-  async acceptByToken(token: string) {
-    const order = await this.prisma.order.findUnique({ where: { publicToken: token } });
-    if (!order) throw new NotFoundException('Enlace no válido');
-    if (order.status === 'QUOTED') {
-      await this.prisma.order.update({ where: { id: order.id }, data: { status: 'CONFIRMED' } });
-    }
-    return { ok: true };
-  }
-
   private async ensureOwned(organizationId: string, id: string) {
     const found = await this.prisma.order.findFirst({ where: { id, organizationId } });
     if (!found) throw new NotFoundException('Pedido no encontrado');
@@ -339,13 +279,6 @@ export class OrdersController {
     return this.service.removePayment(user.organizationId, id, paymentId);
   }
 
-  // Exponer un pedido a internet (link público) exige correo verificado.
-  @Post(':id/public-link')
-  @UseGuards(EmailVerifiedGuard)
-  publicLink(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.service.ensurePublicToken(user.organizationId, id);
-  }
-
   // Cerrar el pedido en bolívares (congela la tasa final). Lo dispara el front al
   // emitir la nota de entrega, con confirmación del usuario.
   @Post(':id/settle')
@@ -369,26 +302,9 @@ export class OrdersController {
   }
 }
 
-/** Controlador PÚBLICO: sin JwtAuthGuard. El token del pedido es la credencial;
- *  solo expone ese documento en modo lectura + aceptar. */
-@Controller('public/orders')
-export class PublicOrdersController {
-  constructor(private readonly service: OrdersService) {}
-
-  @Get(':token')
-  get(@Param('token') token: string) {
-    return this.service.getByToken(token);
-  }
-
-  @Post(':token/accept')
-  accept(@Param('token') token: string) {
-    return this.service.acceptByToken(token);
-  }
-}
-
 @Module({
   imports: [ExchangeRatesModule],
-  controllers: [OrdersController, PublicOrdersController],
+  controllers: [OrdersController],
   providers: [OrdersService, DeliveryNoteService],
   exports: [OrdersService],
 })

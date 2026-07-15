@@ -35,7 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           organizationId: payload.organizationId,
         },
       },
-      include: { user: { select: { email: true, name: true, emailVerified: true, isSuperadmin: true } } },
+      include: { user: { select: { email: true, name: true } } },
     });
     if (!membership) {
       throw new UnauthorizedException('Membresía inválida');
@@ -46,8 +46,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       name: membership.user.name,
       organizationId: payload.organizationId,
       role: membership.role,
-      emailVerified: membership.user.emailVerified,
-      isSuperadmin: membership.user.isSuperadmin,
     };
   }
 }

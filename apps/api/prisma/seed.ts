@@ -1,23 +1,35 @@
+import 'dotenv/config'; // carga apps/api/.env (DATABASE_URL) al correr con ts-node
 import { PrismaClient } from '@prisma/client';
 import { RATE_LABELS } from '@calc3d/shared';
 import * as bcrypt from 'bcryptjs';
 
 /**
- * Seed. Por DEFECTO NO crea usuario/negocio demo: solo asegura (idempotente) las
- * tasas de protección en las organizaciones existentes. Esto evita reintroducir el
- * demo tras haberlo eliminado (foco actual = plataforma para el dueño, no SaaS).
+ * Seed para la app de "un solo dueño". Por DEFECTO asegura (idempotente) UNA
+ * organización con su usuario dueño y las tasas de protección en bolívares. Como ya
+ * no existe el registro público, el seed es la ÚNICA vía de crear la cuenta del dueño.
  *
- * Para (re)crear el negocio de demostración (fresco, catálogo del llavero, usuario
- * demo@calc3d.dev / demo1234) hay que pedirlo explícitamente:
- *   SEED_DEMO=1 pnpm seed
+ * Credenciales desde variables de entorno, con defaults de DESARROLLO que conviene
+ * cambiar al primer login (y definir explícitamente en producción):
+ *   OWNER_EMAIL     (default: dueno@calc3d.local)
+ *   OWNER_PASSWORD  (default: calc3d1234)
+ *   OWNER_NAME      (default: Dueño)
+ *   ORG_NAME        (default: Mi negocio)
+ *
+ * Con SEED_DEMO=1 además siembra un catálogo de ejemplo (caso del llavero) en la
+ * organización del dueño, idempotente por nombre.
  */
 const prisma = new PrismaClient();
 
+const OWNER_EMAIL = process.env.OWNER_EMAIL || 'dueno@calc3d.local';
+const OWNER_PASSWORD = process.env.OWNER_PASSWORD || 'calc3d1234';
+const OWNER_NAME = process.env.OWNER_NAME || 'Dueño';
+const ORG_NAME = process.env.ORG_NAME || 'Mi negocio';
+
 /**
- * Tasas de protección sembradas por defecto (Bs por 1 USD). Son MANUAL: el dueño
- * las pone/actualiza a mano en Config → Moneda; NO se traen por integración. Los
- * valores son PLACEHOLDER realistas — se editan a mano. La de Binance/USDT es la
- * referencia por defecto para proteger el margen al cobrar en bolívares.
+ * Tasas de protección sembradas por defecto (Bs por 1 USD). Son MANUAL: el dueño las
+ * pone/actualiza a mano en Config → Moneda; NO se traen por integración. Los valores
+ * son PLACEHOLDER realistas. La de Binance/USDT es la referencia por defecto para
+ * proteger el margen al cobrar en bolívares.
  */
 const PROTECTION_RATES: { label: string; rate: number }[] = [
   { label: RATE_LABELS.BINANCE, rate: 700 }, // paralelo (dólar real, referencia)
@@ -41,88 +53,82 @@ async function ensureProtectionRates(organizationId: string) {
   }
 }
 
-/** Comportamiento por defecto: asegurar tasas de protección en las orgs existentes. */
-async function ensureRatesForAllOrgs() {
-  const orgs = await prisma.organization.findMany({ select: { id: true, name: true } });
-  if (orgs.length === 0) {
-    // eslint-disable-next-line no-console
-    console.log(
-      'Sin organizaciones. Registra una cuenta en la app; el seed no crea usuarios demo.\n' +
-        '(Para el negocio de demostración: SEED_DEMO=1 pnpm seed)',
-    );
-    return;
-  }
-  for (const o of orgs) await ensureProtectionRates(o.id);
-  // eslint-disable-next-line no-console
-  console.log(
-    `Tasas de protección aseguradas en ${orgs.length} organización(es). ` +
-      'El demo NO se crea por defecto (usa SEED_DEMO=1 si lo necesitas).',
-  );
-}
-
 /**
- * Negocio de demostración (solo con SEED_DEMO=1): catálogo del caso del llavero.
- * Usuario: demo@calc3d.dev / demo1234. Idempotente: si el demo ya existe, solo
- * asegura sus tasas de protección.
+ * Asegura la cuenta del dueño: crea la organización + settings + usuario OWNER +
+ * membresía + tasas de protección si no existen. Idempotente por el correo del dueño.
+ * Devuelve el id de la organización.
  */
-async function seedDemoBusiness() {
-  const email = 'demo@calc3d.dev';
+async function ensureOwner(): Promise<string> {
   const existing = await prisma.user.findUnique({
-    where: { email },
-    include: { memberships: true },
+    where: { email: OWNER_EMAIL },
+    include: { memberships: { orderBy: { createdAt: 'asc' } } },
   });
 
-  if (existing) {
-    const orgId = existing.memberships[0]?.organizationId;
-    if (orgId) await ensureProtectionRates(orgId);
+  if (existing?.memberships[0]) {
+    const orgId = existing.memberships[0].organizationId;
+    await ensureProtectionRates(orgId);
     // eslint-disable-next-line no-console
-    console.log('El usuario demo ya existe; tasas de protección aseguradas.');
-    return;
+    console.log(`Dueño ya existe (${OWNER_EMAIL}); tasas de protección aseguradas.`);
+    return orgId;
   }
 
-  const org = await prisma.organization.create({ data: { name: 'Impresiones Demo' } });
-  await prisma.settings.create({ data: { organizationId: org.id, kwhPrice: 2.5 } });
-  // Fuente AUTO a propósito: cuando la semilla envejezca (>12 h) el primer GET
-  // la refresca solo desde el BCV; una MANUAL quedaría clavada para siempre.
-  await prisma.exchangeRate.create({
-    data: { organizationId: org.id, currencyCode: 'VES', rate: 667.05, source: 'AUTO' },
-  });
-  // Tasas de protección (manuales) para el cobro en bolívares sin perder margen.
-  await ensureProtectionRates(org.id);
+  const org = await prisma.organization.create({ data: { name: ORG_NAME } });
+  await prisma.settings.create({ data: { organizationId: org.id } });
   await prisma.user.create({
     data: {
-      email,
-      name: 'Demo',
-      passwordHash: await bcrypt.hash('demo1234', 10),
-      emailVerified: true, // el usuario de demo entra sin el banner de verificación
+      email: OWNER_EMAIL,
+      name: OWNER_NAME,
+      passwordHash: await bcrypt.hash(OWNER_PASSWORD, 10),
       memberships: { create: { organizationId: org.id, role: 'OWNER' } },
     },
   });
+  await ensureProtectionRates(org.id);
+  // eslint-disable-next-line no-console
+  console.log(
+    `Dueño creado. Login: ${OWNER_EMAIL} / ${OWNER_PASSWORD}\n` +
+      '(Cambia la contraseña al entrar; define OWNER_EMAIL/OWNER_PASSWORD para producción.)',
+  );
+  return org.id;
+}
 
-  await prisma.material.create({
-    data: { organizationId: org.id, name: 'PLA', type: 'PLA', rollPrice: 250, rollGrams: 1000, color: 'Negro' },
-  });
-  await prisma.printer.create({
-    data: { organizationId: org.id, name: 'Ender 3', price: 6000, lifetimeHours: 5000, powerKw: 0.12 },
-  });
-  await prisma.component.create({
-    data: { organizationId: org.id, name: 'Argolla llavero', packagePrice: 50, unitsPerPackage: 100, scope: 'PER_PIECE' },
-  });
-  await prisma.component.create({
-    data: { organizationId: org.id, name: 'Bolsita', packagePrice: 30, unitsPerPackage: 100, scope: 'PER_PIECE' },
-  });
+/**
+ * Catálogo de ejemplo (caso del llavero) en la organización dada. Idempotente por
+ * nombre: no duplica lo que ya exista. Se activa con SEED_DEMO=1.
+ */
+async function seedDemoCatalog(organizationId: string) {
+  let created = 0;
+
+  if (!(await prisma.material.findFirst({ where: { organizationId, name: 'PLA' } }))) {
+    await prisma.material.create({
+      data: { organizationId, name: 'PLA', type: 'PLA', rollPrice: 250, rollGrams: 1000, color: 'Negro' },
+    });
+    created++;
+  }
+  if (!(await prisma.printer.findFirst({ where: { organizationId, name: 'Ender 3' } }))) {
+    await prisma.printer.create({
+      data: { organizationId, name: 'Ender 3', price: 6000, lifetimeHours: 5000, powerKw: 0.12 },
+    });
+    created++;
+  }
+  for (const c of [
+    { name: 'Argolla llavero', packagePrice: 50 },
+    { name: 'Bolsita', packagePrice: 30 },
+  ]) {
+    if (await prisma.component.findFirst({ where: { organizationId, name: c.name } })) continue;
+    await prisma.component.create({
+      data: { organizationId, name: c.name, packagePrice: c.packagePrice, unitsPerPackage: 100, scope: 'PER_PIECE' },
+    });
+    created++;
+  }
 
   // eslint-disable-next-line no-console
-  console.log('Seed demo listo. Login: demo@calc3d.dev / demo1234');
+  console.log(created > 0 ? `Catálogo de ejemplo: ${created} ítem(s) creados.` : 'Catálogo de ejemplo ya presente.');
 }
 
 async function main() {
+  const orgId = await ensureOwner();
   const wantDemo = process.env.SEED_DEMO === '1' || process.env.SEED_DEMO === 'true';
-  if (wantDemo) {
-    await seedDemoBusiness();
-  } else {
-    await ensureRatesForAllOrgs();
-  }
+  if (wantDemo) await seedDemoCatalog(orgId);
 }
 
 main()

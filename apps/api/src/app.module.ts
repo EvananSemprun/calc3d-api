@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
-import { OrganizationsModule } from './organizations/organizations.module';
 import { SettingsModule } from './settings/settings.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 import { MaterialsModule } from './materials/materials.module';
@@ -21,9 +20,6 @@ import { OrdersModule } from './orders/orders.module';
 import { ProductsModule } from './products/products.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { BackupModule } from './backup/backup.module';
-import { PlanModule } from './plan/plan.module';
-import { BillingModule } from './billing/billing.module';
-import { AdminModule } from './admin/admin.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 
 @Module({
@@ -32,7 +28,6 @@ import { CampaignsModule } from './campaigns/campaigns.module';
     PrismaModule,
     AuthModule,
     UsersModule,
-    OrganizationsModule,
     SettingsModule,
     ExchangeRatesModule,
     MaterialsModule,
@@ -50,9 +45,6 @@ import { CampaignsModule } from './campaigns/campaigns.module';
     ProductsModule,
     OnboardingModule,
     BackupModule,
-    PlanModule,
-    BillingModule,
-    AdminModule,
     CampaignsModule,
   ],
 })

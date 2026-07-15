@@ -16,30 +16,6 @@ enum Role {
   COLLABORATOR
 }
 
-// Plan de la organización (Fase 7 SaaS). TRIAL al registrarse (14 días); tras un
-// pago aprobado pasa a TALLER/PRO con vencimiento. Vencido = solo lectura.
-enum PlanTier {
-  TRIAL
-  TALLER
-  PRO
-}
-
-// Método de pago manual reportado por el taller (cobro analógico, sin pasarela).
-enum PaymentMethod {
-  PAGO_MOVIL
-  ZELLE
-  TRANSFER
-  CASH
-  OTHER
-}
-
-// Estado de un reporte de pago manual (lo aprueba/rechaza el superadmin).
-enum PaymentReportStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
 enum QuoteStatus {
   DRAFT
   SENT
@@ -77,12 +53,6 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
 
-  // Estado de plan (Fase 7). TRIAL con `trialEndsAt`; tras pago aprobado, TALLER/PRO
-  // con `planExpiresAt`. El plan está ACTIVO si la fecha límite vigente > ahora.
-  plan          PlanTier  @default(TRIAL)
-  trialEndsAt   DateTime?
-  planExpiresAt DateTime?
-
   members           Membership[]
   settings           Settings?
   materials          Material[]
@@ -96,7 +66,6 @@ model Organization {
   exchangeRates      ExchangeRate[]
   orders             Order[]
   products           Product[]
-  paymentReports     PaymentReport[]
   catalogOptions     CatalogOption[]
   campaigns          Campaign[]
 }
@@ -106,40 +75,10 @@ model User {
   email         String         @unique
   passwordHash  String
   name          String
-  emailVerified Boolean        @default(false)
-  // Superadmin de la PLATAFORMA (Fase 7C), distinto de los roles por-organización.
-  // Solo se asigna por semilla/DB, nunca desde la app.
-  isSuperadmin  Boolean        @default(false)
   createdAt     DateTime       @default(now())
   memberships   Membership[]
   refreshTokens RefreshToken[]
   authTokens    AuthToken[]
-  reviewedPayments PaymentReport[] @relation("PaymentReviewer")
-}
-
-// Reporte de pago MANUAL (Fase 7B): el taller declara que pagó (método + referencia
-// + monto) y el superadmin lo aprueba/rechaza. Aprobar extiende el plan. Sin subida
-// de comprobantes (la referencia + monto basta para cotejar contra el banco).
-model PaymentReport {
-  id             String              @id @default(cuid())
-  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId String
-  plan           PlanTier // plan solicitado (TALLER/PRO)
-  months         Int // período pagado (1 = mensual, 12 = anual)
-  method         PaymentMethod
-  reference      String // referencia/últimos dígitos declarados
-  amount         Decimal             @db.Decimal(12, 4)
-  currency       String              @default("USD")
-  note           String?
-  status         PaymentReportStatus @default(PENDING)
-  reviewedBy     User?               @relation("PaymentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
-  reviewedById   String?
-  reviewedAt     DateTime?
-  reviewNote     String? // motivo del rechazo o nota de aprobación
-  createdAt      DateTime            @default(now())
-
-  @@index([organizationId])
-  @@index([status])
 }
 
 // Propósito de un token de un solo uso enviado por correo.
@@ -463,7 +402,6 @@ model Order {
   clientId       String
 
   code         Int // correlativo por organización (para la nota de entrega)
-  publicToken  String?   @unique // token no adivinable para el link público de solo lectura
   deliveryDate DateTime?
   status       OrderStatus @default(QUOTED)
   notes        String?

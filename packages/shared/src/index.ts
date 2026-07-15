@@ -8,7 +8,6 @@ export * from './calc/charge-equivalents';
 export * from './calc/breakeven';
 export * from './calc/order';
 export * from './calc/product';
-export * from './calc/plan';
 export * from './calc/campaign';
 export * from './calc/money';
 export * from './calc/format';

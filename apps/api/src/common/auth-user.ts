@@ -7,8 +7,6 @@ export interface AuthUser {
   name: string;
   organizationId: string;
   role: 'OWNER' | 'COLLABORATOR';
-  emailVerified: boolean;
-  isSuperadmin: boolean;
 }
 
 /** Inyecta el AuthUser del request en un parámetro del controlador. */

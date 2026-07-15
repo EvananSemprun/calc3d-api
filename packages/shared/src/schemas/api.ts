@@ -6,31 +6,18 @@ import { CalcInputSchema, ScopeSchema } from './calc';
  * frontend (formularios con React Hook Form + Zod). Mensajes en español.
  */
 
-export const RegisterSchema = z.object({
-  email: z.string().email('Correo inválido'),
-  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
-  name: z.string().min(1, 'El nombre es obligatorio'),
-  organizationName: z.string().min(1, 'El nombre del negocio es obligatorio'),
-});
-export type RegisterDto = z.infer<typeof RegisterSchema>;
-
 export const LoginSchema = z.object({
   email: z.string().email('Correo inválido'),
   password: z.string().min(1, 'La contraseña es obligatoria'),
 });
 export type LoginDto = z.infer<typeof LoginSchema>;
 
-// ----- Sesión: refresh, verificación y recuperación -----
+// ----- Sesión: refresh y recuperación de contraseña -----
 
 export const RefreshSchema = z.object({
   refreshToken: z.string().min(1, 'Falta el refresh token'),
 });
 export type RefreshDto = z.infer<typeof RefreshSchema>;
-
-export const VerifyEmailSchema = z.object({
-  token: z.string().min(1, 'Falta el token de verificación'),
-});
-export type VerifyEmailDto = z.infer<typeof VerifyEmailSchema>;
 
 export const ForgotPasswordSchema = z.object({
   email: z.string().email('Correo inválido'),
@@ -43,7 +30,7 @@ export const ResetPasswordSchema = z.object({
 });
 export type ResetPasswordDto = z.infer<typeof ResetPasswordSchema>;
 
-/** Respuesta de login/register/refresh: par de tokens + datos del usuario. */
+/** Respuesta de login/refresh: par de tokens + datos del usuario. */
 export interface AuthTokensResponse {
   accessToken: string;
   refreshToken: string;
@@ -52,16 +39,8 @@ export interface AuthTokensResponse {
     email: string;
     organizationId: string;
     role: 'OWNER' | 'COLLABORATOR';
-    emailVerified: boolean;
   };
 }
-
-export const InviteCollaboratorSchema = z.object({
-  email: z.string().email('Correo inválido'),
-  password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
-  name: z.string().min(1, 'El nombre es obligatorio'),
-});
-export type InviteCollaboratorDto = z.infer<typeof InviteCollaboratorSchema>;
 
 export const RoleSchema = z.enum(['OWNER', 'COLLABORATOR']);
 export type RoleDto = z.infer<typeof RoleSchema>;
@@ -403,33 +382,6 @@ export const ProductRepriceSchema = z.object({
   priceSet: z.number().min(0, 'El precio no puede ser negativo'),
 });
 export type ProductRepriceDto = z.infer<typeof ProductRepriceSchema>;
-
-// ----- Planes SaaS + pago manual (Fase 7) -----
-
-export const PlanTierSchema = z.enum(['TRIAL', 'TALLER', 'PRO']);
-export type PlanTierDto = z.infer<typeof PlanTierSchema>;
-
-export const PaymentMethodSchema = z.enum(['PAGO_MOVIL', 'ZELLE', 'TRANSFER', 'CASH', 'OTHER']);
-export type PaymentMethodDto = z.infer<typeof PaymentMethodSchema>;
-
-/** El taller reporta un pago MANUAL para activar/renovar su plan. */
-export const PaymentReportCreateSchema = z.object({
-  plan: z.enum(['TALLER', 'PRO']),
-  months: z.union([z.literal(1), z.literal(12)]),
-  method: PaymentMethodSchema,
-  reference: z.string().min(1, 'La referencia es obligatoria').max(80),
-  amount: z.number().positive('El monto debe ser mayor que 0'),
-  currency: z.string().length(3).optional().default('USD'),
-  note: z.string().max(500).optional().nullable(),
-});
-export type PaymentReportCreateDto = z.infer<typeof PaymentReportCreateSchema>;
-
-/** El superadmin aprueba o rechaza un reporte de pago. */
-export const PaymentReviewSchema = z.object({
-  action: z.enum(['approve', 'reject']),
-  note: z.string().max(500).optional().nullable(),
-});
-export type PaymentReviewDto = z.infer<typeof PaymentReviewSchema>;
 
 // ----- Presupuestos -----
 
