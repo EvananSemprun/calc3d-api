@@ -16,4 +16,6 @@ WORKDIR /app
 COPY --from=build /app .
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["node", "apps/api/dist/src/main.js"]
+# Aplica las migraciones pendientes (idempotente) antes de arrancar: así cada
+# deploy con cambios de schema se auto-aplica sin pasos manuales.
+CMD ["sh", "-c", "pnpm --filter @calc3d/api exec prisma migrate deploy && node apps/api/dist/src/main.js"]

@@ -1,0 +1,30 @@
+# Blueprint de Render para la API de Calc3D (plan free).
+# Uso: en Render → New → Blueprint → elegir este repo. Render lee este archivo,
+# crea el servicio y pide los valores marcados con `sync: false`.
+#
+# Notas del plan free:
+# - El servicio se duerme tras ~15 min sin tráfico; la primera request tarda
+#   30-60 s en despertarlo (aceptable para uso de un solo dueño).
+# - La BD NO vive aquí (el Postgres free de Render se borra a los 30 días):
+#   usar Neon (https://neon.com) y pegar su connection string en DATABASE_URL.
+services:
+  - type: web
+    name: calc3d-api
+    runtime: docker
+    plan: free
+    region: virginia # cerca de Neon us-east-1 (menor latencia API↔BD)
+    healthCheckPath: /api/health
+    autoDeploy: true # cada push a main redeploya
+    envVars:
+      - key: DATABASE_URL
+        sync: false # pegar la connection string de Neon (pooled)
+      - key: JWT_SECRET
+        generateValue: true # Render genera un secreto aleatorio
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: WEB_ORIGIN
+        sync: false # origen del front, ej. https://calc3d-web.pages.dev
+      - key: APP_URL
+        sync: false # misma URL del front (para los enlaces de reset de contraseña)
+      - key: TRUST_PROXY
+        value: "1" # detrás del proxy de Render: IP real para el rate limiting
