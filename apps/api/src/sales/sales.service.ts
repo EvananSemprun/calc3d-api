@@ -7,7 +7,6 @@ import {
   type SaleFromQuoteDto,
   type SaleUpdateDto,
 } from '@calc3d/shared';
-import { Prisma } from '@prisma/client';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { PrismaService } from '../prisma/prisma.service';
 

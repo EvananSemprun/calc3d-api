@@ -33,7 +33,8 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { DeliveryNoteService } from './delivery-note.service';
+import { DocumentsModule } from '../documents/documents.module';
+import { DeliveryNoteService } from '../documents/delivery-note.service';
 
 /** Añade total/abonado/saldo (derivados) a un pedido con sus pagos incluidos. */
 function withTotals<T extends { lines: unknown; payments: { amount: unknown }[] }>(order: T) {
@@ -303,9 +304,9 @@ export class OrdersController {
 }
 
 @Module({
-  imports: [ExchangeRatesModule],
+  imports: [ExchangeRatesModule, DocumentsModule],
   controllers: [OrdersController],
-  providers: [OrdersService, DeliveryNoteService],
+  providers: [OrdersService],
   exports: [OrdersService],
 })
 export class OrdersModule {}

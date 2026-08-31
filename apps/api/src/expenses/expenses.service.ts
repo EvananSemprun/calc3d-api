@@ -20,6 +20,19 @@ function dateWhere(from?: string, to?: string) {
   return { date: { ...(gte && { gte }), ...(lte && { lte }) } };
 }
 
+/**
+ * Vista mínima de un delegado de Prisma (material / printer / component) para
+ * poder elegirlo POR NOMBRE dentro de la transacción — que es justo lo que el
+ * cliente tipado de Prisma no deja hacer. Declara solo los 3 métodos que se usan
+ * y con su firma real: el tipo `Function` aceptaba cualquier cosa y no avisaba
+ * de un argumento mal armado.
+ */
+interface CatalogDelegate {
+  create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
+  findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string } | null>;
+  update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<{ id: string }>;
+}
+
 @Injectable()
 export class ExpensesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -72,10 +85,7 @@ export class ExpensesService {
     const linkField = `${link.kind}Id` as 'materialId' | 'printerId' | 'componentId';
 
     return this.prisma.$transaction(async (tx) => {
-      const model = (tx as unknown as Record<
-        string,
-        { create: Function; findFirst: Function; update: Function }
-      >)[link.kind];
+      const model = (tx as unknown as Record<string, CatalogDelegate>)[link.kind];
       let linkId = link.id ?? undefined;
 
       if (link.mode === 'new') {

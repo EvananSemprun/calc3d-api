@@ -89,12 +89,44 @@ en el repo web: se sobrescribe al sincronizar.
     `POST /orders/:id/payments` + `DELETE .../payments/:pid`. **Decisión: los
     abonos NO generan `Sale` todavía** (integración pagos→dashboard = pendiente,
     evita doble contabilidad — ver 3C).
-  - **Nota de entrega + calendario (Fase 3B)**: `orders/delivery-note.service.ts`
-    genera el PDF calcado del formato real (N.° = `code` correlativo + año, emisor
-    desde `Organization.name` + `Settings.business*`, receptor del `Client`, tabla
-    Ítem/Descripción/Cantidad/Unidad SIN precios, doble firma) vía
-    `GET /orders/:id/delivery-note.pdf`. `Settings` gana `businessRif/Phone/Address/Signer`
-    (sección "Negocio"). Calendario mensual UTC por `deliveryDate`, coloreado por estado.
+  - **Documentos del negocio** (`documents/`): **un solo formato** para la nota de
+    entrega y la cotización de cliente, calcado de la plantilla real de Word
+    (`nota_entrega_*.docx`). `documents/business-doc.ts` es el **motor de dibujo**
+    (pdfkit): página **Carta** (612×792 pt, márgenes 39,6/50,4), logo centrado,
+    tabla de cabecera de 4 columnas, tabla de ítems con encabezado negro `#111111`
+    y caja de total en la mitad derecha, renglones en blanco y doble firma; corta
+    página repitiendo el encabezado y repinta el pie en cada página. Los colores y
+    tamaños son los del `.docx` (`DOC_COLORS`/`DOC_SIZES`). Fuente **Helvetica**
+    (sustituto de la del `.docx`; pdfkit no puede incrustar fuentes de Office).
+    - `documents/business-identity.service.ts` = **única** fuente del emisor
+      (nombre de la organización + `Settings.business*` + logo). No leer esos datos
+      por separado en un documento nuevo.
+    - `documents/delivery-note.service.ts` → `GET /orders/:id/delivery-note.pdf`.
+      N.° = `Order.code` + año. Tabla Ítem/Descripción/Cantidad/Unidad/Observaciones
+      **SIN precios** (es constancia de entrega, no factura).
+    - `documents/quote-note.service.ts` → `GET /quotes/:id/cotizacion.pdf`. **Es lo
+      que se le manda al CLIENTE**: descripción, cantidad, precio unitario y total,
+      más los extras del motor (diseño/urgencia/ajuste por mínimo) como renglones
+      propios para que las cuentas cuadren. **NUNCA costos, márgenes ni mayoreo** —
+      para eso está `GET /quotes/:id/pdf` (`ExportService`), que es **interno** y se
+      descarga como `desglose-interno-*.pdf`. Fijado por
+      `documents/quote-note.service.spec.ts`.
+    - **Fechas en UTC** (`documents/document-format.ts`): `deliveryDate` se guarda a
+      medianoche UTC; formatear en la zona local imprimía el día ANTERIOR. Validez
+      de la cotización: `QUOTE_VALIDITY_DAYS = 15` (constante, sin UI todavía).
+    - `Quote.code` = correlativo por organización (max+1, igual que `Order`); cada
+      versión duplicada toma el suyo. Los presupuestos previos se numeraron en la
+      migración; sin correlativo el documento sale como `S/N-{año}`.
+    - **Logo del negocio**: `Settings.logo` (BYTEA) + `logoMime`. Se guarda en la BD
+      porque el disco del hosting es efímero. `PUT/GET/DELETE /settings/logo`; el
+      data URL entra por JSON (por eso `main.ts` sube el límite del body a 2 MB) y
+      se valida **tipo declarado + bytes mágicos + tamaño** (solo PNG/JPEG ≤ 1 MB;
+      el SVG se rechaza a propósito). `GET /settings` **nunca** devuelve los bytes:
+      solo `hasLogo`. Regresión: `settings/logo-upload.spec.ts`.
+    - **Nombre del negocio**: vive en `Organization.name` (no hay módulo de
+      organizaciones); se edita como `businessName` dentro de `PATCH /settings`, que
+      lo separa del resto del DTO antes de tocar la tabla `Settings`.
+    - Calendario mensual UTC por `deliveryDate`, coloreado por estado.
   - **Pedidos avanzado (Fase 3C)**: **cuentas por cobrar** (pedidos con saldo>0 por
     antigüedad). **WhatsApp-out** (botón `wa.me` con resumen; teléfono 0→58).
     **Editar líneas** del pedido. **Abonos→dashboard**: `GET /orders/payments?from&to`
@@ -135,6 +167,84 @@ en el repo web: se sobrescribe al sincronizar.
     - **Plantillas/onboarding** (`onboarding/onboarding.module.ts`): `POST
       /onboarding/seed-templates` siembra materiales (PLA/PETG/ABS/TPU), 1 impresora
       e insumos comunes, **idempotente por nombre** (no duplica).
+  - **Tienda / catálogo público (Fase 6)** — DOS módulos, y la separación importa:
+    - `store/` (**panel**, tras `JwtAuthGuard`): CRUD de `StoreProduct`, sus fotos,
+      sus grupos de opciones y `StoreCategory`.
+    - `store-public/` (**sin sesión**, `/api/public/store/*`): la ÚNICA superficie
+      abierta de la API. Solo lectura, rate limit por IP real (`ProxyThrottlerGuard`),
+      `Cache-Control` para que el CDN absorba el tráfico, y **lista blanca de campos
+      armada a mano en el service** — nunca la fila de Prisma. La organización sale de
+      `STORE_ORGANIZATION_ID`, **jamás de un parámetro del cliente**. Regresión:
+      `store-public/store-public.service.spec.ts`.
+    - **`StoreProduct` NO es `Product`.** `Product` responde "¿cuánto me cuesta y a
+      cuánto lo vendo?" (snapshot del `CalcInput`, recosteo, alerta de margen);
+      `StoreProduct` responde "¿qué ve y compra el cliente?" (fotos, descripción,
+      opciones, visibilidad, slug). Fusionarlos haría que editar una foto tocara el
+      costeo — y un **servicio** no tiene `CalcInput`, así que ni entraría en
+      `Product`, que exige `input` y `costAtSave`. `StoreProduct` apunta
+      OPCIONALMENTE a un `Product` o un `Quote` como origen de costeo.
+    - **El costo lo pone el SERVIDOR**: `costAtPublish` no está en el DTO; se lee del
+      origen enlazado (`POST /store/products/from-source` con `productId` o `quoteId`
+      arma el borrador con nombre, precio sugerido y costo del snapshot).
+    - **Sin stock**: la producción es bajo pedido y `leadTimeDays` ocupa ese lugar.
+      Las opciones (color/tamaño) van **sin combinatoria** — no hay SKU por
+      combinación porque no hay existencias que llevar; el recargo por opción alcanza.
+      Si algún día hace falta stock por variante, hay que migrar a una matriz.
+    - **Fotos en Cloudflare R2** (`storage/object-storage.service.ts`, SDK de S3 —
+      R2 es compatible). Subida en DOS pasos: el panel pide una **URL firmada**
+      (`POST .../images/upload-url`) y sube el archivo DIRECTO al bucket; después
+      confirma (`POST .../images`) y el backend verifica con `HeadObject` que el
+      objeto exista, sea del tipo declarado y no pase el tope — la clave se genera
+      en el servidor bajo `{organizationId}/store/{id}/` y se exige ese prefijo al
+      confirmar. Sin las variables `R2_*` la app arranca igual y `GET /store/status`
+      devuelve `storageReady: false` para que el panel avise. El **logo del negocio
+      sigue en la BD** a propósito: es un archivo suelto, no un catálogo.
+    - **CORS**: `WEB_ORIGIN` admite lista separada por comas + `STORE_ORIGIN`.
+    - `StoreProduct` tiene además datos de VITRINA que pedía el diseño: `material`
+      (texto libre, etiqueta no enlazada al catálogo de filamentos), `badge`
+      (insignia de esquina), `custom` (personalizable) y `specs` (JSON de pares
+      label/valor — un campo libre en vez de una columna por dato, para no migrar
+      cada vez que aparece una especificación nueva).
+    - El listado publica `requiresOptions`: si el producto tiene grupos de opciones
+      OBLIGATORIOS, la vitrina manda a la ficha en vez de agregar al carrito sin
+      elegir, que cotizaría el precio base. Los recargos por opción solo viajan en
+      la ficha individual.
+    - El **listado** público trae `colors` (las opciones del grupo "Color" que
+      tienen muestra): la vitrina filtra por color, y pedir la ficha de cada
+      producto solo para eso sería absurdo. Consumidor: repo `calc3d-landing`
+      (el sitio público de Banano Lab; se llamaba `calc3d-store` hasta la fusión).
+  - **Bandeja de la tienda (pedidos que llegan del catálogo público)** —
+    `store-requests/`. Es la **PRIMERA y ÚNICA escritura sin sesión** del sistema;
+    hasta acá `/public/store/*` era solo lectura. Cuatro reglas que la sostienen:
+    - **El precio lo calcula el SERVIDOR.** El cuerpo solo trae
+      `{slug, qty, options}`; `priceItems()` busca la ficha, valida las opciones
+      y suma los recargos. Si el precio viajara en el body, cualquiera compraría
+      a $0.01 y llegaría al panel como venta legítima.
+    - **Una opción/grupo que la ficha NO tiene se RECHAZA, no se ignora.** Ignorar
+      parece más amable, pero si el nombre llega apenas distinto (una ñ mal
+      codificada, un grupo renombrado con la página abierta) el recargo se pierde
+      en silencio: la ficha dice $25.50 y el pedido entra en $24.
+    - **Nada toca la operación ni el CRM hasta confirmar.** `StoreRequest`
+      (kind ORDER/CUSTOM, status NEW/CONFIRMED/DISCARDED) es una **bandeja**.
+      `confirm()` crea el `Client` —o lo **enlaza por teléfono normalizado**, que
+      es lo que da historial por cliente **sin cuentas ni contraseñas**— y el
+      `Order` en `QUOTED` con `originChannel: STORE`.
+    - **Rate limit propio, mucho más duro**: 5/min por IP real (el catálogo de
+      lectura tiene 120/min). Un pedido es un acto humano, no una ráfaga.
+    - Las líneas se traducen al formato de pedido con `toOrderLines()`, que mete
+      las opciones DENTRO de la descripción: el pedido y la nota de entrega solo
+      muestran ese campo, así que dejarlas aparte era producir sin saber el color.
+    - Una solicitud **a medida** se confirma como pedido SIN líneas (todavía no
+      tiene precio) con la descripción en `notes`. NO puede ser un `Quote`: un
+      presupuesto exige el snapshot completo del `CalcInput`, y "quiero un llavero
+      con mi logo" no lo tiene.
+    - **Decisión: pedido como INVITADO, sin registro de clientes.** Construir
+      cuentas opcionales obliga igual al camino de invitado y suma registro,
+      verificación de correo, recuperación y sesión pública — el doble de
+      superficie de auth sin demanda medida. El teléfono da lo que se quería.
+    - `AttributionChannel` ganó el valor **`STORE`**: sin él los pedidos del
+      catálogo caían como "Sin atribuir" y quedaban fuera del ROI por campaña.
+    - Regresión (18 tests): `store-requests/store-requests.service.spec.ts`.
   - **Autenticación y seguridad de cuentas** — `auth/` + `mail/mail.module.ts`:
     - **Login del dueño** (`POST /auth/login`): **no hay registro público**; la cuenta
       se crea con el `seed` (ver Comandos). Roles OWNER/COLLABORATOR se conservan en el
@@ -150,8 +260,19 @@ en el repo web: se sobrescribe al sincronizar.
       Tokens `AuthToken` de **un solo uso** con propósito y expiración.
     - **Correos con Resend** (`MailService`): SOLO para el enlace de reset de contraseña.
       Usa Resend si `RESEND_API_KEY` está configurada; si no, **modo dev** (registra el
-      enlace en el log, NO lo expone en la respuesta HTTP). Vars: `RESEND_API_KEY`,
+      enlace en el log, NO lo expone en la respuesta HTTP). **En producción el enlace
+      NO se registra**: lleva el token de reset y quien lea el log tomaría la cuenta;
+      ahí se loguea el fallo de envío, que además avisa que el reset no funciona. Vars: `RESEND_API_KEY`,
       `MAIL_FROM`, `APP_URL`.
+    - **Secreto de firma** (`auth/jwt-secret.ts`): fuente ÚNICA que resuelven tanto
+      el `JwtModule` que firma como la estrategia que verifica (si cada uno lo leyera
+      por su cuenta podrían divergir). **En producción no hay fallback**: sin
+      `JWT_SECRET`, o con el valor de desarrollo, o con menos de 32 caracteres, la app
+      NO arranca. Antes caía a `'dev-secret'`, escrito en el código: cualquiera que
+      conociera un par usuario/organización podía firmar un token del dueño.
+      Regresión: `auth/jwt-secret.spec.ts`.
+    - **El seed no siembra credenciales conocidas**: con `NODE_ENV=production` exige
+      `OWNER_PASSWORD` explícito y ya no imprime la contraseña en el log.
     - **Rate limiting** (`@nestjs/throttler` + `ProxyThrottlerGuard`): grupo estricto
       (login / forgot-password / reset-password) a **10/min** por **IP real**; el resto
       (incluido `refresh`) usa el default del módulo (60/min). La IP real sale de
@@ -255,6 +376,50 @@ en el repo web: se sobrescribe al sincronizar.
   `OWNER_PASSWORD` (defaults de desarrollo: `dueno@calc3d.local` / `calc3d1234`).
   Como no hay registro público, **el seed es la única vía de crear la cuenta**. Con
   `SEED_DEMO=1` además siembra un catálogo de ejemplo (caso del llavero) en su org.
+
+## Base de datos: local para desarrollar, Railway en producción
+
+**1. Desarrollar y probar SIEMPRE contra la base local.**
+- Nada de apuntar a producción "para probar rápido". El `.env` de desarrollo se
+  queda con la `DATABASE_URL` local (Postgres 18 en `localhost:5432`, base `calc3d`).
+- **Cuenta de pruebas**: la del `seed` — `dueno@calc3d.local` / `calc3d1234`
+  (defaults de `OWNER_EMAIL`/`OWNER_PASSWORD`). Como no hay registro público, el
+  seed es la única vía de crear cuentas: si hace falta otra para probar algo,
+  créala en la local con el seed o un script. Nunca usar una cuenta real de prod.
+- Antes de dar una feature por buena: `pnpm test:shared` + prueba manual real
+  (API en 3001 + web-preview de `calc3d-web` en 5180).
+
+**2. Solo cuando lo local está probado, subir y migrar a producción.**
+- Producción = **PostgreSQL en Railway**: host `crossover.proxy.rlwy.net`, puerto
+  `48405`, base `railway`, usuario `postgres`.
+- **La contraseña NO se escribe en este archivo ni en nada versionado.** La URL
+  completa vive como `DATABASE_URL_PROD` en `apps/api/.env.production.local`
+  (lo cubre el `.gitignore` con `.env.*`; ese archivo NO se carga solo).
+- Las migraciones se **generan y commitean en local** (`prisma migrate dev` contra
+  la base local); en producción solo se **aplican** las ya versionadas — desde la
+  raíz de este repo, cargando la URL a mano en la sesión de PowerShell:
+  ```powershell
+  $env:DATABASE_URL = ((Get-Content .\apps\api\.env.production.local `
+    | Where-Object { $_ -match '^DATABASE_URL_PROD=' }) -replace '^DATABASE_URL_PROD=','').Trim('"')
+  pnpm --filter @calc3d/api exec prisma migrate deploy
+  ```
+  Esa variable vive solo en esa sesión: cerrá la terminal (o reasigná la URL local)
+  al terminar, para no dejarla apuntando a prod sin querer.
+- **Prohibido contra producción**: `prisma migrate dev`, `migrate reset`,
+  `db push --accept-data-loss` y `SEED_DEMO=1 pnpm seed` (el catálogo demo no va a
+  prod). El seed normal (dueño + tasas de protección, idempotente) sí, con
+  `OWNER_EMAIL`/`OWNER_PASSWORD` reales.
+- **Backup antes de cualquier migración que borre o transforme datos**
+  (`"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"` contra la URL de Railway).
+- Nunca editar una migración ya aplicada en prod: se crea una nueva encima.
+- Después de migrar: `prisma migrate status` contra prod limpio y la API de
+  producción arrancando. Verificarlo, no asumirlo.
+- Recordar el flujo de migraciones no-interactivo: Prisma no permite `migrate dev`
+  con drops sin TTY → generar el SQL con `migrate diff --from-url ... --script`,
+  guardarlo como migración y aplicarlo con `migrate deploy`.
+
+**3. Avisar antes de tocar producción.** Migrar, correr scripts o modificar datos
+en la base de producción se consulta y se espera OK explícito, aunque parezca trivial.
 
 ## Convenciones del motor de cálculo
 - Porcentajes como **fracción** (0.08 = 8 %, 0.3 = 30 %).

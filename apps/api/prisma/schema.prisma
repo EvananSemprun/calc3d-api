@@ -53,21 +53,24 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
 
-  members           Membership[]
-  settings           Settings?
-  materials          Material[]
-  printers           Printer[]
-  components         Component[]
-  clients            Client[]
-  providers          Provider[]
-  quotes             Quote[]
-  sales              Sale[]
-  expenses           Expense[]
-  exchangeRates      ExchangeRate[]
-  orders             Order[]
-  products           Product[]
-  catalogOptions     CatalogOption[]
-  campaigns          Campaign[]
+  members         Membership[]
+  settings        Settings?
+  materials       Material[]
+  printers        Printer[]
+  components      Component[]
+  clients         Client[]
+  providers       Provider[]
+  quotes          Quote[]
+  sales           Sale[]
+  expenses        Expense[]
+  exchangeRates   ExchangeRate[]
+  orders          Order[]
+  products        Product[]
+  catalogOptions  CatalogOption[]
+  storeProducts   StoreProduct[]
+  storeCategories StoreCategory[]
+  campaigns       Campaign[]
+  storeRequests   StoreRequest[]
 }
 
 model User {
@@ -170,6 +173,12 @@ model Settings {
   businessPhone   String?
   businessAddress String?
   businessSigner  String? // nombre de quien firma la entrega
+  // Logo del negocio para el encabezado de los documentos (nota de entrega y
+  // cotización). Se guarda en la BD y NO en disco: el hosting de la API tiene
+  // disco efímero (se pierde en cada despliegue).
+  // Solo PNG/JPEG (pdfkit no dibuja SVG) y con tope de tamaño en el endpoint.
+  logo            Bytes?
+  logoMime        String?
 
   // Piso de margen (markup, fracción) bajo el cual un producto del catálogo
   // dispara alerta de rentabilidad al recostear con precios/tasa de hoy.
@@ -225,13 +234,13 @@ model Component {
 }
 
 model Client {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
   name           String
   contact        String?
   // Tipo de contacto en el directorio/CRM (Fase 5). Default CLIENT.
-  type           ContactType  @default(CLIENT)
+  type           ContactType    @default(CLIENT)
   // Datos opcionales (nota de entrega, futuro CRM/mapa). El flujo rápido de
   // WhatsApp solo exige nombre + teléfono.
   phone          String?
@@ -243,10 +252,11 @@ model Client {
   // Ubicación en el mapa (se fija haciendo click en el mapa; sin geocodificación).
   lat            Float?
   lng            Float?
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime       @default(now())
   quotes         Quote[]
   sales          Sale[]
   orders         Order[]
+  storeRequests  StoreRequest[]
 
   @@index([organizationId])
   @@index([organizationId, type])
@@ -278,6 +288,11 @@ model Quote {
   quantity Int
   status   QuoteStatus @default(DRAFT)
 
+  // Correlativo por organización para el N.º de cotización del documento que ve
+  // el cliente. Opcional: los presupuestos creados antes de esta columna se
+  // rellenan en la migración, pero el tipo queda nullable por seguridad.
+  code Int?
+
   // Versionado: las versiones comparten el mismo originalQuoteId (o su propio id la v1).
   version         Int     @default(1)
   originalQuoteId String?
@@ -296,8 +311,10 @@ model Quote {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sales Sale[]
+  sales         Sale[]
+  storeProducts StoreProduct[]
 
+  @@unique([organizationId, code])
   @@index([organizationId])
   @@index([originalQuoteId])
   @@index([campaignId])
@@ -401,17 +418,17 @@ model Order {
   client         Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
   clientId       String
 
-  code         Int // correlativo por organización (para la nota de entrega)
-  deliveryDate DateTime?
-  status       OrderStatus @default(QUOTED)
-  notes        String?
-  lines        Json        @default("[]")
-  currencyLabel String?    // moneda de presentación elegida (null = solo USD)
+  code          Int // correlativo por organización (para la nota de entrega)
+  deliveryDate  DateTime?
+  status        OrderStatus @default(QUOTED)
+  notes         String?
+  lines         Json        @default("[]")
+  currencyLabel String? // moneda de presentación elegida (null = solo USD)
   exchangeRates Json?
   // Cierre en bolívares (Fase 2): mientras es null, los Bs se muestran EN VIVO
   // (tasa de hoy para `currencyLabel`); al emitir la nota de entrega se re-congela
   // `exchangeRates` a la tasa del momento y se marca `settledAt` (Bs finales).
-  settledAt    DateTime?
+  settledAt     DateTime?
 
   // Atribución de publicidad (Fase 1). null = "Sin atribuir".
   originChannel AttributionChannel?
@@ -421,7 +438,9 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  payments Payment[]
+  payments     Payment[]
+  // Solicitud de tienda que dio origen a este pedido (si vino de ahí).
+  storeRequest StoreRequest?
 
   @@unique([organizationId, code])
   @@index([organizationId])
@@ -474,6 +493,9 @@ model Product {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Fichas de tienda que se publicaron a partir de este producto.
+  storeProducts StoreProduct[]
 
   @@index([organizationId])
 }
@@ -543,6 +565,10 @@ enum CampaignStatus {
 // null = "Sin atribuir". Un canal genérico O una campaña específica (campaignId).
 enum AttributionChannel {
   ORGANIC
+  // Pedido nacido en la TIENDA pública. Sin este valor los pedidos que llegan
+  // del catálogo caen como "Sin atribuir" (o mienten como WHATSAPP) y quedan
+  // fuera del ROI por campaña, que es justamente para lo que se construyó.
+  STORE
   INSTAGRAM_ADS
   FACEBOOK_ADS
   TIKTOK_ADS
@@ -577,4 +603,242 @@ model Campaign {
   sales    Sale[]
 
   @@index([organizationId])
+}
+
+// ----- Tienda (catálogo público) -----
+//
+// La FICHA DE TIENDA es un modelo aparte del `Product` interno a propósito: aquel
+// responde "¿cuánto me cuesta y a cuánto lo vendo?" (snapshot del CalcInput,
+// recosteo, alerta de margen) y esta responde "¿qué ve y compra el cliente?"
+// (fotos, descripción, opciones, visibilidad). Fusionarlos haría que cada cambio
+// de foto tocara el snapshot de costeo — y un SERVICIO no tiene CalcInput, así
+// que ni siquiera cabría en `Product`, que exige `input` y `costAtSave`.
+
+/**
+ * Un producto físico (se imprime y se entrega) o un servicio (diseño, reparación).
+ */
+enum StoreProductKind {
+  PHYSICAL
+  SERVICE
+}
+
+/**
+ * Agrupación de la vitrina ("Llaveros", "Figuras", "Servicios").
+ */
+model StoreCategory {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  slug           String
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  products StoreProduct[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model StoreProduct {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  /**
+   * Identificador de la URL pública. Único por organización.
+   */
+  slug        String
+  name        String
+  kind        StoreProductKind @default(PHYSICAL)
+  /**
+   * Una línea para la tarjeta de la vitrina.
+   */
+  summary     String?
+  /**
+   * Texto largo de la ficha.
+   */
+  description String?
+
+  // El precio de vitrina vive en USD (la base del motor); los bolívares son capa
+  // de presentación y se calculan con la tasa vigente al mostrarlos.
+  priceUsd     Decimal  @db.Decimal(12, 4)
+  /**
+   * Precio tachado, para ofertas. Solo presentación.
+   */
+  compareAtUsd Decimal? @db.Decimal(12, 4)
+
+  /**
+   * Días de producción a mostrar. Reemplaza al stock: se produce bajo pedido.
+   */
+  leadTimeDays Int?
+  minQty       Int  @default(1)
+
+  /// Material con el que se imprime ("PLA", "PETG"...). Texto libre: es una
+  /// etiqueta de vitrina, no un enlace al catalogo interno de filamentos.
+  material String?
+  /// Insignia de esquina de la tarjeta ("Nuevo", "Mas vendido"). Texto libre.
+  badge    String?
+  /// Si el cliente puede pedirlo con su nombre, logo o forma.
+  custom   Boolean @default(false)
+  /// Ficha tecnica libre: [{ label, value }]. Un JSON en vez de una columna por
+  /// dato, para no migrar cada vez que aparece una especificacion nueva.
+  specs    Json    @default("[]")
+  /**
+   * false = borrador (no sale por la API pública).
+   */
+  visible  Boolean @default(false)
+  /**
+   * Orden manual en la vitrina.
+   */
+  position Int     @default(0)
+
+  category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId String?
+
+  // ORIGEN DE COSTEO, opcional: enlaza la ficha con el producto interno o la
+  // cotización de la que salió. Sirve para la alerta de rentabilidad; NUNCA sale
+  // por la API pública. `SetNull` para que borrar el origen no borre la ficha.
+  product       Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId     String?
+  quote         Quote?   @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  quoteId       String?
+  /**
+   * Costo unitario congelado al publicar (USD). Interno.
+   */
+  costAtPublish Decimal? @db.Decimal(12, 4)
+
+  images       StoreImage[]
+  optionGroups StoreOptionGroup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([organizationId, visible])
+  @@index([categoryId])
+}
+
+/**
+ * Foto de una ficha. El archivo vive en R2; acá solo se guarda su clave.
+ */
+model StoreImage {
+  id             String       @id @default(cuid())
+  storeProduct   StoreProduct @relation(fields: [storeProductId], references: [id], onDelete: Cascade)
+  storeProductId String
+  /**
+   * Clave del objeto en el bucket (no la URL: el dominio público es configurable).
+   */
+  key            String
+  alt            String?
+  width          Int?
+  height         Int?
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@index([storeProductId])
+}
+
+// Opciones SIN combinatoria (no hay SKU por combinación): al producirse bajo
+// pedido no existe stock que llevar por variante, así que una matriz sería peso
+// muerto. El recargo por opción alcanza para "Grande cuesta $3 más".
+model StoreOptionGroup {
+  id             String       @id @default(cuid())
+  storeProduct   StoreProduct @relation(fields: [storeProductId], references: [id], onDelete: Cascade)
+  storeProductId String
+  /**
+   * "Color", "Tamaño", "Acabado".
+   */
+  name           String
+  required       Boolean      @default(false)
+  position       Int          @default(0)
+
+  options StoreOption[]
+
+  @@index([storeProductId])
+}
+
+model StoreOption {
+  id            String           @id @default(cuid())
+  group         StoreOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId       String
+  /**
+   * "Rojo", "Grande".
+   */
+  value         String
+  /**
+   * Recargo sobre el precio base, en USD (0 = sin recargo).
+   */
+  priceDeltaUsd Decimal          @default(0) @db.Decimal(12, 4)
+  /**
+   * Muestra de color para el selector (#RRGGBB). Solo si el grupo es de color.
+   */
+  swatchHex     String?
+  position      Int              @default(0)
+
+  @@index([groupId])
+}
+
+// ----- Bandeja de la tienda (lo que llega SIN sesión) -----
+
+/**
+ * Pedido del carrito (con líneas y total) o solicitud de pieza a medida.
+ */
+enum StoreRequestKind {
+  ORDER
+  CUSTOM
+}
+
+enum StoreRequestStatus {
+  NEW
+  CONFIRMED
+  DISCARDED
+}
+
+/**
+ * Lo que manda un visitante de la tienda. Es una BANDEJA, no un pedido: es la
+ * primera escritura sin sesión del sistema, y nada de lo que entra por ahí toca
+ * la operación ni el CRM hasta que el dueño lo confirma. Recién al confirmar se
+ * crea (o se enlaza por teléfono) el `Client` y se crea el `Order`.
+ * `lines` y `totalUsd` los calcula el SERVIDOR leyendo la ficha de tienda; el
+ * cliente solo dice qué producto y qué opciones quiere. Si el precio viajara en
+ * el cuerpo, cualquiera compraría a $0.01 y llegaría como venta legítima.
+ * No se guarda IP ni user-agent: el rate limit ya frena el abuso, y almacenar
+ * esos datos de desconocidos sería una responsabilidad sin uso para el dueño.
+ */
+model StoreRequest {
+  id             String             @id @default(cuid())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  kind           StoreRequestKind
+  status         StoreRequestStatus @default(NEW)
+
+  customerName     String
+  customerPhone    String
+  // Teléfono normalizado (solo dígitos, 0 inicial -> 58) para enlazar con un
+  // contacto existente sin depender de cómo lo escribió cada uno.
+  customerPhoneKey String
+  customerNote     String?
+
+  // Solo ORDER: renglones [{ slug, name, quantity, options, unit, unitPrice }]
+  // con el precio que calculó el servidor, y su total.
+  lines    Json    @default("[]")
+  totalUsd Decimal @default(0) @db.Decimal(12, 4)
+
+  // Solo CUSTOM: qué pieza necesita.
+  description String?
+
+  createdAt  DateTime  @default(now())
+  reviewedAt DateTime?
+
+  // Resultado de confirmar.
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId String?
+  order    Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderId  String? @unique
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@index([clientId])
 }

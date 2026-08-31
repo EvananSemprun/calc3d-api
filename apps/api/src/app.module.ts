@@ -22,6 +22,10 @@ import { ProductsModule } from './products/products.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { BackupModule } from './backup/backup.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
+import { StorageModule } from './storage/storage.module';
+import { StoreModule } from './store/store.module';
+import { StoreRequestsModule } from './store-requests/store-requests.module';
+import { StorePublicModule } from './store-public/store-public.module';
 
 @Module({
   imports: [
@@ -47,6 +51,12 @@ import { CampaignsModule } from './campaigns/campaigns.module';
     OnboardingModule,
     BackupModule,
     CampaignsModule,
+    StorageModule,
+    StoreModule,
+    // Catálogo público: SIN sesión. Va último para dejar claro que es la única
+    // superficie abierta de la API (ver store-public.module.ts).
+    StorePublicModule,
+    StoreRequestsModule,
   ],
   controllers: [HealthController],
 })

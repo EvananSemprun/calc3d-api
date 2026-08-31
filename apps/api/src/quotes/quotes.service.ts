@@ -48,6 +48,19 @@ export class QuotesService {
     });
   }
 
+  /**
+   * Siguiente correlativo de cotización de la organización (el mayor + 1), con
+   * el mismo criterio que los pedidos. Es el N.º que ve el cliente en el PDF.
+   */
+  private async nextCode(organizationId: string): Promise<number> {
+    const last = await this.prisma.quote.findFirst({
+      where: { organizationId },
+      orderBy: { code: 'desc' },
+      select: { code: true },
+    });
+    return (last?.code ?? 0) + 1;
+  }
+
   async create(organizationId: string, dto: QuoteCreateDto) {
     const input = CalcInputSchema.parse(dto.input);
     const totals = calculateQuote(input);
@@ -55,6 +68,7 @@ export class QuotesService {
       data: {
         organizationId,
         clientId: dto.clientId ?? null,
+        code: await this.nextCode(organizationId),
         name: dto.name,
         quantity: input.quantity,
         status: dto.status ?? 'DRAFT',
@@ -115,6 +129,7 @@ export class QuotesService {
       data: {
         organizationId,
         clientId: source.clientId,
+        code: await this.nextCode(organizationId),
         name: source.name,
         quantity: source.quantity,
         status: 'DRAFT',

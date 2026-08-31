@@ -43,8 +43,17 @@ export class MailService {
 
   private async send(to: string, subject: string, html: string, link: string) {
     if (!this.resend) {
-      // Modo dev: sin proveedor, deja el enlace en el log para poder probar.
-      this.logger.warn(`[MODO DEV · sin RESEND_API_KEY] Correo para ${to}: ${link}`);
+      // El enlace lleva el token de reset: quien lea el log puede tomar la cuenta.
+      // Solo se escribe fuera de producción, donde es la única forma de probar el
+      // flujo; en producción se registra el FALLO, nunca el enlace.
+      if (this.config.get<string>('NODE_ENV') === 'production') {
+        this.logger.error(
+          `No se pudo enviar el correo a ${to}: falta RESEND_API_KEY. ` +
+            'El restablecimiento de contraseña NO está funcionando.',
+        );
+      } else {
+        this.logger.warn(`[MODO DEV · sin RESEND_API_KEY] Correo para ${to}: ${link}`);
+      }
       return;
     }
     try {

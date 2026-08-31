@@ -22,6 +22,16 @@ const prisma = new PrismaClient();
 
 const OWNER_EMAIL = process.env.OWNER_EMAIL || 'dueno@calc3d.local';
 const OWNER_PASSWORD = process.env.OWNER_PASSWORD || 'calc3d1234';
+
+// Los valores por defecto están escritos acá, así que son públicos. Sembrar la
+// cuenta del dueño con ellos en producción deja credenciales conocidas: el seed
+// se planta antes de crear nada.
+if (process.env.NODE_ENV === 'production' && !process.env.OWNER_PASSWORD) {
+  throw new Error(
+    'OWNER_PASSWORD es obligatorio en producción: la contraseña por defecto está ' +
+      'en el código fuente y cualquiera podría entrar con ella.',
+  );
+}
 const OWNER_NAME = process.env.OWNER_NAME || 'Dueño';
 const ORG_NAME = process.env.ORG_NAME || 'Mi negocio';
 
@@ -85,8 +95,8 @@ async function ensureOwner(): Promise<string> {
   await ensureProtectionRates(org.id);
   // eslint-disable-next-line no-console
   console.log(
-    `Dueño creado. Login: ${OWNER_EMAIL} / ${OWNER_PASSWORD}\n` +
-      '(Cambia la contraseña al entrar; define OWNER_EMAIL/OWNER_PASSWORD para producción.)',
+    `Dueño creado: ${OWNER_EMAIL}. ` +
+      'La contraseña es la de OWNER_PASSWORD; cambiala al entrar.',
   );
   return org.id;
 }
