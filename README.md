@@ -108,4 +108,4 @@ seed una vez para crear la cuenta del dueño.
 |---|---|
 | **calc3d-api** (este) | Backend + motor de cálculo canónico |
 | [calc3d-web](https://github.com/EvananSemprun/calc3d-web) | Panel web (React + Vite) |
-| [calc3d-landing](https://github.com/EvananSemprun/calc3d-landing) | Landing estática |
+| [calc3d-landing](https://github.com/EvananSemprun/calc3d-landing) | Sitio público / tienda de Banano Lab (Vite, sin React). ⚠️ El nombre dice "landing" por historia git |
