@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { TokenService } from './token.service';
 import { JwtStrategy } from './jwt.strategy';
+import { resolveJwtSecret } from './jwt-secret';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { JwtStrategy } from './jwt.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'dev-secret'),
+        secret: resolveJwtSecret(config),
         // Access token CORTO: si se filtra, vale minutos, no días. La sesión se
         // mantiene viva con el refresh token rotatorio.
         signOptions: { expiresIn: config.get<string>('JWT_EXPIRES_IN', '15m') },
