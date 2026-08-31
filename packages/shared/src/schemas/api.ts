@@ -106,6 +106,9 @@ export const SettingsUpdateSchema = z.object({
   fixedCosts: z.array(FixedCostSchema).optional(),
   /** Margen de contribución para el punto de equilibrio (fracción, 0.4 = 40 %). */
   breakEvenMarginPct: z.number().min(0).max(1).optional(),
+  /** Nombre del negocio: vive en `Organization.name` (es el emisor de los
+   *  documentos), pero se edita desde Ajustes → Negocio como un campo más. */
+  businessName: z.string().min(1, 'El nombre del negocio es obligatorio').max(80).optional(),
   businessRif: z.string().optional().nullable(),
   businessPhone: z.string().optional().nullable(),
   businessAddress: z.string().optional().nullable(),
@@ -114,6 +117,27 @@ export const SettingsUpdateSchema = z.object({
   productAlertMinMarginPct: z.number().min(0).optional(),
 });
 export type SettingsUpdateDto = z.infer<typeof SettingsUpdateSchema>;
+
+/** Tipos de imagen aceptados para el logo: pdfkit solo dibuja PNG y JPEG, y
+ *  dejar fuera al SVG evita servir markup ejecutable en la vista previa. */
+export const LOGO_MIME_TYPES = ['image/png', 'image/jpeg'] as const;
+export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
+
+/** Tope del archivo original en bytes (1 MB). El data URL en base64 pesa ~4/3. */
+export const LOGO_MAX_BYTES = 1024 * 1024;
+
+/** Subida del logo del negocio como data URL (lo que devuelve FileReader).
+ *  El backend ADEMÁS verifica los bytes mágicos: el mime declarado no basta. */
+export const LogoUploadSchema = z.object({
+  dataUrl: z
+    .string()
+    .regex(
+      /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/,
+      'El logo debe ser un PNG o JPEG',
+    )
+    .max(Math.ceil((LOGO_MAX_BYTES * 4) / 3) + 64, 'El logo no puede pesar más de 1 MB'),
+});
+export type LogoUploadDto = z.infer<typeof LogoUploadSchema>;
 
 // ----- Tasas de cambio (moneda dual) -----
 

@@ -1,6 +1,8 @@
 // Contratos compartidos entre front y back: schemas Zod, tipos y motor de cálculo.
 export * from './schemas/calc';
 export * from './schemas/api';
+export * from './schemas/store';
+export * from './schemas/store-request';
 export * from './calc/types';
 export * from './calc/calculateQuote';
 export * from './calc/select';
