@@ -14,7 +14,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Stock mensual** | Conteo físico de rollos por mes, estado activo/descontinuado, reposición | Filamento → Stock del mes | ✅ **Migrado** |
 | **Hoja de datos (respaldo)** | Listas de validación (marcas, tipos, colores) | `CatalogOption` | ✅ Equivalente |
 | **Materiales** | Catálogo de costos de 3 insumos que NO son filamento (imanes, papel burbuja, clicks) | Catálogos → Insumos (`Component`) | ✅ **Migrado** |
-| **Inversion** | Dos impresoras: costo y cuánto se repuso con la ganancia acumulada | `Printer` + `Expense` (inversión) | ⚠️ Los equipos **migrados**; la reposición con capital acumulado, no |
+| **Inversion** | Dos impresoras: costo y cuánto se repuso con la ganancia acumulada | `Printer` + `Expense` + `GET /printers/recovery` | ✅ **Migrado** |
 | **Resumen** | Dashboard derivado de las demás hojas | Dashboard | ⚠️ Parcial — ver §3 |
 | **Encargos** | 7 encargos: fecha de pago, cliente, descripción, canal, monto, costo de material | `Order` DELIVERED + su abono | ✅ **Migrado** |
 | **Publicidad** | 7 campañas: fecha, formato, público, objetivo, gasto, alcance, conversaciones, visitas | `Campaign` + su gasto en el ledger | ✅ **Migrado** (se agregaron alcance/conversaciones/visitas al modelo) |
@@ -57,7 +57,7 @@ un error de la app: son decisiones tomadas a propósito.**
 | **Precio del filamento al costear** | Se copia a mano de `Inventario` a `Costeo` | Sale del catálogo, que la última compra actualiza sola | Si se olvida, se cotiza con un precio viejo |
 | **Mayoreo** | Descuento sobre el precio final | Igual (se cambió para seguir la hoja) | Es como se negocia de verdad |
 | **Punto de equilibrio** | Tres niveles: no perder / + cuota del préstamo / + reserva para equipos | Los mismos tres niveles | La cuota se **deriva** de los préstamos abiertos, no se escribe a mano |
-| **Reposición de equipos** | Reparte la ganancia acumulada entre las impresoras hasta cubrirlas | No existe | El dashboard muestra recuperación de inversión, pero no equipo por equipo |
+| **Reposición de equipos** | Reparte la ganancia acumulada entre las impresoras hasta cubrirlas | Lo mismo, en cascada por orden de compra | Acumulado de toda la historia; ya no depende del filtro de fechas |
 | **Mantenimiento por hora** | **No lo cobra**: la máquina solo cuesta inversión ÷ vida útil | Campo propio en la impresora, se suma al desgaste | Boquillas, correas y grasa son gasto real que la vida útil sola no captura. Hoy el campo está en cero: hay repuestos comprados que no tocan ningún precio |
 
 ### El ÷1000 de `Inventario`, en detalle

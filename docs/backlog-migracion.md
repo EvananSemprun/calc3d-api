@@ -135,12 +135,26 @@ y verificación, como el de filamento.
 
 ---
 
-## 6. Reposición de equipos 🟡
+## 6. Reposición de equipos ✅ HECHO (2026-09-07)
 
-6.1. Repartir la ganancia acumulada entre las impresoras hasta cubrir su costo.
-6.2. Mostrar por equipo: costo, repuesto, falta y % — como la hoja `Inversion`.
-6.3. 🟡 Definir qué cuenta como "ganancia acumulada": hoy el dashboard tiene
-     recuperación de inversión global, pero no equipo por equipo.
+> `GET /printers/recovery` + tarjeta en el Dashboard, con el reparto de la hoja
+> `Inversion`: una **cascada en orden de compra** (la primera máquina se cubre
+> hasta su costo y recién lo que sobra pasa a la siguiente). Se ordena por la
+> fecha del gasto de inversión, no por el alta de la ficha.
+>
+> **6.3 resuelto: ganancia acumulada = ingresos − gastos operativos**, sin la
+> inversión en equipos (sería restar dos veces lo que se está reponiendo) ni los
+> pagos del préstamo (devolver capital no es un costo).
+>
+> Es **acumulado sobre toda la historia** y lo calcula el servidor: la tarjeta
+> vieja "Recuperación de la inversión" usaba el filtro de fechas del Dashboard,
+> así que el mismo negocio se veía distinto según el rango elegido. Se
+> reemplazó, no se agregó al lado.
+>
+> Hoy: ganancia acumulada **−$182,06**, los dos equipos en 0 % repuesto, igual
+> que la hoja. La hoja dice −$143,56; la diferencia de $38,50 son los $23,50 del
+> descuadre de `Ventas` más $15 de los clicks, que están en `Materiales` pero no
+> en `Gastos`.
 
 ---
 

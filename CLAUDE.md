@@ -385,6 +385,18 @@ en el repo web: se sobrescribe al sincronizar.
       equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
       build ESM de shared** (usa imports sin extensión, que el ESM nativo de
       Node no resuelve): se trae el CJS con `createRequire`.
+  - **Reposición de equipos (2026-09-07)** — `GET /printers/recovery` (⚠️ ruta
+    literal declarada ANTES de `:id`) con `equipmentRecovery` de
+    `shared/calc/equipment.ts`: reparte la ganancia acumulada entre las
+    impresoras en **cascada por orden de compra** (la primera se cubre entera
+    antes de tocar la segunda; ordena por la fecha del gasto de inversión, no
+    por el alta de la ficha). **Ganancia acumulada = ingresos − gastos
+    operativos**, sin la inversión en equipos (sería restar dos veces lo que se
+    repone) ni los pagos del préstamo. Es **acumulado de toda la historia** y
+    por eso se calcula en el servidor: la tarjeta vieja del Dashboard usaba el
+    filtro de fechas y el mismo negocio se veía distinto según el rango.
+    `freeCapital` **no se recorta en cero**: si la ganancia es negativa, ese
+    número en rojo es el dato importante. Tests: `equipment.spec.ts`.
   - **Metas mensuales (2026-09-07)** (`goals/goals.module.ts`): modelo `Goal`
     (mes UTC único por org, metas de ventas/encargos/clientes nuevos). **Solo se
     guarda la meta**; lo cumplido se DERIVA, y las definiciones importan porque
