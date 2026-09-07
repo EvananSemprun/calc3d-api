@@ -2,10 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   formatMoney,
   formatPercent,
-  pickSuggestedPrice,
-  priceFinalPerUnit,
-  priceHasSurcharges,
-  priceJobTotal,
+  PRICE_STATUS_LABEL,
   type CalcResult,
   type ExchangeRateSnapshot,
 } from '@calc3d/shared';
@@ -52,34 +49,41 @@ export class ExportService {
     doc.fontSize(10);
     this.row(doc, 'Costo real (lote)', money(totals.costBatch));
     this.row(doc, 'Costo por unidad', money(totals.costPerUnit));
-    for (const p of totals.prices) {
+    this.row(
+      doc,
+      `Precio sugerido (margen ${formatPercent(totals.price.markup, l, 0)})`,
+      money(totals.price.suggested),
+    );
+    this.row(
+      doc,
+      'Precio final / pieza',
+      `${money(totals.price.final)}${totals.price.isManual ? '  (escrito a mano)' : ''}`,
+    );
+    this.row(
+      doc,
+      'Margen real',
+      `${formatPercent(totals.price.marginReal, l, 0)}  ·  ${PRICE_STATUS_LABEL[totals.price.status]}`,
+    );
+    this.row(doc, 'Ganancia / pieza', money(totals.price.profitPerUnit));
+    if (totals.order.fromTier) {
       this.row(
         doc,
-        `Venta ${formatPercent(p.marginPct, l, 0)} (${p.mode === 'MARKUP' ? 'markup' : 'margen'})`,
-        `${money(p.priceRounded)}  ·  ganancia ${money(p.profit)}/pieza`,
+        `Descuento por cantidad (${formatPercent(totals.order.discountPct, l, 0)})`,
+        `${money(totals.order.listUnitPrice)} → ${money(totals.order.unitPrice)} / pieza`,
       );
     }
-    // Extras de cotización (diseño/urgencia/mínimo) y tandas — opcional-seguro
-    // para snapshots creados antes de la Fase 2A.
-    const chosen = pickSuggestedPrice(totals.prices);
-    if (chosen && priceHasSurcharges(chosen)) {
-      if (chosen.designPerUnit) this.row(doc, 'Tarifa de diseño / pieza', money(chosen.designPerUnit));
-      if (chosen.rushAmount) this.row(doc, 'Recargo por urgencia / pieza', money(chosen.rushAmount));
-      this.row(doc, 'Precio final / pieza', money(priceFinalPerUnit(chosen)));
-      this.row(
-        doc,
-        `Total del pedido${chosen.hitMinimum ? ' (mínimo aplicado)' : ''}`,
-        money(priceJobTotal(chosen, totals.quantity)),
-      );
-    }
-    if (totals.batches) {
-      this.row(
-        doc,
-        'Tandas',
-        `${totals.batches.count} (${totals.batches.full} llenas` +
-          `${totals.batches.partialPieces > 0 ? ` + 1 de ${totals.batches.partialPieces} pzs` : ''})`,
-      );
-    }
+    this.row(
+      doc,
+      'Total del pedido',
+      `${money(totals.order.total)}  ·  ${PRICE_STATUS_LABEL[totals.order.status]}`,
+    );
+    this.row(doc, 'Ganancia del pedido', money(totals.order.profit));
+    this.row(
+      doc,
+      'Producción',
+      `${totals.production.batches} tanda(s) de ${totals.production.piecesPerBatch} pzs · ` +
+        `${totals.production.machineHours} h de máquina · entrega ~${totals.production.deliveryHours} h`,
+    );
     doc.moveDown();
 
     // Equivalente en moneda secundaria con la tasa CONGELADA en el presupuesto.
@@ -104,9 +108,8 @@ export class ExportService {
       doc.fillColor('#000').fontSize(10);
       this.row(doc, 'Costo real (lote)', alt(totals.costBatch));
       this.row(doc, 'Costo por unidad', alt(totals.costPerUnit));
-      for (const p of totals.prices) {
-        this.row(doc, `Venta ${formatPercent(p.marginPct, l, 0)}`, alt(p.priceRounded));
-      }
+      this.row(doc, 'Precio final / pieza', alt(totals.price.final));
+      this.row(doc, 'Total del pedido', alt(totals.order.total));
       doc.moveDown();
     }
 
@@ -117,25 +120,22 @@ export class ExportService {
     this.row(doc, 'Material', money(totals.breakdown.material));
     this.row(doc, 'Desgaste de impresora', money(totals.breakdown.wear));
     this.row(doc, 'Electricidad', money(totals.breakdown.power));
-    this.row(doc, 'Componentes', money(totals.breakdown.components));
-    this.row(doc, 'Empaque', money(totals.breakdown.packaging));
-    this.row(doc, 'Mano de obra', money(totals.breakdown.labor));
-    if ((totals.breakdown.setup ?? 0) > 0) {
-      this.row(doc, 'Arranque de tandas', money(totals.breakdown.setup));
-    }
+    this.row(doc, 'Insumos', money(totals.breakdown.supplies));
+    this.row(doc, 'Tu tiempo', money(totals.breakdown.labor));
+    this.row(doc, 'Empaque y otros', money(totals.breakdown.extras));
     this.row(doc, 'Merma', money(totals.breakdown.wasteAmount));
     doc.moveDown();
 
-    // Componentes (logística de compra)
-    if (totals.components.length > 0) {
-      doc.fontSize(14).text('Componentes (compra por paquete)');
+    // Insumos, línea por línea
+    if (totals.supplies.length > 0) {
+      doc.fontSize(14).text('Insumos');
       doc.moveDown(0.3);
       doc.fontSize(10);
-      for (const comp of totals.components) {
+      for (const item of totals.supplies) {
         this.row(
           doc,
-          comp.name ?? 'Componente',
-          `${comp.totalUnits} u · ${comp.packagesToBuy} paq · sobran ${comp.leftover} · ${money(comp.appliedCost)}`,
+          item.name ?? 'Insumo',
+          `${money(item.perPieceCost)}/pieza · ${money(item.batchCost)} en el pedido`,
         );
       }
       doc.moveDown();
@@ -149,11 +149,12 @@ export class ExportService {
       for (const t of totals.wholesale.tiers) {
         this.row(
           doc,
-          `${t.minQty}+ piezas (${formatPercent(t.marginPct, l, 0)})${t.applies ? '  ◄ aplica' : ''}`,
-          `${money(t.unitPriceRounded)}/u · total ${money(t.lotTotal)}`,
+          `${t.minQty}+ piezas (−${formatPercent(t.discountPct, l, 0)})${t.applies ? '  ◄ aplica' : ''}`,
+          `${money(t.unitPrice)}/u · margen ${formatPercent(t.marginReal, l, 0)} · ` +
+            PRICE_STATUS_LABEL[t.status],
         );
       }
-      this.row(doc, 'Ahorro vs menudeo', money(totals.wholesale.savings));
+      this.row(doc, 'Total del pedido con el tramo aplicado', money(totals.wholesale.orderTotal));
     }
 
     doc.end();
@@ -179,34 +180,44 @@ export class ExportService {
       { seccion: 'desglose', concepto: 'Material', valor: totals.breakdown.material },
       { seccion: 'desglose', concepto: 'Desgaste', valor: totals.breakdown.wear },
       { seccion: 'desglose', concepto: 'Electricidad', valor: totals.breakdown.power },
-      { seccion: 'desglose', concepto: 'Componentes', valor: totals.breakdown.components },
-      { seccion: 'desglose', concepto: 'Empaque', valor: totals.breakdown.packaging },
-      { seccion: 'desglose', concepto: 'Mano de obra', valor: totals.breakdown.labor },
+      { seccion: 'desglose', concepto: 'Insumos', valor: totals.breakdown.supplies },
+      { seccion: 'desglose', concepto: 'Tu tiempo', valor: totals.breakdown.labor },
+      { seccion: 'desglose', concepto: 'Empaque y otros', valor: totals.breakdown.extras },
       { seccion: 'desglose', concepto: 'Merma', valor: totals.breakdown.wasteAmount },
+      { seccion: 'produccion', concepto: 'Tandas', valor: totals.production.batches },
+      { seccion: 'produccion', concepto: 'Piezas por tanda', valor: totals.production.piecesPerBatch },
+      { seccion: 'produccion', concepto: 'Horas de máquina', valor: totals.production.machineHours },
+      { seccion: 'produccion', concepto: 'Entrega estimada (h)', valor: totals.production.deliveryHours },
+      { seccion: 'precio', concepto: 'Precio sugerido', valor: totals.price.suggested },
+      { seccion: 'precio', concepto: 'Precio final', valor: totals.price.final },
+      { seccion: 'precio', concepto: 'Margen real', valor: totals.price.marginReal },
+      { seccion: 'precio', concepto: 'Estado', valor: PRICE_STATUS_LABEL[totals.price.status] },
+      { seccion: 'precio', concepto: 'Precio unitario cobrado', valor: totals.order.unitPrice },
+      { seccion: 'precio', concepto: 'Descuento por cantidad', valor: totals.order.discountPct },
+      { seccion: 'precio', concepto: 'Total del pedido', valor: totals.order.total },
+      { seccion: 'precio', concepto: 'Ganancia del pedido', valor: totals.order.profit },
+      { seccion: 'precio', concepto: 'Estado del pedido', valor: PRICE_STATUS_LABEL[totals.order.status] },
     ];
-    if ((totals.breakdown.setup ?? 0) > 0) {
-      rows.push({ seccion: 'desglose', concepto: 'Arranque de tandas', valor: totals.breakdown.setup });
-    }
-    if (totals.batches) {
-      rows.push({ seccion: 'tandas', concepto: 'Número de tandas', valor: totals.batches.count });
-      rows.push({ seccion: 'tandas', concepto: 'Tandas llenas', valor: totals.batches.full });
-      rows.push({ seccion: 'tandas', concepto: 'Piezas en tanda parcial', valor: totals.batches.partialPieces });
-    }
-    for (const p of totals.prices) {
+    for (const item of totals.supplies) {
       rows.push({
-        seccion: 'precios',
-        concepto: `Venta ${(p.marginPct * 100).toFixed(0)}%`,
-        valor: p.priceRounded,
+        seccion: 'insumos',
+        concepto: item.name ?? 'Insumo',
+        valor: item.batchCost,
       });
     }
     if (totals.wholesale) {
       for (const t of totals.wholesale.tiers) {
         rows.push({
           seccion: 'mayoreo',
-          concepto: `${t.minQty}+ piezas (${(t.marginPct * 100).toFixed(0)}%)`,
-          valor: t.lotTotal,
+          concepto: `${t.minQty}+ piezas (−${(t.discountPct * 100).toFixed(0)}%)`,
+          valor: t.unitPrice,
         });
       }
+      rows.push({
+        seccion: 'mayoreo',
+        concepto: 'Total del pedido con el tramo aplicado',
+        valor: totals.wholesale.orderTotal,
+      });
     }
     return writeToString(rows, { headers: true });
   }

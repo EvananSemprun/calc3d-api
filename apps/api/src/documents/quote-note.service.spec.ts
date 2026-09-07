@@ -16,18 +16,15 @@ const ORG = 'org-A';
 const OTHER = 'org-B';
 
 const PRECIO = {
-  marginPct: 0.5,
-  mode: 'MARKUP' as const,
-  price: 1.8,
-  priceRounded: 1.85,
-  profit: 0.6,
-  realMarginOnPrice: 0.32,
-  markupOnCost: 0.5,
-  designPerUnit: 0.15,
-  rushAmount: 0,
-  finalPerUnit: 2.0,
-  jobTotal: 400,
-  hitMinimum: false,
+  markup: 0.5,
+  suggested: 1.8,
+  rounded: 1.85,
+  final: 1.85,
+  isManual: false,
+  marginReal: 0.48,
+  profitPerUnit: 0.6,
+  diffVsSuggested: 0.05,
+  status: 'OK' as const,
 };
 
 const TOTALS = {
@@ -36,17 +33,27 @@ const TOTALS = {
   locale: 'en-US',
   costBatch: 250,
   costPerUnit: 1.25,
-  prices: [{ ...PRECIO, marginPct: 0.3 }, PRECIO, { ...PRECIO, marginPct: 1 }],
+  price: PRECIO,
+  order: {
+    units: 200,
+    listUnitPrice: 1.85,
+    discountPct: 0,
+    unitPrice: 1.85,
+    fromTier: false,
+    total: 370,
+    profit: 120,
+    status: 'OK' as const,
+  },
   breakdown: {
     material: 100,
     wear: 20,
     power: 10,
-    components: 80,
-    packaging: 20,
+    supplies: 80,
     labor: 20,
+    extras: 20,
     wasteAmount: 10,
   },
-  components: [],
+  supplies: [],
 };
 
 const IDENTITY = {
@@ -108,11 +115,49 @@ describe('Cotización para el cliente', () => {
     await service.pdf(ORG, 'q1');
 
     const [, rows, total] = items.mock.calls[0];
-    // precio base + tarifa de diseño, ambos × 200 piezas = el jobTotal del motor.
-    expect(rows).toHaveLength(2);
+    // Un solo renglón: el precio final × las piezas. Los recargos (diseño,
+    // urgencia, mínimo) se eliminaron del motor en shared 0.7.0.
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(['1', QUOTE.name, '200', '$1.85', '$370.00']);
-    expect(rows[1]).toEqual(['2', 'Tarifa de diseño', '200', '$0.15', '$30.00']);
-    expect(total).toBe('Total: $400.00');
+    expect(total).toBe('Total: $370.00');
+  });
+
+  /**
+   * Si el pedido alcanza un tramo de mayoreo, el cliente paga ESE precio. Y lo
+   * ve desglosado: cobrarle $10,68 pelado pierde el argumento de venta —el
+   * descuento por cantidad es justamente lo que ganó por comprar más.
+   */
+  it('con descuento por cantidad lo muestra desglosado y cobra el precio del tramo', async () => {
+    const items = jest.spyOn(BusinessDoc.prototype, 'itemsTable');
+    const conDescuento = {
+      ...QUOTE,
+      totals: {
+        ...TOTALS,
+        order: {
+          units: 200,
+          listUnitPrice: 1.85,
+          discountPct: 0.15,
+          unitPrice: 1.6,
+          fromTier: true,
+          total: 320,
+          profit: 70,
+          status: 'BELOW_TARGET' as const,
+        },
+      },
+    };
+    const service = new QuoteNoteService(quotePrismaMock(conDescuento) as any, identityMock as any);
+    await service.pdf(ORG, 'q1');
+
+    const [, rows, total] = items.mock.calls[0];
+    expect(rows).toHaveLength(2);
+    // Renglón 1: el precio de LISTA, para que se vea de dónde parte.
+    expect(rows[0]).toEqual(['1', QUOTE.name, '200', '$1.85', '$370.00']);
+    // Renglón 2: lo que se descontó por cantidad.
+    expect(rows[1][1]).toContain('Descuento por cantidad');
+    expect(rows[1][1]).toContain('15');
+    expect(rows[1][4]).toBe('-$50.00');
+    // Y el total es el que se va a cobrar de verdad.
+    expect(total).toBe('Total: $320.00');
   });
 
   it('numera el documento con el correlativo y el año', async () => {

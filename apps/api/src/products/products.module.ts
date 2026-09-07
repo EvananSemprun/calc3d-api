@@ -93,14 +93,15 @@ export class ProductsService {
   ): { input: CalcInput; unmatched: string[] } {
     const unmatched: string[] = [];
 
-    const materials = (input.materials ?? []).map((m) => {
-      const cur = ctx.materials.get(lc(m.name));
+    const filament = (() => {
+      const f = input.filament;
+      const cur = ctx.materials.get(lc(f.name));
       if (!cur) {
-        if (m.name) unmatched.push(m.name);
-        return m;
+        if (f.name) unmatched.push(f.name);
+        return f;
       }
-      return { ...m, rollPrice: cur.rollPrice, rollGrams: cur.rollGrams };
-    });
+      return { ...f, rollPrice: cur.rollPrice, rollGrams: cur.rollGrams };
+    })();
 
     let printer = input.printer;
     if (printer) {
@@ -118,13 +119,15 @@ export class ProductsService {
       }
     }
 
-    const components = (input.components ?? []).map((c) => {
-      const cur = ctx.components.get(lc(c.name));
+    // El catálogo guarda el PAQUETE (100 argollas a $50) y el motor trabaja con
+    // el costo por unidad: hay que dividir, no copiar el precio del paquete.
+    const supplies = (input.supplies ?? []).map((s) => {
+      const cur = ctx.components.get(lc(s.name));
       if (!cur) {
-        if (c.name) unmatched.push(c.name);
-        return c;
+        if (s.name) unmatched.push(s.name);
+        return s;
       }
-      return { ...c, packagePrice: cur.packagePrice, unitsPerPackage: cur.unitsPerPackage };
+      return { ...s, unitCost: cur.packagePrice / cur.unitsPerPackage };
     });
 
     // La electricidad no es catálogo: su precio vive en Settings; refréscalo a hoy.
@@ -132,7 +135,7 @@ export class ProductsService {
       ? { ...input.electricity, kwhPrice: input.electricity.enabled ? ctx.kwhPrice : input.electricity.kwhPrice }
       : input.electricity;
 
-    return { input: { ...input, materials, printer, components, electricity }, unmatched };
+    return { input: { ...input, filament, printer, supplies, electricity }, unmatched };
   }
 
   /** Costo unitario de HOY + estado de rentabilidad de un producto ya cargado. */

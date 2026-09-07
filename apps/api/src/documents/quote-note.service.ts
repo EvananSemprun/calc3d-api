@@ -1,8 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   formatMoney,
-  pickSuggestedPrice,
-  priceJobTotal,
+  formatPercent,
   type CalcResult,
   type ExchangeRateSnapshot,
 } from '@calc3d/shared';
@@ -47,11 +46,18 @@ export class QuoteNoteService {
     const totals = quote.totals as unknown as CalcResult;
     const money = (n: number) => formatMoney(n, totals.currency, totals.locale);
     const qty = totals.quantity;
-    const precio = pickSuggestedPrice(totals.prices);
+    const precio = totals.price?.final;
 
     if (!precio) {
       throw new NotFoundException('El presupuesto no tiene un precio calculado');
     }
+
+    // Lo que se COBRA sale de `order`: si el pedido alcanzó un tramo de mayoreo,
+    // el cliente paga ese precio. El panel y este documento leen el mismo campo
+    // justamente para no poder decir cifras distintas.
+    const listaUnit = totals.order?.listUnitPrice ?? precio;
+    const total = totals.order?.total ?? precio * qty;
+    const descuento = totals.order?.discountPct ?? 0;
 
     const doc = new BusinessDoc({
       emisor: me.emisor,
@@ -93,53 +99,31 @@ export class QuoteNoteService {
     );
     doc.gap(8);
 
-    // Cada renglón es un concepto que el cliente puede sumar a mano: el precio
-    // base y, si los hay, los extras que ya venían dentro del precio final.
+    // Renglón del producto a precio de LISTA y, si lo hubo, el descuento por
+    // cantidad como concepto propio: el cliente tiene que VER lo que ganó por
+    // comprar más. Mandarle el precio rebajado pelado pierde ese argumento.
     const rows: string[][] = [
-      [
-        '1',
-        quote.name,
-        String(qty),
-        money(precio.priceRounded),
-        money(precio.priceRounded * qty),
-      ],
+      ['1', quote.name, String(qty), money(listaUnit), money(listaUnit * qty)],
     ];
-    if (precio.designPerUnit > 0) {
+    if (descuento > 0) {
+      const ahorroUnit = listaUnit - (totals.order?.unitPrice ?? listaUnit);
       rows.push([
-        String(rows.length + 1),
-        'Tarifa de diseño',
+        '2',
+        `Descuento por cantidad (${formatPercent(descuento, totals.locale, 0)})`,
         String(qty),
-        money(precio.designPerUnit),
-        money(precio.designPerUnit * qty),
-      ]);
-    }
-    if (precio.rushAmount > 0) {
-      rows.push([
-        String(rows.length + 1),
-        'Recargo por urgencia',
-        String(qty),
-        money(precio.rushAmount),
-        money(precio.rushAmount * qty),
-      ]);
-    }
-
-    // El piso de pedido mínimo levanta el total por encima de la suma de los
-    // renglones: se muestra como concepto propio para que las cuentas cuadren.
-    const total = priceJobTotal(precio, qty);
-    const sumaRenglones =
-      (precio.priceRounded + precio.designPerUnit + precio.rushAmount) * qty;
-    const ajusteMinimo = total - sumaRenglones;
-    if (ajusteMinimo > 0.005) {
-      rows.push([
-        String(rows.length + 1),
-        'Ajuste por pedido mínimo',
-        '1',
-        money(ajusteMinimo),
-        money(ajusteMinimo),
+        `-${money(ahorroUnit)}`,
+        `-${money(ahorroUnit * qty)}`,
       ]);
     }
 
     doc.itemsTable(QuoteNoteService.COLUMNS, rows, `Total: ${money(total)}`);
+
+    if (descuento > 0) {
+      doc.gap(6);
+      doc.note(
+        `Precio por unidad con el descuento aplicado: ${money(totals.order?.unitPrice ?? precio)}.`,
+      );
+    }
 
     // Equivalente en la moneda de presentación con la tasa CONGELADA al crear
     // el presupuesto (el motor no convierte: esto es solo presentación).

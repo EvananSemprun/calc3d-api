@@ -5,7 +5,6 @@ export * from './schemas/store';
 export * from './schemas/store-request';
 export * from './calc/types';
 export * from './calc/calculateQuote';
-export * from './calc/select';
 export * from './calc/charge-equivalents';
 export * from './calc/breakeven';
 export * from './calc/order';

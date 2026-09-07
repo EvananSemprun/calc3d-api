@@ -4,8 +4,6 @@ import {
   STORE_IMAGE_MAX_BYTES,
   STORE_IMAGE_MAX_COUNT,
   STORE_IMAGE_MIME_TYPES,
-  pickSuggestedPrice,
-  priceFinalPerUnit,
   slugify,
   type CalcResult,
   type StoreCategoryDto,
@@ -212,13 +210,15 @@ export class StoreService {
     });
     if (!quote) throw new NotFoundException('Presupuesto no encontrado');
     const totals = quote.totals as unknown as CalcResult;
-    const precio = pickSuggestedPrice(totals.prices);
+    // El precio final del presupuesto es el que se publica. Un snapshot anterior
+    // a shared 0.7.0 no lo trae: publicar en 0 dejaría el producto regalado.
+    const precio = totals.price?.final;
     if (!precio) throw new BadRequestException('El presupuesto no tiene un precio calculado');
 
     return this.create(organizationId, {
       name: quote.name,
       kind: 'PHYSICAL',
-      priceUsd: priceFinalPerUnit(precio),
+      priceUsd: precio,
       minQty: 1,
       visible: false,
       custom: false,

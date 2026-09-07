@@ -1,7 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  pickSuggestedPrice,
-  priceJobTotal,
   type PriceResult,
   type SaleCreateDto,
   type SaleFromQuoteDto,
@@ -108,17 +106,25 @@ export class SalesService {
   }
 }
 
-/** Precio de venta total estimado de un presupuesto: total del pedido al precio
- *  sugerido (el del medio) INCLUYENDO diseño/urgencia/mínimo (jobTotal); si no
- *  hay precios, cae al costo del lote. Snapshots viejos sin jobTotal usan el
- *  fallback precio×cantidad (priceJobTotal). */
+/** Precio de venta total de un presupuesto: el total del pedido que quedó
+ *  guardado en el snapshot; si el snapshot no lo trae, el precio final por la
+ *  cantidad; y sin ningún precio, el costo del lote. */
 function sellingTotal(totals: Record<string, unknown> | null, quantity: number): number {
   if (!totals) return 0;
-  const prices = totals.prices as PriceResult[] | undefined;
-  const suggested = prices ? pickSuggestedPrice(prices) : undefined;
-  if (suggested) {
-    const total = priceJobTotal(suggested, quantity);
-    if (total > 0) return total;
+
+  const order = totals.order as { total?: number } | undefined;
+  if (order?.total) return Number(order.total);
+
+  const price = totals.price as PriceResult | undefined;
+  if (price?.final) return Number(price.final) * quantity;
+
+  // Snapshot anterior a shared 0.7.0: traía `prices[]` y ningún precio final.
+  // Caer al costo registraría una venta a pérdida sin que nadie se entere.
+  if (Array.isArray(totals.prices)) {
+    throw new BadRequestException(
+      'Este presupuesto se guardó con una versión anterior de la calculadora. Ábrelo, guárdalo de nuevo y registra la venta.',
+    );
   }
+
   return Number(totals.costBatch ?? 0);
 }

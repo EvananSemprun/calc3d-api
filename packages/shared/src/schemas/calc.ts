@@ -3,39 +3,19 @@ import { z } from 'zod';
 /**
  * Schemas Zod del MOTOR DE CÁLCULO.
  *
+ * El contrato sigue la hoja "Costeo" del Excel de Banano Lab: una pantalla,
+ * un filamento, una tabla de insumos, un margen objetivo y un precio final.
+ *
  * Convenciones:
  * - Los porcentajes se expresan como FRACCIÓN decimal: 0.08 = 8 %, 0.3 = 30 %.
  *   La UI hace la conversión (8 -> 0.08) para evitar confusiones en el motor.
  * - El dinero entra como número y se calcula internamente con decimal.js.
- * - No se permiten divisores 0 (gramos de rollo, vida útil, unidades por
- *   paquete, cantidad de piezas).
+ * - No se permiten divisores 0 (gramos de rollo, vida útil, cantidad de piezas,
+ *   piezas por tanda, impresoras en paralelo).
  */
 
 const positive = z.number().positive();
 const nonNegative = z.number().min(0);
-
-/** Cómo se carga el costo de un componente/empaque comprado por paquete. */
-export const ProrationModeSchema = z.enum(['USED', 'FULL_PACKAGE']);
-export type ProrationMode = z.infer<typeof ProrationModeSchema>;
-
-/** Si un costo aplica a cada pieza o una sola vez al pedido completo. */
-export const ScopeSchema = z.enum(['PER_PIECE', 'PER_ORDER']);
-export type Scope = z.infer<typeof ScopeSchema>;
-
-/** Categorías sobre las que puede aplicarse la merma. */
-export const WasteCategorySchema = z.enum([
-  'MATERIAL',
-  'WEAR',
-  'POWER',
-  'COMPONENTS',
-  'PACKAGING',
-  'LABOR',
-]);
-export type WasteCategory = z.infer<typeof WasteCategorySchema>;
-
-/** Markup (sobre costo) o margin (sobre precio de venta). */
-export const MarginModeSchema = z.enum(['MARKUP', 'MARGIN']);
-export type MarginMode = z.infer<typeof MarginModeSchema>;
 
 /** Regla de redondeo (solo presentación). */
 export const RoundingModeSchema = z.enum(['NONE', 'NEAREST', 'UP', 'DOWN']);
@@ -48,23 +28,66 @@ export const RoundingSchema = z.object({
 });
 export type Rounding = z.infer<typeof RoundingSchema>;
 
-/** Línea de material: un rollo y los gramos TOTALES usados en el lote/trabajo
- *  (igual que las horas de la tanda; el costo por pieza se obtiene dividiendo
- *  entre la cantidad). Es el dato que da el slicer para toda la placa. */
-export const MaterialLineSchema = z.object({
+/**
+ * Estado comercial de un precio (fórmula B58 de la hoja).
+ * - `LOSS`: el precio no cubre el costo.
+ * - `LOW`: margen bajo el piso considerado sano.
+ * - `BELOW_TARGET`: por debajo del margen objetivo, pero sobre el piso.
+ * - `OK`: alcanza el objetivo.
+ */
+export const PriceStatusSchema = z.enum(['LOSS', 'LOW', 'BELOW_TARGET', 'OK']);
+export type PriceStatus = z.infer<typeof PriceStatusSchema>;
+
+/**
+ * Piso de margen POR DEFECTO (60 %, tomado de la hoja). Es solo el default de
+ * `margins.minMarginPct`: el valor efectivo lo decide el negocio en Settings.
+ */
+export const LOW_MARGIN_THRESHOLD = 0.6;
+
+/** Cómo se dice cada estado, en la app y en los documentos internos. */
+export const PRICE_STATUS_LABEL: Record<PriceStatus, string> = {
+  LOSS: 'PIERDES DINERO',
+  LOW: 'Margen bajo',
+  BELOW_TARGET: 'Por debajo de tu objetivo',
+  OK: 'OK',
+};
+
+/**
+ * Filamento del trabajo. `grams` son los de UNA TANDA, tal como los reporta el
+ * laminador para la placa completa — NO los de una pieza suelta.
+ */
+export const FilamentSchema = z.object({
   name: z.string().optional(),
   rollPrice: nonNegative,
   rollGrams: positive, // no dividir entre 0
   grams: nonNegative,
 });
-export type MaterialLine = z.infer<typeof MaterialLineSchema>;
+export type Filament = z.infer<typeof FilamentSchema>;
 
-/** Impresora elegida para el lote. */
+/** Merma por fallos: se aplica SIEMPRE a filamento, desgaste y luz. */
+export const WasteSchema = z.object({
+  /** Fracción: 0.08 = 8 %. */
+  pct: nonNegative.default(0.08),
+});
+export type Waste = z.infer<typeof WasteSchema>;
+
+/**
+ * Insumo con costo unitario ya resuelto (argolla, bolsita, imán...).
+ * `qty` es cuántos lleva CADA PIEZA.
+ */
+export const SupplyLineSchema = z.object({
+  name: z.string().optional(),
+  qty: nonNegative,
+  unitCost: nonNegative,
+});
+export type SupplyLine = z.infer<typeof SupplyLineSchema>;
+
+/** Impresora elegida para el trabajo. `hours` son las de UNA tanda. */
 export const PrinterInputSchema = z.object({
   name: z.string().optional(),
   price: nonNegative,
   lifetimeHours: positive, // no dividir entre 0
-  hours: nonNegative, // horas de la tanda (lote completo)
+  hours: nonNegative,
   powerKw: nonNegative.default(0),
   maintPerHour: nonNegative.default(0),
 });
@@ -77,59 +100,42 @@ export const ElectricitySchema = z.object({
 });
 export type Electricity = z.infer<typeof ElectricitySchema>;
 
-/** Componente comprado por paquete (argolla, imán, tornillo...). */
-export const ComponentLineSchema = z.object({
-  name: z.string().optional(),
-  packagePrice: nonNegative,
-  unitsPerPackage: positive, // no dividir entre 0
-  unitsPerPiece: nonNegative, // cuántas lleva CADA pieza
-  prorationMode: ProrationModeSchema.default('FULL_PACKAGE'),
+/** Postprocesado: minutos POR PIEZA y el valor de la hora de trabajo. */
+export const LaborSchema = z.object({
+  minutes: nonNegative.default(0),
+  hourlyRate: nonNegative.default(0),
 });
-export type ComponentLine = z.infer<typeof ComponentLineSchema>;
+export type Labor = z.infer<typeof LaborSchema>;
 
-/** Empaque (bolsa, caja, etiqueta...). Por pieza o por pedido. */
-export const PackagingLineSchema = z.object({
-  name: z.string().optional(),
-  packagePrice: nonNegative,
-  unitsPerPackage: positive,
-  unitsPerPiece: nonNegative.default(1),
-  scope: ScopeSchema.default('PER_PIECE'),
-  prorationMode: ProrationModeSchema.default('FULL_PACKAGE'),
+/**
+ * Costos sueltos. El empaque es por pieza (una bolsita por llavero); "otros"
+ * es un cargo único del pedido (diseño, envío, lo que sea) que se reparte
+ * entre las unidades.
+ */
+export const ExtrasSchema = z.object({
+  packagingPerPiece: nonNegative.default(0),
+  otherPerOrder: nonNegative.default(0),
 });
-export type PackagingLine = z.infer<typeof PackagingLineSchema>;
+export type Extras = z.infer<typeof ExtrasSchema>;
 
-/** Tarea de mano de obra / postprocesado. */
-export const LaborLineSchema = z.object({
-  name: z.string().optional(),
-  hourlyRate: nonNegative,
-  hours: nonNegative,
-  scope: ScopeSchema.default('PER_PIECE'),
-});
-export type LaborLine = z.infer<typeof LaborLineSchema>;
-
-/** Configuración de merma por fallos. */
-export const WasteSchema = z.object({
-  /** Fracción: 0.08 = 8 %. */
-  pct: nonNegative.default(0.08),
-  /** Categorías a las que se aplica. */
-  appliesTo: z.array(WasteCategorySchema).default(['MATERIAL', 'WEAR', 'POWER']),
-});
-export type Waste = z.infer<typeof WasteSchema>;
-
-/** Configuración de márgenes de ganancia. */
+/** Margen objetivo (markup sobre el costo), piso y regla de redondeo. */
 export const MarginsSchema = z.object({
-  /** Fracciones: [0.3, 0.5, 1.0] = 30/50/100 %. */
-  markups: z.array(nonNegative).default([0.3, 0.5, 1.0]),
-  mode: MarginModeSchema.default('MARKUP'),
+  /** Fracción: 1.0 = 100 % de ganancia sobre el costo. */
+  markup: nonNegative.default(1),
+  /**
+   * Piso de margen real: por debajo, el precio se marca `LOW`. Es una decisión
+   * del negocio (vive en Settings), no una constante escondida en el motor.
+   */
+  minMarginPct: nonNegative.default(LOW_MARGIN_THRESHOLD),
   rounding: RoundingSchema.default({ mode: 'NONE', increment: 1 }),
 });
 export type Margins = z.infer<typeof MarginsSchema>;
 
-/** Tramo de mayoreo. */
+/** Tramo de mayoreo: un DESCUENTO sobre el precio final desde N unidades. */
 export const WholesaleTierSchema = z.object({
   minQty: z.number().int().positive(),
-  /** Fracción de margen para ese tramo. */
-  marginPct: nonNegative,
+  /** Fracción: 0.1 = 10 % de descuento. Un 100 % dejaría el precio en 0. */
+  discountPct: z.number().min(0).lt(1),
 });
 export type WholesaleTier = z.infer<typeof WholesaleTierSchema>;
 
@@ -138,45 +144,36 @@ export const WholesaleSchema = z.object({
 });
 export type Wholesale = z.infer<typeof WholesaleSchema>;
 
-/** Lote por tandas: capacidad de la cama y costo de arranque por tanda.
- *  Sin piecesPerBatch, el trabajo entero es "una tanda" (comportamiento clásico). */
-export const BatchSchema = z.object({
-  /** Piezas que caben en una cama (tanda). Vacío = una sola tanda con todo. */
-  piecesPerBatch: z.number().int().positive().optional(),
-  /** Costo de preparación/arranque por CADA tanda (dinero). */
-  setupCost: nonNegative.default(0),
-});
-export type Batch = z.infer<typeof BatchSchema>;
-
-/** Ajustes al PRECIO de venta (no al costo). */
-export const SurchargesSchema = z.object({
-  /** Cobro único por diseño/modelado, amortizado entre las unidades. */
-  designFee: nonNegative.default(0),
-  /** Recargo por urgencia como FRACCIÓN (0.5 = 50 %) sobre el precio final. */
-  rushPct: nonNegative.default(0),
-  /** Piso al total del pedido: si el total queda por debajo, se eleva a este valor. */
-  minOrderPrice: nonNegative.default(0),
-});
-export type Surcharges = z.infer<typeof SurchargesSchema>;
-
 /** ENTRADA COMPLETA del motor de cálculo. */
 export const CalcInputSchema = z.object({
+  // 1. La pieza
   quantity: z.number().int().positive(), // no dividir entre 0
-  materials: z.array(MaterialLineSchema).default([]),
+  /** Piezas que salen en UNA impresión. Los gramos y horas son los de esa tanda. */
+  piecesPerBatch: z.number().int().positive().default(1),
+  // 2. Filamento
+  filament: FilamentSchema,
+  waste: WasteSchema.default({ pct: 0.08 }),
+  // 3. Insumos
+  supplies: z.array(SupplyLineSchema).default([]),
+  // 4. Máquina y energía
   printer: PrinterInputSchema.optional(),
   electricity: ElectricitySchema.default({ enabled: true, kwhPrice: 0 }),
-  components: z.array(ComponentLineSchema).default([]),
-  packaging: z.array(PackagingLineSchema).default([]),
-  labor: z.array(LaborLineSchema).default([]),
-  waste: WasteSchema.default({ pct: 0.08, appliesTo: ['MATERIAL', 'WEAR', 'POWER'] }),
+  /** Impresoras trabajando a la vez. Solo acorta la ENTREGA: el desgaste es el mismo. */
+  parallelPrinters: z.number().int().positive().default(1),
+  // 5. Tu tiempo
+  labor: LaborSchema.default({ minutes: 0, hourlyRate: 0 }),
+  // 6. Empaque y otros
+  extras: ExtrasSchema.default({ packagingPerPiece: 0, otherPerOrder: 0 }),
+  // 7-8. Precio
   margins: MarginsSchema.default({
-    markups: [0.3, 0.5, 1.0],
-    mode: 'MARKUP',
+    markup: 1,
+    minMarginPct: LOW_MARGIN_THRESHOLD,
     rounding: { mode: 'NONE', increment: 1 },
   }),
+  /** Precio por pieza escrito a mano. Si viene, pisa al sugerido redondeado. */
+  manualPrice: positive.nullable().default(null),
+  // 11. Mayoreo
   wholesale: WholesaleSchema.default({ tiers: [] }),
-  batch: BatchSchema.default({ setupCost: 0 }),
-  surcharges: SurchargesSchema.default({ designFee: 0, rushPct: 0, minOrderPrice: 0 }),
   /** Solo para formateo en presentación; el motor no lo usa para calcular. */
   currency: z.string().default('USD'),
   locale: z.string().default('en-US'),

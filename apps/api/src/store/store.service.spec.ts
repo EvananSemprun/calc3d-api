@@ -106,6 +106,41 @@ describe('Catálogo de tienda (panel)', () => {
       );
     });
 
+    it('el borrador desde una cotización toma su PRECIO FINAL', async () => {
+      const { prisma, service } = makeDeps();
+      prisma.quote.findFirst.mockResolvedValue({
+        id: 'q-1',
+        name: 'Llavero lote',
+        totals: { costPerUnit: 0.87, price: { final: 3.5 } },
+      });
+
+      await service.createFromSource(ORG, { quoteId: 'q-1' } as never);
+
+      expect(prisma.storeProduct.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ priceUsd: 3.5, costAtPublish: 0.87 }),
+        }),
+      );
+    });
+
+    /**
+     * Una cotización guardada antes de shared 0.7.0 no tiene `price`. Publicarla
+     * con precio 0 la dejaría a la venta regalada en la tienda pública.
+     */
+    it('rechaza una cotización sin precio final en vez de publicar en 0', async () => {
+      const { prisma, service } = makeDeps();
+      prisma.quote.findFirst.mockResolvedValue({
+        id: 'q-viejo',
+        name: 'Formato viejo',
+        totals: { costPerUnit: 0.87, prices: [{ priceRounded: 3.5 }] },
+      });
+
+      await expect(service.createFromSource(ORG, { quoteId: 'q-viejo' } as never)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.storeProduct.create).not.toHaveBeenCalled();
+    });
+
     it('una ficha cargada a mano simplemente no tiene costo', async () => {
       const { prisma, service } = makeDeps();
       await service.create(ORG, {

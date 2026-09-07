@@ -153,10 +153,13 @@ model Settings {
   protectionRateLabel    String?
   kwhPrice               Decimal  @default(0) @db.Decimal(12, 4)
   defaultWastePct        Float    @default(0.08)
-  wasteAppliesTo         String[] @default(["MATERIAL", "WEAR", "POWER"])
-  defaultMargins         Float[]  @default([0.3, 0.5, 1.0])
-  marginMode             String   @default("MARKUP") // MARKUP | MARGIN
-  componentProrationMode String   @default("FULL_PACKAGE") // USED | FULL_PACKAGE
+  // Margen objetivo por defecto (markup sobre el costo, fracción: 1.0 = 100 %).
+  // Reemplaza a `defaultMargins`: desde shared 0.7.0 la calculadora trabaja con
+  // UN margen, no con tres precios a elegir.
+  defaultMarkup          Float    @default(1.0)
+  // Piso de margen real: bajo esto la calculadora avisa en rojo (no bloquea).
+  // Es el error que más caro sale, así que no se baja el precio en silencio.
+  minMarginPct           Float    @default(0.6)
   roundingMode           String   @default("NONE") // NONE | NEAREST | UP | DOWN
   roundingIncrement      Float    @default(1)
   taxPercent             Float? // reservado para fase 2 (IVA)

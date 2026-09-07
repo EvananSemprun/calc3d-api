@@ -1,132 +1,102 @@
-import type { MarginMode, ProrationMode } from '../schemas/calc';
+import type { PriceStatus, RoundingMode } from '../schemas/calc';
 
-/** Resultado de cálculo de una línea de material. */
-export interface MaterialResult {
+/** Resultado de una línea de insumo. */
+export interface SupplyResult {
   name?: string;
-  /** Costo de material por pieza. */
+  /** costo de esa línea por pieza (qty × unitCost) */
   perPieceCost: number;
-  /** Costo de material del lote (perPieceCost * cantidad). */
+  /** costo de esa línea en todo el pedido */
   batchCost: number;
 }
 
-/** Resultado de un componente comprado por paquete. */
-export interface ComponentResult {
-  name?: string;
-  /** precio_paquete / unidades_por_paquete */
-  unitCost: number;
-  /** unidades_por_pieza * cantidad */
-  totalUnits: number;
-  /** ceil(totalUnits / unidades_por_paquete) */
-  packagesToBuy: number;
-  /** sobrante = paquetes*unidades_por_paquete - totalUnits */
-  leftover: number;
-  /** costo prorrateado solo por unidades usadas */
-  usedCost: number;
-  /** costo cargando los paquetes completos comprados */
-  fullPackageCost: number;
-  /** costo realmente aplicado al pedido según prorationMode */
-  appliedCost: number;
-  /** costo aplicado repartido por pieza (appliedCost / cantidad) */
-  perPieceCost: number;
-  prorationMode: ProrationMode;
-}
-
-/** Resultado de una línea de empaque (misma lógica de paquete que componente). */
-export interface PackagingResult extends ComponentResult {
-  scope: 'PER_PIECE' | 'PER_ORDER';
-}
-
-/** Resultado de una tarea de mano de obra. */
-export interface LaborResult {
-  name?: string;
-  scope: 'PER_PIECE' | 'PER_ORDER';
-  /** costo total de la tarea aplicado al lote */
-  batchCost: number;
-  /** costo repartido por pieza */
-  perPieceCost: number;
-}
-
-/** Desglose de costos del lote por categoría EN CRUDO (sin merma). La merma va
- *  aparte en `wasteAmount`, así las líneas suman exactamente el costo del lote. */
+/**
+ * Desglose de costos del pedido por categoría EN CRUDO (sin merma). La merma va
+ * aparte en `wasteAmount`, así las líneas suman exactamente el costo del lote.
+ */
 export interface CostBreakdown {
   material: number;
   wear: number;
   power: number;
-  components: number;
-  packaging: number;
+  supplies: number;
   labor: number;
-  /** costo de arranque por tanda × número de tandas */
-  setup: number;
-  /** dinero extra agregado por la merma */
+  /** empaque por pieza × cantidad + otros del pedido */
+  extras: number;
+  /** dinero extra agregado por la merma (filamento + desgaste + luz) */
   wasteAmount: number;
 }
 
-/** Precio de venta calculado para un margen. */
+/** El precio de venta: del sugerido al que realmente se va a cobrar. */
 export interface PriceResult {
-  /** fracción de margen ingresada (0.3 = 30 %) */
-  marginPct: number;
-  mode: MarginMode;
-  /** precio sin redondear */
+  /** margen objetivo aplicado al costo (fracción) */
+  markup: number;
+  /** costo unitario × (1 + markup) — B49 */
+  suggested: number;
+  /** sugerido pasado por la regla de redondeo — B53 */
+  rounded: number;
+  /** el que manda: `manualPrice` si se escribió a mano, si no el redondeado — B54 */
+  final: number;
+  /** true si `final` viene de un precio escrito a mano */
+  isManual: boolean;
+  /** margen real sobre el costo con el precio final — B55 */
+  marginReal: number;
+  /** ganancia por pieza (final − costo unitario) — B56 */
+  profitPerUnit: number;
+  /** diferencia contra el precio sugerido — B57 */
+  diffVsSuggested: number;
+  /** semáforo comercial — B58 */
+  status: PriceStatus;
+}
+
+/** Una opción del comparador de redondeos (D52:F57). */
+export interface RoundingOption {
+  mode: RoundingMode;
+  increment: number;
+  /** precio al que llevaría esa regla */
   price: number;
-  /** precio redondeado según la regla de redondeo (presentación) */
-  priceRounded: number;
-  /** ganancia en dinero por pieza (sobre el precio redondeado) */
-  profit: number;
-  /** margen real sobre el precio de venta: profit / price */
-  realMarginOnPrice: number;
-  /** markup real sobre el costo: profit / costo */
-  markupOnCost: number;
-  /** tarifa de diseño repartida por unidad (designFee / cantidad) */
-  designPerUnit: number;
-  /** recargo por urgencia por unidad, sobre (precio + diseño) */
-  rushAmount: number;
-  /** precio final por unidad = priceRounded + designPerUnit + rushAmount */
-  finalPerUnit: number;
-  /** total del pedido a este precio (finalPerUnit × cantidad), elevado al mínimo */
-  jobTotal: number;
-  /** true si el precio mínimo de pedido levantó el total */
-  hitMinimum: boolean;
+  /** margen real que dejaría ese precio */
+  marginReal: number;
 }
 
 /** Precio de mayoreo para un tramo. */
 export interface WholesaleTierResult {
   minQty: number;
-  marginPct: number;
+  /** descuento aplicado sobre el precio final (fracción) */
+  discountPct: number;
+  /** precio unitario del tramo, ya redondeado */
   unitPrice: number;
-  unitPriceRounded: number;
-  lotTotal: number;
+  marginReal: number;
+  profitPerUnit: number;
   /** true si es el tramo aplicable a la cantidad del pedido */
   applies: boolean;
+  status: PriceStatus;
 }
 
 /** Resumen de mayoreo. */
 export interface WholesaleResult {
   tiers: WholesaleTierResult[];
-  /** tramo aplicable a la cantidad del pedido (o null si no hay tramos) */
+  /** tramo aplicable a la cantidad del pedido */
   appliedTier: WholesaleTierResult | null;
-  /** total del lote a precio de menudeo (tramo de menor cantidad) */
-  retailTotal: number;
-  /** total del lote a precio del tramo aplicable */
-  wholesaleTotal: number;
-  /** ahorro = retailTotal - wholesaleTotal */
-  savings: number;
+  /** total del pedido al precio del tramo aplicado — B90 */
+  orderTotal: number;
+  /** ganancia del pedido a ese precio — B91 */
+  orderProfit: number;
 }
 
 /**
- * Producción por tandas: traduce lo que muestra el slicer para UNA tanda
- * (gramos/horas de una impresión) al pedido completo. Siempre presente en un
- * cálculo nuevo; los snapshots viejos (guardados antes) pueden no traerla.
+ * Producción por tandas: traduce lo que muestra el laminador para UNA tanda
+ * (gramos/horas de una impresión) al pedido completo.
  */
 export interface ProductionSummary {
-  /** piezas que caben en una impresión/tanda (= piecesPerBatch, o la cantidad total
-   *  si el trabajo entra en una sola impresión) */
+  /** piezas que caben en una impresión/tanda */
   piecesPerBatch: number;
-  /** tandas necesarias = ceil(cantidad / piecesPerBatch) */
+  /** tandas necesarias = ceil(cantidad / piecesPerBatch) — E75 */
   batches: number;
-  /** gramos REALES de todo el pedido (gramos de una tanda × cantidad/piezasPorTanda) */
+  /** gramos REALES de todo el pedido */
   totalGrams: number;
-  /** horas REALES de todo el pedido (horas de una tanda × cantidad/piezasPorTanda) */
-  totalHours: number;
+  /** horas de MÁQUINA de todo el pedido: lo que cuesta en desgaste — E76 */
+  machineHours: number;
+  /** horas de RELOJ hasta entregar, si hay varias impresoras a la vez — E77 */
+  deliveryHours: number;
   /** costo real de producir UNA tanda */
   costPerBatch: number;
   /** costo real por unidad */
@@ -135,20 +105,30 @@ export interface ProductionSummary {
   costTotal: number;
 }
 
-/** Estructura de tandas del trabajo (null si no hay multi-tanda). */
-export interface BatchSummary {
-  /** piezas por tanda (capacidad de la cama) */
-  size: number;
-  /** número de tandas = ceil(cantidad / size) */
-  count: number;
-  /** tandas llenas = floor(cantidad / size) */
-  full: number;
-  /** piezas en la tanda parcial (0 si la cantidad divide exacto) */
-  partialPieces: number;
-  /** costo de arranque por tanda */
-  setupCostPerBatch: number;
-  /** costo de arranque total (setupCostPerBatch × count) */
-  setupCostTotal: number;
+/**
+ * Lo que se COBRA por este pedido. Si la cantidad alcanza un tramo de mayoreo,
+ * manda el precio del tramo; si no, el de lista. Es la fuente ÚNICA de este
+ * dato para el panel, la cotización del cliente y el registro de la venta.
+ */
+export interface OrderTotals {
+  /** unidades del pedido — B75 */
+  units: number;
+  /** precio de lista por unidad (antes del descuento por cantidad) */
+  listUnitPrice: number;
+  /** descuento por cantidad aplicado (fracción); 0 si no aplica ningún tramo */
+  discountPct: number;
+  /** precio por unidad realmente cobrado, ya redondeado */
+  unitPrice: number;
+  /** true si `unitPrice` viene de un tramo de mayoreo */
+  fromTier: boolean;
+  /** total a cobrar — B76 */
+  total: number;
+  /** ganancia del pedido — B77 */
+  profit: number;
+  /** margen real del precio cobrado (para no recalcularlo en cada pantalla) */
+  marginReal: number;
+  /** semáforo del precio COBRADO (puede diferir del de lista) */
+  status: PriceStatus;
 }
 
 /** RESULTADO COMPLETO del motor de cálculo. */
@@ -157,31 +137,23 @@ export interface CalcResult {
   currency: string;
   locale: string;
 
-  materials: MaterialResult[];
-  components: ComponentResult[];
-  packaging: PackagingResult[];
-  labor: LaborResult[];
+  supplies: SupplyResult[];
 
-  /** desglose del lote por categoría (con merma aplicada donde corresponde) */
+  /** desglose del pedido por categoría, en crudo, con la merma en su propia línea */
   breakdown: CostBreakdown;
 
-  /** costo real del lote ANTES de aplicar merma */
+  /** costo del pedido ANTES de aplicar merma */
   subtotalBeforeWaste: number;
-  /** costo real total del lote (con merma) */
+  /** costo total del pedido (con merma) */
   costBatch: number;
-  /** costo real por unidad */
+  /** costo por unidad */
   costPerUnit: number;
 
-  /** precios de venta por margen (sobre el costo unitario) */
-  prices: PriceResult[];
-
+  price: PriceResult;
+  /** las 5 opciones de redondeo con el margen de cada una */
+  roundingOptions: RoundingOption[];
   /** mayoreo (null si no se definieron tramos) */
   wholesale: WholesaleResult | null;
-
-  /** desglose por tandas; null cuando no se usó multi-tanda */
-  batches: BatchSummary | null;
-
-  /** producción por tandas (gramos/horas/costo reales del pedido). Opcional solo
-   *  por retrocompatibilidad con snapshots guardados antes de existir este campo. */
-  production?: ProductionSummary;
+  production: ProductionSummary;
+  order: OrderTotals;
 }

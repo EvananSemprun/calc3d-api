@@ -1,109 +1,86 @@
 import Decimal from 'decimal.js';
 import {
   CalcInputSchema,
-  type MarginMode,
-  type ProrationMode,
+  type PriceStatus,
   type Rounding,
-  type WasteCategory,
+  type RoundingMode,
 } from '../schemas/calc';
 import { D, sum, toMoney, roundToIncrement } from './money';
 import type {
   CalcResult,
-  ComponentResult,
   CostBreakdown,
-  LaborResult,
-  MaterialResult,
-  PackagingResult,
+  OrderTotals,
   PriceResult,
   ProductionSummary,
+  RoundingOption,
+  SupplyResult,
   WholesaleResult,
   WholesaleTierResult,
 } from './types';
 
 /**
  * MOTOR DE CÁLCULO puro (sin Nest ni DB). Toda la aritmética usa decimal.js.
- * Distingue costos "por lote" (material, desgaste, luz) de costos "por pieza"
- * (componentes, empaque, mano de obra) para repartir bien: NO divide
- * ciegamente todo entre la cantidad. Los redondeos solo ocurren en la
- * presentación (campos *Rounded); los cálculos intermedios van a full precisión.
+ * Sigue la hoja "Costeo" del Excel de Banano Lab.
+ *
+ * Distingue costos "por tanda" (filamento, desgaste, luz: dependen de los
+ * gramos y horas que reporta el laminador para UNA impresión) de costos "por
+ * pieza" (insumos, postprocesado, empaque). NO divide ciegamente todo entre la
+ * cantidad. Los redondeos solo ocurren en la presentación del precio; los
+ * cálculos intermedios van a precisión completa.
  */
 
-/** Lógica común de compra por paquete (componentes y empaque). */
-interface PackageCalc {
-  unitCost: Decimal;
-  totalUnits: number;
-  packagesToBuy: number;
-  leftover: number;
-  usedCost: Decimal;
-  fullPackageCost: Decimal;
-  appliedCost: Decimal;
+/** Las 5 reglas que ofrece el comparador. `DOWN` queda fuera: regala margen. */
+const ROUNDING_CHOICES: { mode: RoundingMode; increment: number }[] = [
+  { mode: 'NEAREST', increment: 1 },
+  { mode: 'NEAREST', increment: 0.5 },
+  { mode: 'UP', increment: 1 },
+  { mode: 'UP', increment: 0.5 },
+  { mode: 'NONE', increment: 1 },
+];
+
+/** Margen real sobre el costo. Sin costo no hay margen que calcular. */
+function marginOver(price: Decimal, cost: Decimal): number {
+  if (cost.lte(0)) return 0;
+  return price.div(cost).minus(1).toDecimalPlaces(6).toNumber();
 }
 
-function computePackage(
-  packagePrice: Decimal.Value,
-  unitsPerPackage: Decimal.Value,
-  totalUnitsNeeded: Decimal,
-  prorationMode: ProrationMode,
-): PackageCalc {
-  const perPkg = D(unitsPerPackage);
-  const unitCost = D(packagePrice).div(perPkg);
-  const packagesToBuy = totalUnitsNeeded.div(perPkg).ceil();
-  const leftover = packagesToBuy.times(perPkg).minus(totalUnitsNeeded);
-  const usedCost = unitCost.times(totalUnitsNeeded);
-  const fullPackageCost = packagesToBuy.times(packagePrice);
-  const appliedCost = prorationMode === 'USED' ? usedCost : fullPackageCost;
-  return {
-    unitCost,
-    totalUnits: totalUnitsNeeded.toNumber(),
-    packagesToBuy: packagesToBuy.toNumber(),
-    leftover: leftover.toNumber(),
-    usedCost,
-    fullPackageCost,
-    appliedCost,
-  };
-}
-
-/** Aplica un margen a un costo según el modo (markup sobre costo / margin sobre venta). */
-function applyMargin(cost: Decimal, marginPct: number, mode: MarginMode): Decimal {
-  if (mode === 'MARGIN') {
-    const denom = D(1).minus(marginPct);
-    if (denom.lte(0)) {
-      throw new Error(
-        `Margen sobre venta inválido: ${marginPct}. En modo "margin" el margen debe ser menor a 1 (100 %).`,
-      );
-    }
-    return cost.div(denom);
-  }
-  return cost.times(D(1).plus(marginPct));
+/**
+ * Semáforo comercial de un precio (fórmula B58 de la hoja). El piso (`minMargin`)
+ * lo fija el negocio: bajo ese margen el trabajo no vale la pena, y bajarlo en
+ * silencio es el error que más caro sale.
+ */
+function statusFor(
+  price: Decimal,
+  cost: Decimal,
+  marginReal: number,
+  markup: number,
+  minMargin: number,
+): PriceStatus {
+  if (price.lt(cost)) return 'LOSS';
+  if (marginReal < minMargin) return 'LOW';
+  if (marginReal < markup * 0.9) return 'BELOW_TARGET';
+  return 'OK';
 }
 
 export function calculateQuote(raw: unknown): CalcResult {
-  // parse aplica defaults y valida divisores 0 (cantidad, gramos de rollo,
-  // vida útil, unidades por paquete): lanza ZodError si algo es inválido.
+  // parse aplica defaults y valida divisores 0 (cantidad, gramos de rollo, vida
+  // útil, piezas por tanda, impresoras en paralelo): lanza ZodError si algo falla.
   const input = CalcInputSchema.parse(raw);
   const qty = D(input.quantity);
 
-  // --- Tandas (lotes por cama). Los gramos/horas ingresados son los de UNA
-  //     tanda llena; los costos "por lote" escalan lineal por cantidad/tanda.
-  //     Sin piecesPerBatch, batchSize = cantidad y el multiplicador es 1 (clásico). ---
-  const batchSize = input.batch.piecesPerBatch ?? input.quantity;
+  // --- Tandas. Los gramos y horas ingresados son los de UNA tanda; se escalan
+  //     al pedido completo con cantidad/piezasPorTanda. ---
+  const batchSize = input.piecesPerBatch;
   const batchMultiplier = qty.div(batchSize);
   const batchCount = Math.ceil(input.quantity / batchSize);
-  const fullBatches = Math.floor(input.quantity / batchSize);
-  const partialPieces = input.quantity % batchSize;
 
-  // --- Material (nivel LOTE: los gramos son los de UNA tanda; se escalan al
-  //     total del trabajo con el multiplicador de tandas) ---
-  const materials: MaterialResult[] = input.materials.map((m) => {
-    const perBatch = D(m.rollPrice).div(m.rollGrams).times(m.grams);
-    const batch = perBatch.times(batchMultiplier);
-    return { name: m.name, perPieceCost: toMoney(batch.div(qty)), batchCost: toMoney(batch) };
-  });
-  const materialBatch = sum(
-    input.materials.map((m) => D(m.rollPrice).div(m.rollGrams).times(m.grams)),
-  ).times(batchMultiplier);
+  // --- Filamento (por tanda) ---
+  const materialBatch = D(input.filament.rollPrice)
+    .div(input.filament.rollGrams)
+    .times(input.filament.grams)
+    .times(batchMultiplier);
 
-  // --- Desgaste y luz (nivel LOTE: dependen de las horas de la tanda; escalan igual) ---
+  // --- Desgaste y luz (por tanda: dependen de las horas de la impresión) ---
   let wearBatch = new Decimal(0);
   let powerBatch = new Decimal(0);
   const printer = input.printer;
@@ -122,239 +99,202 @@ export function calculateQuote(raw: unknown): CalcResult {
     }
   }
 
-  // --- Componentes (por pieza, comprados por paquete) ---
-  const components: ComponentResult[] = input.components.map((c) => {
-    const totalUnits = D(c.unitsPerPiece).times(qty);
-    const pkg = computePackage(c.packagePrice, c.unitsPerPackage, totalUnits, c.prorationMode);
+  // --- Insumos (la cantidad es por PIEZA) ---
+  const supplies: SupplyResult[] = input.supplies.map((s) => {
+    const perPiece = D(s.qty).times(s.unitCost);
     return {
-      name: c.name,
-      unitCost: toMoney(pkg.unitCost),
-      totalUnits: pkg.totalUnits,
-      packagesToBuy: pkg.packagesToBuy,
-      leftover: pkg.leftover,
-      usedCost: toMoney(pkg.usedCost),
-      fullPackageCost: toMoney(pkg.fullPackageCost),
-      appliedCost: toMoney(pkg.appliedCost),
-      perPieceCost: toMoney(pkg.appliedCost.div(qty)),
-      prorationMode: c.prorationMode,
+      name: s.name,
+      perPieceCost: toMoney(perPiece),
+      batchCost: toMoney(perPiece.times(qty)),
     };
   });
-  const componentsBatch = sum(
-    input.components.map((c) =>
-      computePackage(c.packagePrice, c.unitsPerPackage, D(c.unitsPerPiece).times(qty), c.prorationMode).appliedCost,
-    ),
-  );
+  const suppliesBatch = sum(input.supplies.map((s) => D(s.qty).times(s.unitCost))).times(qty);
 
-  // --- Empaque (por pieza o por pedido, comprado por paquete) ---
-  const packaging: PackagingResult[] = input.packaging.map((p) => {
-    const totalUnits = p.scope === 'PER_ORDER' ? D(p.unitsPerPiece) : D(p.unitsPerPiece).times(qty);
-    const pkg = computePackage(p.packagePrice, p.unitsPerPackage, totalUnits, p.prorationMode);
-    return {
-      name: p.name,
-      unitCost: toMoney(pkg.unitCost),
-      totalUnits: pkg.totalUnits,
-      packagesToBuy: pkg.packagesToBuy,
-      leftover: pkg.leftover,
-      usedCost: toMoney(pkg.usedCost),
-      fullPackageCost: toMoney(pkg.fullPackageCost),
-      appliedCost: toMoney(pkg.appliedCost),
-      perPieceCost: toMoney(pkg.appliedCost.div(qty)),
-      prorationMode: p.prorationMode,
-      scope: p.scope,
-    };
-  });
-  const packagingBatch = sum(
-    input.packaging.map((p) => {
-      const totalUnits = p.scope === 'PER_ORDER' ? D(p.unitsPerPiece) : D(p.unitsPerPiece).times(qty);
-      return computePackage(p.packagePrice, p.unitsPerPackage, totalUnits, p.prorationMode).appliedCost;
-    }),
-  );
+  // --- Postprocesado (minutos por PIEZA) ---
+  const laborBatch = D(input.labor.minutes).div(60).times(input.labor.hourlyRate).times(qty);
 
-  // --- Mano de obra (por pieza o por pedido) ---
-  const labor: LaborResult[] = input.labor.map((l) => {
-    const base = D(l.hourlyRate).times(l.hours);
-    const batch = l.scope === 'PER_PIECE' ? base.times(qty) : base;
-    return {
-      name: l.name,
-      scope: l.scope,
-      batchCost: toMoney(batch),
-      perPieceCost: toMoney(batch.div(qty)),
-    };
-  });
-  const laborBatch = sum(
-    input.labor.map((l) => {
-      const base = D(l.hourlyRate).times(l.hours);
-      return l.scope === 'PER_PIECE' ? base.times(qty) : base;
-    }),
-  );
+  // --- Empaque (por pieza) y otros (una sola vez en el pedido) ---
+  const extrasBatch = D(input.extras.packagingPerPiece)
+    .times(qty)
+    .plus(input.extras.otherPerOrder);
 
-  // --- Merma: aplica solo a las categorías configuradas ---
-  const categoryTotals: Record<WasteCategory, Decimal> = {
-    MATERIAL: materialBatch,
-    WEAR: wearBatch,
-    POWER: powerBatch,
-    COMPONENTS: componentsBatch,
-    PACKAGING: packagingBatch,
-    LABOR: laborBatch,
-  };
-  const wastePct = D(input.waste.pct);
-  const wasteBase = sum(input.waste.appliesTo.map((cat) => categoryTotals[cat]));
-  const wasteAmount = wasteBase.times(wastePct);
+  // --- Merma: siempre sobre filamento, desgaste y luz. Una impresión fallida
+  //     gasta material, horas de máquina y electricidad; no gasta el empaque
+  //     ni tu tiempo de postprocesado, que todavía no invertiste. ---
+  const wasteAmount = materialBatch.plus(wearBatch).plus(powerBatch).times(input.waste.pct);
 
-  // --- Arranque por tanda (fuera de merma, como la mano de obra) ---
-  const setupTotal = D(input.batch.setupCost).times(batchCount);
-
-  // El desglose muestra cada categoría EN CRUDO (sin merma) y la merma como su
-  // propia línea, de modo que las líneas sumen exactamente el total del lote.
   const breakdown: CostBreakdown = {
     material: toMoney(materialBatch),
     wear: toMoney(wearBatch),
     power: toMoney(powerBatch),
-    components: toMoney(componentsBatch),
-    packaging: toMoney(packagingBatch),
+    supplies: toMoney(suppliesBatch),
     labor: toMoney(laborBatch),
-    setup: toMoney(setupTotal),
+    extras: toMoney(extrasBatch),
     wasteAmount: toMoney(wasteAmount),
   };
 
-  const subtotalBeforeWaste = sum(Object.values(categoryTotals));
-  const costBatchD = subtotalBeforeWaste.plus(wasteAmount).plus(setupTotal);
+  const subtotalBeforeWaste = materialBatch
+    .plus(wearBatch)
+    .plus(powerBatch)
+    .plus(suppliesBatch)
+    .plus(laborBatch)
+    .plus(extrasBatch);
+  const costBatchD = subtotalBeforeWaste.plus(wasteAmount);
   const costPerUnitD = costBatchD.div(qty);
 
-  // --- Producción por tandas: lo que muestra el slicer para UNA tanda, llevado
-  //     al pedido completo. Los gramos/horas de arriba son de una tanda; el
-  //     multiplicador (cantidad/piezasPorTanda) los escala al total real. ---
-  const gramsPerBatch = sum(input.materials.map((m) => D(m.grams)));
-  const hoursPerBatch = printer ? D(printer.hours) : new Decimal(0);
+  // --- Precio (secciones 7 y 8 de la hoja) ---
+  const { markup, minMarginPct, rounding } = input.margins;
+  const price = buildPrice(costPerUnitD, markup, minMarginPct, rounding, input.manualPrice);
+  const finalD = D(price.final);
+
+  const roundingOptions: RoundingOption[] = ROUNDING_CHOICES.map(({ mode, increment }) => {
+    const p = roundToIncrement(D(price.suggested), mode, increment);
+    return { mode, increment, price: toMoney(p), marginReal: marginOver(p, costPerUnitD) };
+  });
+
+  // --- Mayoreo (sección 11) ---
+  const wholesale = buildWholesale(
+    finalD,
+    costPerUnitD,
+    input.quantity,
+    markup,
+    minMarginPct,
+    input.wholesale.tiers,
+    rounding,
+  );
+
+  // --- Producción (secciones 10 y el bloque de entrega) ---
+  const machineHours = printer
+    ? D(printer.hours).times(batchMultiplier)
+    : new Decimal(0);
   const production: ProductionSummary = {
     piecesPerBatch: batchSize,
     batches: batchCount,
-    totalGrams: gramsPerBatch.times(batchMultiplier).toDecimalPlaces(2).toNumber(),
-    totalHours: hoursPerBatch.times(batchMultiplier).toDecimalPlaces(4).toNumber(),
+    totalGrams: D(input.filament.grams).times(batchMultiplier).toDecimalPlaces(2).toNumber(),
+    machineHours: machineHours.toDecimalPlaces(4).toNumber(),
+    deliveryHours: machineHours.div(input.parallelPrinters).toDecimalPlaces(4).toNumber(),
     costPerBatch: toMoney(costPerUnitD.times(batchSize)),
     costPerUnit: toMoney(costPerUnitD),
     costTotal: toMoney(costBatchD),
   };
 
-  // --- Precios de venta por margen (sobre el costo unitario) ---
-  const prices: PriceResult[] = input.margins.markups.map((m) =>
-    buildPrice(costPerUnitD, input.quantity, m, input.margins.mode, input.margins.rounding, input.surcharges),
-  );
-
-  // --- Mayoreo (los tramos se interpretan como markup sobre costo; un "100 %"
-  //     de mayoreo no tiene sentido como margen sobre venta) ---
-  const wholesale = buildWholesale(
-    costPerUnitD,
-    input.quantity,
-    input.wholesale.tiers,
-    input.margins.rounding,
-  );
-
   return {
     quantity: input.quantity,
     currency: input.currency,
     locale: input.locale,
-    materials,
-    components,
-    packaging,
-    labor,
+    supplies,
     breakdown,
     subtotalBeforeWaste: toMoney(subtotalBeforeWaste),
     costBatch: toMoney(costBatchD),
     costPerUnit: toMoney(costPerUnitD),
-    prices,
+    price,
+    roundingOptions,
     wholesale,
     production,
-    batches:
-      input.batch.piecesPerBatch == null
-        ? null
-        : {
-            size: batchSize,
-            count: batchCount,
-            full: fullBatches,
-            partialPieces,
-            setupCostPerBatch: toMoney(D(input.batch.setupCost)),
-            setupCostTotal: toMoney(setupTotal),
-          },
+    order: buildOrder(price, wholesale, costPerUnitD, qty, markup, minMarginPct),
+  };
+}
+
+/**
+ * Lo que se cobra: el precio del tramo de mayoreo si el pedido lo alcanza, y si
+ * no el de lista. Se resuelve UNA vez acá para que el panel, la cotización del
+ * cliente y la venta registrada no puedan decir cifras distintas.
+ */
+function buildOrder(
+  price: PriceResult,
+  wholesale: WholesaleResult | null,
+  cost: Decimal,
+  qty: Decimal,
+  markup: number,
+  minMargin: number,
+): OrderTotals {
+  const tier = wholesale?.appliedTier ?? null;
+  // Un tramo con 0 % de descuento es el precio de lista: no es "mayoreo".
+  const fromTier = !!tier && tier.discountPct > 0;
+  const unit = fromTier ? D(tier.unitPrice) : D(price.final);
+  const marginReal = marginOver(unit, cost);
+
+  return {
+    units: qty.toNumber(),
+    listUnitPrice: price.final,
+    discountPct: fromTier ? tier.discountPct : 0,
+    unitPrice: toMoney(unit),
+    fromTier,
+    total: toMoney(unit.times(qty)),
+    profit: toMoney(unit.minus(cost).times(qty)),
+    marginReal,
+    status: statusFor(unit, cost, marginReal, markup, minMargin),
   };
 }
 
 function buildPrice(
   cost: Decimal,
-  quantity: number,
-  marginPct: number,
-  mode: MarginMode,
+  markup: number,
+  minMargin: number,
   rounding: Rounding,
-  surcharges: { designFee: number; rushPct: number; minOrderPrice: number },
+  manualPrice: number | null,
 ): PriceResult {
-  const price = applyMargin(cost, marginPct, mode);
-  const priceRounded = roundToIncrement(price, rounding.mode, rounding.increment);
-  const profit = priceRounded.minus(cost);
-  const realMarginOnPrice = priceRounded.gt(0) ? profit.div(priceRounded).toNumber() : 0;
-  const markupOnCost = cost.gt(0) ? profit.div(cost).toNumber() : 0;
-
-  // Ajustes al precio: diseño amortizado, luego urgencia, luego piso al total.
-  const designPerUnit = D(surcharges.designFee).div(quantity);
-  const withDesign = priceRounded.plus(designPerUnit);
-  const rushAmount = withDesign.times(surcharges.rushPct);
-  const finalPerUnit = withDesign.plus(rushAmount);
-  const jobTotalRaw = finalPerUnit.times(quantity);
-  const min = D(surcharges.minOrderPrice);
-  const hitMinimum = jobTotalRaw.lt(min);
-  const jobTotal = hitMinimum ? min : jobTotalRaw;
+  const suggested = cost.times(D(1).plus(markup));
+  const rounded = roundToIncrement(suggested, rounding.mode, rounding.increment);
+  const isManual = manualPrice != null;
+  const final = isManual ? D(manualPrice) : rounded;
+  const marginReal = marginOver(final, cost);
 
   return {
-    marginPct,
-    mode,
-    price: toMoney(price),
-    priceRounded: toMoney(priceRounded),
-    profit: toMoney(profit),
-    realMarginOnPrice,
-    markupOnCost,
-    designPerUnit: toMoney(designPerUnit),
-    rushAmount: toMoney(rushAmount),
-    finalPerUnit: toMoney(finalPerUnit),
-    jobTotal: toMoney(jobTotal),
-    hitMinimum,
+    markup,
+    suggested: toMoney(suggested),
+    rounded: toMoney(rounded),
+    final: toMoney(final),
+    isManual,
+    marginReal,
+    profitPerUnit: toMoney(final.minus(cost)),
+    diffVsSuggested: toMoney(final.minus(suggested)),
+    status: statusFor(final, cost, marginReal, markup, minMargin),
   };
 }
 
+/**
+ * Mayoreo por DESCUENTO sobre el precio final, como la hoja: el descuento se
+ * aplica al precio y DESPUÉS se redondea (C82:C86). No se redondea el descuento.
+ */
 function buildWholesale(
+  finalPrice: Decimal,
   cost: Decimal,
   quantity: number,
-  tiers: { minQty: number; marginPct: number }[],
+  markup: number,
+  minMargin: number,
+  tiers: { minQty: number; discountPct: number }[],
   rounding: Rounding,
 ): WholesaleResult | null {
   if (tiers.length === 0) return null;
   const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
 
   // tramo aplicable: el de mayor minQty que no supere la cantidad del pedido
-  const appliedSource =
-    [...sorted].reverse().find((t) => quantity >= t.minQty) ?? sorted[0];
+  const appliedSource = [...sorted].reverse().find((t) => quantity >= t.minQty) ?? sorted[0];
 
   const tierResults: WholesaleTierResult[] = sorted.map((t) => {
-    const unitPrice = applyMargin(cost, t.marginPct, 'MARKUP');
-    const unitPriceRounded = roundToIncrement(unitPrice, rounding.mode, rounding.increment);
-    const lotTotal = unitPriceRounded.times(quantity);
+    const raw = finalPrice.times(D(1).minus(t.discountPct));
+    const unitPrice = roundToIncrement(raw, rounding.mode, rounding.increment);
+    const marginReal = marginOver(unitPrice, cost);
     return {
       minQty: t.minQty,
-      marginPct: t.marginPct,
+      discountPct: t.discountPct,
       unitPrice: toMoney(unitPrice),
-      unitPriceRounded: toMoney(unitPriceRounded),
-      lotTotal: toMoney(lotTotal),
+      marginReal,
+      profitPerUnit: toMoney(unitPrice.minus(cost)),
       applies: t.minQty === appliedSource.minQty,
+      status: statusFor(unitPrice, cost, marginReal, markup, minMargin),
     };
   });
 
   const appliedTier = tierResults.find((t) => t.applies) ?? null;
-  const retailTotal = tierResults[0].lotTotal; // tramo de menor cantidad = menudeo
-  const wholesaleTotal = appliedTier ? appliedTier.lotTotal : retailTotal;
+  const unit = appliedTier ? D(appliedTier.unitPrice) : finalPrice;
+  const profit = appliedTier ? D(appliedTier.profitPerUnit) : finalPrice.minus(cost);
 
   return {
     tiers: tierResults,
     appliedTier,
-    retailTotal,
-    wholesaleTotal,
-    savings: toMoney(D(retailTotal).minus(wholesaleTotal)),
+    orderTotal: toMoney(unit.times(quantity)),
+    orderProfit: toMoney(profit.times(quantity)),
   };
 }

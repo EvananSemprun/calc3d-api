@@ -23,16 +23,17 @@ const ORG = 'org-1';
 /** Pieza mínima: 100 g de un rollo de 1000 g a $10 → costo unitario = $1 (sin merma). */
 const input = {
   quantity: 1,
-  materials: [{ name: 'PLA', rollPrice: 10, rollGrams: 1000, grams: 100 }],
+  piecesPerBatch: 1,
+  filament: { name: 'PLA', rollPrice: 10, rollGrams: 1000, grams: 100 },
   electricity: { enabled: false, kwhPrice: 0 },
-  components: [],
-  packaging: [],
-  labor: [],
-  waste: { pct: 0, appliesTo: [] },
-  margins: { markups: [0.3], mode: 'MARKUP', rounding: { mode: 'NONE', increment: 1 } },
+  supplies: [],
+  labor: { minutes: 0, hourlyRate: 0 },
+  extras: { packagingPerPiece: 0, otherPerOrder: 0 },
+  waste: { pct: 0 },
+  parallelPrinters: 1,
+  margins: { markup: 0.3, rounding: { mode: 'NONE', increment: 1 } },
+  manualPrice: null,
   wholesale: { tiers: [] },
-  batch: { setupCost: 0 },
-  surcharges: { designFee: 0, rushPct: 0, minOrderPrice: 0 },
   currency: 'USD',
   locale: 'en-US',
 };
@@ -81,6 +82,26 @@ describe('ProductsService', () => {
       const out = await service.list(ORG);
       expect(out[0].recost.costNow).toBe(1);
       expect(out[0].recost.status.belowMin).toBe(false);
+    });
+
+    /**
+     * El catálogo guarda el PAQUETE (100 argollas a $100) y el motor usa el
+     * costo por unidad. Si el recosteo copiara el precio del paquete tal cual,
+     * cada argolla pasaría a costar $100.
+     */
+    it('un insumo se re-resuelve al costo por unidad del catálogo de hoy', async () => {
+      const conInsumo = { ...input, supplies: [{ name: 'Argolla', qty: 1, unitCost: 0.5 }] };
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'p1', input: conInsumo, priceSet: '3', costAtSave: '1.5' },
+      ]);
+      prisma.material.findMany.mockResolvedValue([{ name: 'PLA', rollPrice: '10', rollGrams: 1000 }]);
+      prisma.component.findMany.mockResolvedValue([
+        { name: 'Argolla', packagePrice: '100', unitsPerPackage: 100 },
+      ]);
+
+      const out = await service.list(ORG);
+      // $1 de filamento + $1 la argolla de hoy (100/100), no $100.
+      expect(out[0].recost.costNow).toBeCloseTo(2, 4);
     });
 
     it('material renombrado/borrado: no se encuentra → se reporta en unmatched', async () => {

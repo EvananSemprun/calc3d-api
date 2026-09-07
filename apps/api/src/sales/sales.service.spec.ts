@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 
 /** Prisma mockeado: cada método usado por el servicio es un jest.fn() plano. */
@@ -96,13 +96,13 @@ describe('SalesService', () => {
       expect(prisma.sale.create).not.toHaveBeenCalled();
     });
 
-    it('con prices calcula amount = priceRounded(idx=min(1,len-1)) * quantity y arma clientId/quoteId/note', async () => {
+    it('registra el total del pedido guardado y arma clientId/quoteId/note', async () => {
       prisma.quote.findFirst.mockResolvedValue({
         id: 'q-1',
         clientId: 'c-1',
         name: 'Llavero lote',
         quantity: 3,
-        totals: { prices: [{ priceRounded: 10 }, { priceRounded: 20 }] },
+        totals: { price: { final: 20 }, order: { units: 3, total: 60, profit: 30 } },
       });
       prisma.sale.create.mockResolvedValue({ id: 's-1' });
 
@@ -114,7 +114,6 @@ describe('SalesService', () => {
 
       expect(prisma.sale.create).toHaveBeenCalledTimes(1);
       const data = prisma.sale.create.mock.calls[0][0].data;
-      // idx = min(1, 2-1) = 1 => priceRounded 20 * 3
       expect(data.amount).toBe(60);
       expect(data.clientId).toBe('c-1');
       expect(data.quoteId).toBe('q-1');
@@ -125,45 +124,43 @@ describe('SalesService', () => {
       expect(data.exchangeRates).toEqual(SNAPSHOT);
     });
 
-    it('usa jobTotal (con diseño/urgencia/mínimo) cuando el snapshot lo trae', async () => {
-      prisma.quote.findFirst.mockResolvedValue({
-        id: 'q-jt',
-        clientId: null,
-        name: 'Con extras',
-        quantity: 10,
-        totals: {
-          prices: [
-            { priceRounded: 10, jobTotal: 120 },
-            { priceRounded: 20, jobTotal: 300 }, // sugerido (idx 1): mínimo/extras ya aplicados
-          ],
-        },
-      });
-      prisma.sale.create.mockResolvedValue({ id: 's-jt' });
-
-      await service.fromQuote(ORG, { quoteId: 'q-jt', kind: 'ENCARGO' } as any);
-
-      const data = prisma.sale.create.mock.calls[0][0].data;
-      expect(data.amount).toBe(300); // jobTotal del sugerido, no priceRounded×qty (200)
-    });
-
-    it('con prices de un solo elemento usa idx=0', async () => {
+    it('sin total del pedido, usa el precio final por la cantidad', async () => {
       prisma.quote.findFirst.mockResolvedValue({
         id: 'q-2',
         clientId: 'c-2',
         name: 'Único',
         quantity: 5,
-        totals: { prices: [{ priceRounded: 7 }] },
+        totals: { price: { final: 7 } },
       });
       prisma.sale.create.mockResolvedValue({ id: 's-2' });
 
       await service.fromQuote(ORG, { quoteId: 'q-2', kind: 'COUNTER' } as any);
 
       const data = prisma.sale.create.mock.calls[0][0].data;
-      // idx = min(1, 1-1) = 0 => 7 * 5
       expect(data.amount).toBe(35);
     });
 
-    it('sin prices cae a costBatch', async () => {
+    /**
+     * Un presupuesto guardado antes de shared 0.7.0 trae `prices[]` y ningún
+     * precio final. Caer al costo registraría una venta A PÉRDIDA sin avisar,
+     * que es peor que no registrarla.
+     */
+    it('rechaza un snapshot anterior a 0.7.0 en vez de vender al costo', async () => {
+      prisma.quote.findFirst.mockResolvedValue({
+        id: 'q-viejo',
+        clientId: null,
+        name: 'Formato viejo',
+        quantity: 4,
+        totals: { prices: [{ priceRounded: 20 }], costBatch: 50 },
+      });
+
+      await expect(
+        service.fromQuote(ORG, { quoteId: 'q-viejo', kind: 'COUNTER' } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.sale.create).not.toHaveBeenCalled();
+    });
+
+    it('sin ningún precio cae a costBatch', async () => {
       prisma.quote.findFirst.mockResolvedValue({
         id: 'q-3',
         clientId: null,
@@ -177,22 +174,6 @@ describe('SalesService', () => {
 
       const data = prisma.sale.create.mock.calls[0][0].data;
       expect(data.amount).toBe(123.45);
-    });
-
-    it('con prices vacío cae a costBatch', async () => {
-      prisma.quote.findFirst.mockResolvedValue({
-        id: 'q-3b',
-        clientId: null,
-        name: 'Precios vacíos',
-        quantity: 4,
-        totals: { prices: [], costBatch: 50 },
-      });
-      prisma.sale.create.mockResolvedValue({ id: 's-3b' });
-
-      await service.fromQuote(ORG, { quoteId: 'q-3b', kind: 'COUNTER' } as any);
-
-      const data = prisma.sale.create.mock.calls[0][0].data;
-      expect(data.amount).toBe(50);
     });
 
     it('con totals null => amount 0', async () => {
@@ -217,7 +198,7 @@ describe('SalesService', () => {
         clientId: 'c-5',
         name: 'Nombre del presupuesto',
         quantity: 1,
-        totals: { prices: [{ priceRounded: 9 }] },
+        totals: { price: { final: 9 } },
       });
       prisma.sale.create.mockResolvedValue({ id: 's-5' });
 
@@ -233,7 +214,7 @@ describe('SalesService', () => {
         clientId: null,
         name: 'Con fecha',
         quantity: 1,
-        totals: { prices: [{ priceRounded: 1 }] },
+        totals: { price: { final: 1 } },
       });
       prisma.sale.create.mockResolvedValue({ id: 's-6' });
 

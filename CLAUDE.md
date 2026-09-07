@@ -327,19 +327,15 @@ en el repo web: se sobrescribe al sincronizar.
     materiales + tipos comunes (PLA/PETG/ABS/TPU/ASA/Nylon/PC/PVA/HIPS); backfill
     manual con un script Prisma (`catalogOption.upsert`). Extensible a otros campos
     con nuevos `kind`.
-  - **Motor pro (Fase 2A)** — el `CalcInput` tiene dos objetos OPCIONALES con
-    defaults (retrocompatibles): `batch` (`piecesPerBatch?`, `setupCost`) y
-    `surcharges` (`designFee`, `rushPct` fracción, `minOrderPrice`). **Multi-tanda**:
-    los gramos/horas son los de UNA cama (tanda); los costos por lote
-    (material/desgaste/luz) escalan `× cantidad/tanda` y el arranque `× ceil(tandas)`.
-    Sin `piecesPerBatch` el multiplicador es 1 = comportamiento clásico. El
-    `CalcResult` gana `batches: BatchSummary|null`, `breakdown.setup`, y por precio
-    `designPerUnit/rushAmount/finalPerUnit/jobTotal/hitMinimum`. **Orden de precio**:
-    `redondear(costo×(1+margen)) + diseño/unidad → ×(1+urgencia) → total = max(×qty, mínimo)`.
-    Helpers en `shared/calc/select.ts` (`pickSuggestedPrice`, `priceFinalPerUnit`,
-    `priceJobTotal`, `priceHasSurcharges`); **`/sales/from-quote` registra `jobTotal`**
-    (con extras), no el precio base. Los snapshots guardados antes de 2A no traen los
-    campos nuevos: leerlos SIEMPRE con `?.`/`??`.
+  - ~~**Motor pro (Fase 2A)**~~ — **DEROGADO el 2026-09-06** (shared 0.7.0). Los
+    recargos (`surcharges`: diseño, urgencia, mínimo) y el arranque por tanda
+    (`batch.setupCost`) se **eliminaron** del contrato, junto con `shared/calc/
+    select.ts` (existía para elegir entre varios precios y ahora hay uno solo).
+    Lo que sobrevive: **multi-tanda**, ahora en `piecesPerBatch` a nivel raíz del
+    `CalcInput`. Ver "Convenciones del motor de cálculo" y el spec
+    `docs/superpowers/specs/2026-09-06-calculadora-una-pantalla-design.md`.
+    ⚠️ **`/sales/from-quote` registraba `jobTotal`** (precio con extras): ese campo
+    ya no existe y hay que reapuntarlo a `order.total` — pendiente de la fase 2.
   - **Costos fijos + punto de equilibrio (Fase 2B)** — `Settings.fixedCosts`
     (JSON `[{concept, monthlyAmount}]`) y `Settings.breakEvenMarginPct` (fracción,
     default 0.4). NO entran en el precio por pieza. Helpers puros en
@@ -422,22 +418,57 @@ en el repo web: se sobrescribe al sincronizar.
 en la base de producción se consulta y se espera OK explícito, aunque parezca trivial.
 
 ## Convenciones del motor de cálculo
+
+> Reescrito el **2026-09-06** (shared **0.7.0**) para seguir la hoja "Costeo" del
+> Excel de Banano Lab: una pantalla, un filamento, un margen, un precio.
+> Es un cambio **ROMPEDOR**; el detalle está en
+> `docs/superpowers/specs/2026-09-06-calculadora-una-pantalla-design.md`.
+
 - Porcentajes como **fracción** (0.08 = 8 %, 0.3 = 30 %).
-- Costos "por lote" (material, desgaste, luz) vs "por pieza" (componentes,
-  empaque, mano de obra). NO dividir ciegamente entre la cantidad.
-- Los 3 datos que aporta el **slicer** (cantidad de piezas, gramos totales del
-  lote, horas de impresión) son inputs del `CalcInput`, **no viven en catálogos**:
-  se pasan en cada cálculo.
-- Material: `grams` es el **total del lote/trabajo** (como las horas de la
-  tanda, tal como lo reporta el slicer); el costo por pieza = total / cantidad.
+- Costos **"por tanda"** (filamento, desgaste, luz: dependen de los gramos y horas
+  de UNA impresión) vs **"por pieza"** (insumos, postprocesado, empaque). NO
+  dividir ciegamente entre la cantidad.
+- Los datos que aporta el **laminador** (gramos y horas **de la tanda**, piezas por
+  tanda) son inputs del `CalcInput`, **no viven en catálogos**.
+- `piecesPerBatch` está en la **raíz** del `CalcInput` (default 1). Los costos por
+  tanda escalan `× cantidad/piecesPerBatch`; las tandas = `ceil(cantidad/piecesPerBatch)`.
+- **Un solo filamento** (`filament`) y **una sola tabla de insumos** (`supplies`,
+  con `qty` POR PIEZA y `unitCost` ya resuelto). **No hay prorrateo por paquete.**
+- **Postprocesado** (`labor`): minutos POR PIEZA × valor de la hora.
+- **`extras`**: `packagingPerPiece` (por pieza) y `otherPerOrder` (una vez por
+  pedido, se reparte entre las unidades). Reemplazan a los recargos eliminados.
+- **Merma** (`waste.pct`, default 8 %): SIEMPRE sobre filamento + desgaste + luz,
+  sin selector. Una impresión fallida gasta material, máquina y luz; no gasta tu
+  postprocesado ni el empaque, que todavía no invertiste.
 - El desglose (`breakdown`) muestra cada categoría EN CRUDO y la merma como
   línea aparte (`wasteAmount`), de modo que las líneas sumen el costo del lote.
-- Componentes/empaque por paquete: default de prorrateo **FULL_PACKAGE**;
-  se exponen ambas cifras (usadas vs paquete completo).
-- Merma default 8 % sobre material+desgaste+luz (configurable).
-- Mayoreo: los tramos se interpretan siempre como **markup**.
-- Dinero con decimal.js; salidas redondeadas a 4 dp (sub-centavo). Redondeo de
-  presentación aparte (campos `*Rounded`).
+- **Un solo margen objetivo** (`margins.markup`) → `price.suggested` →
+  `price.rounded` → `price.final`. `manualPrice` pisa al redondeado.
+- **`price.status`** es el semáforo (`LOSS`/`LOW`/`BELOW_TARGET`/`OK`) con el piso
+  `LOW_MARGIN_THRESHOLD = 0.6` exportado de shared. No re-implementarlo en la UI.
+- **Mayoreo por DESCUENTO** sobre el precio final (`discountPct`), no por markup:
+  el descuento se aplica y **después** se redondea. (Deroga la regla anterior.)
+- **`parallelPrinters`** solo divide `production.deliveryHours`. NUNCA el costo:
+  dos impresoras 5 h gastan 10 horas-máquina de desgaste igual.
+- **`order` es la fuente ÚNICA del precio que se COBRA**: si el pedido alcanza un
+  tramo de mayoreo, `order.unitPrice` es el del tramo (y `listUnitPrice` guarda
+  el de lista, `discountPct` el descuento). El panel, la cotización del cliente y
+  `/sales/from-quote` leen ESE campo — si cada uno lo dedujera por su cuenta,
+  dirían cifras distintas. `price` sigue siendo el precio de lista.
+- **El piso de margen es configurable**: `margins.minMarginPct` (default
+  `LOW_MARGIN_THRESHOLD` = 0.6) ⇄ `Settings.minMarginPct`. Bajo ese margen el
+  estado es `LOW`; la UI lo marca en ROJO y avisa, pero **no bloquea la venta**.
+  El piso es INCLUSIVO: quedar justo en él es `BELOW_TARGET`, no `LOW`.
+- **`Settings` acompañó el cambio** (migraciones `settings_margen_unico` y
+  `settings_piso_margen`):
+  `defaultMargins Float[]` → **`defaultMarkup Float`** (default 1.0), y se
+  eliminaron `marginMode`, `wasteAppliesTo` y `componentProrationMode`.
+- Al re-resolver un insumo contra el catálogo (`products`), el costo por unidad
+  es `packagePrice / unitsPerPackage`: el catálogo guarda el PAQUETE y el motor
+  usa la unidad. Copiar el precio del paquete pondría cada argolla a $50.
+- Dinero con decimal.js; salidas redondeadas a 4 dp (sub-centavo). El redondeo de
+  presentación vive en `price.rounded` y en `roundingOptions` (las 5 opciones del
+  comparador; `DOWN` queda fuera a propósito: regala margen).
 
 ## Decisiones de diseño
 - Los **presupuestos** guardan un **snapshot JSON** del `CalcInput` + `totals`

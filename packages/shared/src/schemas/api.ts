@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { CalcInputSchema, ScopeSchema } from './calc';
+import { CalcInputSchema } from './calc';
+
+/**
+ * Si un componente del CATÁLOGO se usa por pieza o una sola vez por pedido.
+ * Vive acá y ya no en el motor: desde que los insumos del cálculo son siempre
+ * por pieza, este dato solo describe la ficha guardada del componente.
+ */
+const CatalogScopeSchema = z.enum(['PER_PIECE', 'PER_ORDER']);
 
 /**
  * Contratos de API compartidos entre el backend (validación de DTOs) y el
@@ -94,12 +101,10 @@ export const SettingsUpdateSchema = z.object({
   protectionRateLabel: z.string().nullable().optional(),
   kwhPrice: z.number().min(0).optional(),
   defaultWastePct: z.number().min(0).optional(),
-  wasteAppliesTo: z
-    .array(z.enum(['MATERIAL', 'WEAR', 'POWER', 'COMPONENTS', 'PACKAGING', 'LABOR']))
-    .optional(),
-  defaultMargins: z.array(z.number().min(0)).optional(),
-  marginMode: z.enum(['MARKUP', 'MARGIN']).optional(),
-  componentProrationMode: z.enum(['USED', 'FULL_PACKAGE']).optional(),
+  /** Margen objetivo por defecto (markup sobre el costo, fracción: 1.0 = 100 %). */
+  defaultMarkup: z.number().min(0).optional(),
+  /** Piso de margen real bajo el cual la calculadora avisa (fracción). */
+  minMarginPct: z.number().min(0).optional(),
   roundingMode: z.enum(['NONE', 'NEAREST', 'UP', 'DOWN']).optional(),
   roundingIncrement: z.number().positive().optional(),
   taxPercent: z.number().min(0).nullable().optional(),
@@ -296,7 +301,7 @@ export const ComponentSchema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio'),
   packagePrice: z.number().min(0),
   unitsPerPackage: z.number().int().positive('Las unidades por paquete deben ser mayores a 0'),
-  scope: ScopeSchema.default('PER_PIECE'),
+  scope: CatalogScopeSchema.default('PER_PIECE'),
 });
 export type ComponentDto = z.infer<typeof ComponentSchema>;
 
