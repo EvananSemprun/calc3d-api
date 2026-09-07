@@ -20,7 +20,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Publicidad** | 7 campañas: fecha, formato, público, objetivo, gasto, alcance, conversaciones, visitas | `Campaign` + su gasto en el ledger | ✅ **Migrado** (se agregaron alcance/conversaciones/visitas al modelo) |
 | **Clientes** | 5 clientes. Solo nombre y tipo son datos; lo demás son fórmulas | `Client` | ✅ **Migrado** |
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
-| **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ❌ **Pendiente** — leerla es fácil; el riesgo es la conciliación (ver §6) |
+| **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ✅ **Migrado** — $2.179,50 (ver §6) |
 | **Deuda** | Préstamo de la impresora P2S y sus pagos | — | ❌ **No existe en la app**: es una feature nueva |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | — | ❌ **No existe en la app**: es una feature nueva |
 
@@ -133,15 +133,18 @@ como una nota semanal:
 O sea: el riesgo de **duplicar** es de ~$136,50, no de $1.459. Y quedarse solo con
 los días tira **$1.292 de $2.203: el 59 % de la facturación histórica**.
 
-**Lo que hay que decidir antes de importar:**
+**Cómo se importó (2026-09-07):**
 
 1. **Mostrador**: filas 19-24, con fecha exacta por día. Directo.
 2. **Encargos de agosto en adelante**: de la hoja `Encargos`, con cliente, canal y
    descripción. Directo.
-3. **Encargos de febrero a julio ($1.292)**: solo existe el monto semanal. O entran
-   como una venta semanal agregada (tipo ENCARGO, fechada en su semana, sin
-   cliente) o se pierden. **Es una decisión, no un detalle técnico.**
-4. **Los $23,50 de descuadre**, repartidos en 9 semanas. Las dos que importan:
+3. **Encargos que solo existen como nota**: entran como venta semanal agregada
+   (ENCARGO, fechada el lunes, sin cliente, con la nota copiada). El descuento de
+   lo ya cargado es **semana por semana**, no por fecha de corte: un corte en
+   agosto perdía $46 de semanas cuya nota vale más que sus pedidos.
+4. **Los $23,50 de descuadre** NO se importaron: la app dice $2.179,50 y la fila
+   11 dice $2.203. Esa diferencia es el descuadre de la hoja, repartido en 9
+   semanas. Las dos que importan:
    - **Semana 2**: la nota dice "Encargos: 9$" y el total **nunca los sumó**.
    - **Semana 3**: $20 de diferencia **sin ninguna nota** que la explique.
 

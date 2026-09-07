@@ -329,6 +329,20 @@ en el repo web: se sobrescribe al sincronizar.
     "Instagram" → `ORGANIC` y "Personal" → `OTHER`, sin enlazarlos a ninguna
     campaña — inflar el ROI con ventas que quizá no vinieron de la pauta es
     mentirse a favor. **NO toca `Ventas`** (ver `docs/excel-vs-app.md` §6).
+  - **Importación de gastos y ventas** (`prisma/import-gastos.mjs`,
+    `prisma/import-ventas.mjs`): mismo patrón (ensayo por defecto, transacción,
+    verificación contra el Excel). Dos reglas que valen para cualquier import
+    futuro de esa hoja:
+    - **`Gastos` se solapa con `Publicidad` y `Materiales` a propósito.** Tres de
+      sus 19 filas ya estaban cargadas por esas hojas; el script las salta y
+      **verifica que estén** antes de saltarlas, o no escribe.
+    - **La fila 11 de `Ventas` NO es el mostrador**: está escrita a mano e
+      incluye encargos (infla el mostrador un 200 %). El mostrador son las filas
+      auxiliares 19-24. Los encargos viven solo como nota de texto y se
+      descuentan **semana por semana** contra los pedidos ya cargados; un corte
+      por fecha perdía $46. Resultado: 87 ventas COUNTER ($720) + 25 ENCARGO
+      semanales ($1.323) + $136,50 en pedidos = **$2.179,50**, contra los $2.203
+      de la fila 11. Esos $23,50 son el descuadre de la hoja y NO se inventaron.
   - **El estado de la migración del Excel** vive en `docs/excel-vs-app.md` (mapa
     hoja por hoja) y `docs/backlog-migracion.md` (las 10 actividades que faltan,
     con las decisiones que bloquean cada una). Actualizarlos al avanzar.

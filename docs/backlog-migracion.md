@@ -74,37 +74,32 @@ y verificación, como el de filamento.
 
 ---
 
-## 3. Ventas 🔴
+## 3. Ventas ✅ HECHO (2026-09-07)
 
-Leerla es fácil (los montos ya vienen calculados en las filas auxiliares). Lo
-difícil es conciliar. **No empezar sin resolver 3.1 y 3.2.**
-
-3.1. **Decidir qué pasa con $1.292 de encargos históricos** 🔴
-   - Los encargos de febrero a julio existen ÚNICAMENTE como una nota semanal.
-   - Opción A: entran como una venta semanal agregada (tipo ENCARGO, fechada en
-     su semana, sin cliente ni detalle).
-   - Opción B: no se importan y el histórico previo a agosto queda solo con
-     mostrador — se pierde el 59 % de la facturación.
-   - Sin esta decisión, cualquier import de `Ventas` está mal de entrada.
-
-3.2. **Decidir los $23,50 de descuadre** 🔴
-   - 9 semanas donde la nota no explica la diferencia. Las dos que importan:
-     - **Semana 2**: nota "Encargos: 9$" que nunca se sumó al total.
-     - **Semana 3**: $20 de diferencia sin ninguna nota.
-   - Definir si se corrigen en el origen o se importan como están y se documenta.
-
-3.3. **Evitar la doble carga de los encargos de agosto-septiembre**
-   - ~$136,50 están en la hoja `Encargos` (1.2) **y** dentro de las notas
-     semanales. Al importar, uno de los dos lados tiene que ceder.
-
-3.4. **Importar el mostrador**
-   - Filas 19-24 (lunes a sábado) con la fecha real de la fila 18 → `Sale` diaria.
-   - No usar la fila 11: incluye encargos e infla el mostrador un 200 %.
-   - Los domingos no se importan: 0 ventas en 52 semanas.
-
-3.5. **Verificar contra el Excel antes de escribir**
-   - Mostrador = $720 · total con encargos = $2.203. Si el import no da esos
-     números, no escribe.
+> 87 ventas de mostrador ($720, día por día con su fecha real) + 25 ventas
+> semanales de encargos ($1.323). Con los $136,50 ya cargados como pedidos, la
+> facturación histórica queda en **$2.179,50**.
+> Script: `prisma/import-ventas.mjs`.
+>
+> **3.1 resuelto** (los $1.292 históricos): entran como venta semanal agregada,
+> fechada el lunes, sin cliente ni detalle y con la nota original copiada. No
+> existen en ningún otro lado; la alternativa era perder el 58 % de la
+> facturación.
+>
+> **3.3 resuelto** (doble carga): el descuento es **semana por semana**, no por
+> fecha de corte. A cada nota se le resta lo que esa misma semana ya tiene como
+> pedido. Un corte en "de agosto en adelante no importo" perdía $46: hay semanas
+> de agosto donde la nota vale más que los pedidos de la hoja `Encargos`.
+>
+> **3.2 sigue abierto** (los $23,50 de descuadre): NO se inventaron. La app dice
+> $2.179,50 y la fila 11 de la hoja dice $2.203; esa diferencia es exactamente
+> el descuadre que la hoja no explica. Los dos casos claros:
+> la semana del 02/02 (nota "Encargos: 9$" que el total nunca sumó) y la del
+> 09/02 ($20 sin ninguna nota).
+>
+> ⚠️ **Agosto queda deformado en la vista mensual**: los gastos históricos sin
+> fecha (filamento, insumos, repuestos) se fecharon todos al 31/08, así que ese
+> mes muestra $1.649 de gastos contra $188 de ingresos. No es un mes real.
 
 ---
 
