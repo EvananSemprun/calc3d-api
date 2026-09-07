@@ -116,19 +116,22 @@ y verificación, como el de filamento.
 
 ---
 
-## 5. Punto de equilibrio en tres niveles 🟡
+## 5. Punto de equilibrio en tres niveles ✅ HECHO (2026-09-07)
 
-Hoy la app calcula un solo nivel (costos fijos ÷ margen de contribución).
-
-5.1. Agregar a Configuración: **cuota mensual del préstamo** y **reserva mensual
-     para equipos**.
-5.2. Calcular los tres niveles de la hoja:
-   - No perder dinero.
-   - Además pagar la cuota.
-   - Además generar la reserva.
-5.3. Mostrarlos en el Dashboard con el avance del mes contra cada uno.
-5.4. 🟡 Decidir si el costo variable se expresa como **% de la venta** (como la
-     hoja, 25 % de filamento) o se mantiene el margen de contribución actual.
+> El Dashboard muestra los tres niveles de la hoja, con el avance del periodo
+> contra cada uno. Con los datos del Excel: **$157,33 / $290,67 / $490,67**,
+> idénticos a la hoja `Metas`.
+>
+> **5.4 no era una decisión**: el "costo variable 25 %" de la hoja y el "margen
+> de contribución" que la app ya guardaba son el mismo dato al revés
+> (0,25 y 0,75). Se guardó 0,75 y se mejoró la etiqueta.
+>
+> **La cuota NO se guarda en Configuración** (el 5.1 decía eso): se deriva de los
+> préstamos abiertos con `monthlyLoanPayments`. El mismo número en dos lugares
+> termina diciendo dos cosas. Sí se agregó `Settings.equipmentReserve`.
+>
+> Un nivel se oculta cuando no aplica: sin préstamos no hay nivel 2, y sin
+> reserva no hay nivel 3.
 
 ---
 
@@ -141,12 +144,24 @@ Hoy la app calcula un solo nivel (costos fijos ÷ margen de contribución).
 
 ---
 
-## 7. Deuda (feature nueva) 🟡
+## 7. Deuda ✅ HECHO (2026-09-07)
 
-7.1. Modelo de préstamo: monto inicial, cuota mensual y sus pagos.
-7.2. Saldo pendiente derivado (no almacenado), como el saldo de un pedido.
-7.3. Alimenta el nivel 2 del punto de equilibrio (5.2).
-7.4. 🟡 Decidir si es un préstamo único o si puede haber varios.
+> Modelos `Loan` + `LoanPayment` (migración `deuda_y_reserva`), CRUD en
+> `/loans`, página **Finanzas → Deuda** y helpers puros en
+> `shared/calc/loan.ts`. Importado de la hoja: préstamo de la P2S, $1.000 de
+> capital, 4 pagos, **saldo $750, faltan 8 meses**.
+>
+> **7.4 resuelto: varios préstamos.** Cuesta lo mismo que uno y "uno solo" es
+> una apuesta sobre el futuro; el nivel 2 del equilibrio suma la cuota de todos
+> los abiertos.
+>
+> **Un pago de préstamo NO es un `Expense`.** El equipo ya está en el ledger
+> como inversión: contar además cada cuota sería contar la misma máquina dos
+> veces. Devolver capital no es un costo — el costo fue la impresora. La hoja
+> dice lo mismo: "se paga aparte de la operación... no toca el capital".
+>
+> El saldo se **deriva** (capital − abonos), nunca se almacena, igual que el de
+> un pedido.
 
 ---
 

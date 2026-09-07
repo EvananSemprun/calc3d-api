@@ -10,6 +10,7 @@ export * from './calc/charge-equivalents';
 export * from './calc/stock';
 export * from './calc/filament-analytics';
 export * from './calc/breakeven';
+export * from './calc/loan';
 export * from './calc/order';
 export * from './calc/product';
 export * from './calc/campaign';

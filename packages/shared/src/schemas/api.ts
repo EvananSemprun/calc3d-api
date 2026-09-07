@@ -111,6 +111,8 @@ export const SettingsUpdateSchema = z.object({
   fixedCosts: z.array(FixedCostSchema).optional(),
   /** Margen de contribución para el punto de equilibrio (fracción, 0.4 = 40 %). */
   breakEvenMarginPct: z.number().min(0).max(1).optional(),
+  /** Nivel 3 del equilibrio: lo que se aparta cada mes para reponer equipos. */
+  equipmentReserve: z.number().min(0).optional(),
   /** Nombre del negocio: vive en `Organization.name` (es el emisor de los
    *  documentos), pero se edita desde Ajustes → Negocio como un campo más. */
   businessName: z.string().min(1, 'El nombre del negocio es obligatorio').max(80).optional(),
@@ -537,3 +539,29 @@ export const ExpenseWithDefinitionSchema = z.object({
   }),
 });
 export type ExpenseWithDefinitionDto = z.infer<typeof ExpenseWithDefinitionSchema>;
+
+// ---------- Deuda (préstamos) ----------
+
+export const LoanCreateSchema = z.object({
+  name: z.string().min(1, 'Ponele un nombre al préstamo'),
+  principal: z.number().positive('El capital tiene que ser mayor que cero'),
+  monthlyPayment: z.number().min(0).default(0),
+  startDate: z.string().optional().nullable(),
+  /** Fecha en que se terminó de pagar; null = abierto. */
+  closedAt: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  /** El equipo que se compró con el préstamo, si fue para uno. */
+  printerId: z.string().optional().nullable(),
+});
+export type LoanCreateDto = z.infer<typeof LoanCreateSchema>;
+
+export const LoanUpdateSchema = LoanCreateSchema.partial();
+export type LoanUpdateDto = z.infer<typeof LoanUpdateSchema>;
+
+export const LoanPaymentCreateSchema = z.object({
+  date: z.string().min(1, 'Falta la fecha del pago'),
+  amount: z.number().positive('El pago tiene que ser mayor que cero'),
+  /** Referencia bancaria o lo que sirva para reconciliar después. */
+  reference: z.string().optional().nullable(),
+});
+export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;

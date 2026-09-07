@@ -371,6 +371,26 @@ en el repo web: se sobrescribe al sincronizar.
     `docs/superpowers/specs/2026-09-06-calculadora-una-pantalla-design.md`.
     ⚠️ **`/sales/from-quote` registraba `jobTotal`** (precio con extras): ese campo
     ya no existe y hay que reapuntarlo a `order.total` — pendiente de la fase 2.
+  - **Deuda / préstamos (2026-09-07)** (`loans/loans.module.ts`): modelos `Loan`
+    (nombre, capital, cuota mensual, `closedAt`, `printerId?`) + `LoanPayment`
+    (fecha, monto, referencia). **El saldo se DERIVA** (capital − abonos) con
+    los helpers puros de `shared/calc/loan.ts` (`loanPaid`/`loanBalance`/
+    `loanProgress`/`monthlyLoanPayments`/`monthsToPayOff`), NUNCA se almacena.
+    - ⚠️ **Un pago de préstamo NO es un `Expense`** y no toca el ledger: el
+      equipo ya entró ahí como inversión, y contar además cada cuota sería
+      contar la misma máquina dos veces. Devolver capital no es un costo.
+    - **Varios préstamos** a propósito: el nivel 2 del equilibrio suma la cuota
+      de todos los ABIERTOS (`closedAt` null).
+    - Import: `prisma/import-deuda.mjs` (también fija los parámetros del
+      equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
+      build ESM de shared** (usa imports sin extensión, que el ESM nativo de
+      Node no resuelve): se trae el CJS con `createRequire`.
+  - **Punto de equilibrio en TRES niveles (2026-09-07)** —
+    `breakEvenLevels()` en `shared/calc/breakeven.ts`: no perder / además la
+    cuota / además la reserva. `Settings.equipmentReserve` guarda la reserva;
+    **la cuota NO se guarda**, se deriva de los préstamos abiertos. El "costo
+    variable" de la hoja y el `breakEvenMarginPct` de la app son el mismo dato
+    al revés (0,25 ⇄ 0,75). Tests: `breakeven-levels.spec.ts`, `loan.spec.ts`.
   - **Costos fijos + punto de equilibrio (Fase 2B)** — `Settings.fixedCosts`
     (JSON `[{concept, monthlyAmount}]`) y `Settings.breakEvenMarginPct` (fracción,
     default 0.4). NO entran en el precio por pieza. Helpers puros en

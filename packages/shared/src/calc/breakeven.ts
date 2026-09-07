@@ -29,3 +29,39 @@ export function breakEvenProgress(sales: number, breakEven: number | null): numb
   if (breakEven == null || breakEven <= 0) return null;
   return Math.max(0, Math.min(1, sales / breakEven));
 }
+
+/**
+ * Los TRES niveles de la hoja "Resumen" del Excel. No es lo mismo "no perder
+ * dinero" que "poder pagar la cuota" ni que "además reponer los equipos": un
+ * solo número esconde que el negocio puede estar en verde y aun así no dar para
+ * pagar el préstamo.
+ *
+ * `loanPayment` se DERIVA de los préstamos abiertos (`monthlyLoanPayments`), no
+ * se escribe en Configuración.
+ */
+export interface BreakEvenLevels {
+  /** 1. Cubrir los costos fijos. */
+  survive: number | null;
+  /** 2. Además, la cuota del préstamo. */
+  withDebt: number | null;
+  /** 3. Además, la reserva mensual para reponer equipos. */
+  withReserve: number | null;
+}
+
+export function breakEvenLevels({
+  fixedMonthly,
+  marginPct,
+  loanPayment = 0,
+  equipmentReserve = 0,
+}: {
+  fixedMonthly: number;
+  marginPct: number;
+  loanPayment?: number;
+  equipmentReserve?: number;
+}): BreakEvenLevels {
+  return {
+    survive: breakEvenRevenue(fixedMonthly, marginPct),
+    withDebt: breakEvenRevenue(fixedMonthly + loanPayment, marginPct),
+    withReserve: breakEvenRevenue(fixedMonthly + loanPayment + equipmentReserve, marginPct),
+  };
+}

@@ -21,7 +21,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Clientes** | 5 clientes. Solo nombre y tipo son datos; lo demás son fórmulas | `Client` | ✅ **Migrado** |
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
 | **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ✅ **Migrado** — $2.179,50 (ver §6) |
-| **Deuda** | Préstamo de la impresora P2S y sus pagos | — | ❌ **No existe en la app**: es una feature nueva |
+| **Deuda** | Préstamo de la impresora P2S y sus pagos | `Loan` + `LoanPayment` | ✅ **Migrado** — saldo $750 |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | — | ❌ **No existe en la app**: es una feature nueva |
 
 ## 2. Lo que la app tiene y el Excel no
@@ -56,7 +56,7 @@ un error de la app: son decisiones tomadas a propósito.**
 | **Stock** | Por color, sin marca | Por ficha, con marca | Al reponer hay que saber qué marca comprar |
 | **Precio del filamento al costear** | Se copia a mano de `Inventario` a `Costeo` | Sale del catálogo, que la última compra actualiza sola | Si se olvida, se cotiza con un precio viejo |
 | **Mayoreo** | Descuento sobre el precio final | Igual (se cambió para seguir la hoja) | Es como se negocia de verdad |
-| **Punto de equilibrio** | Tres niveles: no perder / + cuota del préstamo / + reserva para equipos | Un solo nivel: costos fijos ÷ margen de contribución | La app **no** conoce la cuota ni la reserva |
+| **Punto de equilibrio** | Tres niveles: no perder / + cuota del préstamo / + reserva para equipos | Los mismos tres niveles | La cuota se **deriva** de los préstamos abiertos, no se escribe a mano |
 | **Reposición de equipos** | Reparte la ganancia acumulada entre las impresoras hasta cubrirlas | No existe | El dashboard muestra recuperación de inversión, pero no equipo por equipo |
 | **Mantenimiento por hora** | **No lo cobra**: la máquina solo cuesta inversión ÷ vida útil | Campo propio en la impresora, se suma al desgaste | Boquillas, correas y grasa son gasto real que la vida útil sola no captura. Hoy el campo está en cero: hay repuestos comprados que no tocan ningún precio |
 
@@ -78,8 +78,9 @@ Analítica que hoy solo existe en la hoja:
 - ~~**Rollos por marca** e **inversión por marca**~~ → ✅ Filamento → Análisis.
 - ~~**Top 10 de colores** por rollos comprados~~ → ✅ Filamento → Análisis.
 - **% de recurrencia de clientes** (clientes con 2+ compras sobre el total).
-- **Los tres niveles de venta mensual necesaria** y su seguimiento contra metas.
-- **Saldo del préstamo** y su cuota mensual.
+- ~~**Los tres niveles de venta mensual necesaria**~~ → ✅ Dashboard.
+- ~~**Saldo del préstamo** y su cuota mensual~~ → ✅ Finanzas → Deuda.
+- El **seguimiento contra metas** mensuales (sigue pendiente: hoja `Metas`).
 
 Las dos primeras salían de datos que la app **ya tenía** (compras con marca y
 color): eran pantalla, no migración, y ya están hechas. Las tres últimas

@@ -72,6 +72,8 @@ model Organization {
   storeCategories StoreCategory[]
   campaigns       Campaign[]
   storeRequests   StoreRequest[]
+  loans           Loan[]
+  loanPayments    LoanPayment[]
 }
 
 model User {
@@ -142,28 +144,28 @@ model Settings {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String       @unique
 
-  currency               String   @default("USD")
-  locale                 String   @default("en-US")
-  secondaryCurrency      String?  @default("VES") // (legado) moneda secundaria; el default vivo es defaultRateLabel
+  currency            String  @default("USD")
+  locale              String  @default("en-US")
+  secondaryCurrency   String? @default("VES") // (legado) moneda secundaria; el default vivo es defaultRateLabel
   // Tasa con NOMBRE usada por defecto en la vista ambiental (RateBadge, monto dual
   // en vivo). null = mostrar solo USD. Los documentos pueden elegir otra.
-  defaultRateLabel       String?
+  defaultRateLabel    String?
   // Tasa con NOMBRE de REFERENCIA para proteger el margen al cobrar en bolívares
   // (el "dólar real", típicamente el paralelo/Binance). Define los bolívares
   // objetivo a recibir. null = usar el default de la app (Binance/USDT).
-  protectionRateLabel    String?
-  kwhPrice               Decimal  @default(0) @db.Decimal(12, 4)
-  defaultWastePct        Float    @default(0.08)
+  protectionRateLabel String?
+  kwhPrice            Decimal @default(0) @db.Decimal(12, 4)
+  defaultWastePct     Float   @default(0.08)
   // Margen objetivo por defecto (markup sobre el costo, fracción: 1.0 = 100 %).
   // Reemplaza a `defaultMargins`: desde shared 0.7.0 la calculadora trabaja con
   // UN margen, no con tres precios a elegir.
-  defaultMarkup          Float    @default(1.0)
+  defaultMarkup       Float   @default(1.0)
   // Piso de margen real: bajo esto la calculadora avisa en rojo (no bloquea).
   // Es el error que más caro sale, así que no se baja el precio en silencio.
-  minMarginPct           Float    @default(0.6)
-  roundingMode           String   @default("NONE") // NONE | NEAREST | UP | DOWN
-  roundingIncrement      Float    @default(1)
-  taxPercent             Float? // reservado para fase 2 (IVA)
+  minMarginPct        Float   @default(0.6)
+  roundingMode        String  @default("NONE") // NONE | NEAREST | UP | DOWN
+  roundingIncrement   Float   @default(1)
+  taxPercent          Float? // reservado para fase 2 (IVA)
 
   // Costos fijos mensuales (alquiler, internet, luz base…) como lista JSON
   // [{ concept, monthlyAmount }] y el margen de contribución para el punto de
@@ -171,6 +173,10 @@ model Settings {
   // NO entran en el precio por pieza.
   fixedCosts         Json  @default("[]")
   breakEvenMarginPct Float @default(0.4)
+  /// Nivel 3 del punto de equilibrio: lo que se quiere apartar cada mes para
+  /// reponer los equipos. La cuota del préstamo NO va acá: se deriva de los
+  /// préstamos abiertos, o el mismo número en dos lugares termina divergiendo.
+  equipmentReserve   Float @default(0)
 
   // Datos del negocio para la nota de entrega (el nombre sale de Organization).
   businessRif     String?
@@ -227,9 +233,9 @@ model StockCount {
 
   /// Mes contado, como el primer día del mes a medianoche UTC.
   month   DateTime
-  sealed  Int @default(0) // sin abrir
-  inUse   Int @default(0) // abierto, con material
-  running Int @default(0) // por acabarse (menos de un cuarto)
+  sealed  Int      @default(0) // sin abrir
+  inUse   Int      @default(0) // abierto, con material
+  running Int      @default(0) // por acabarse (menos de un cuarto)
 
   /// El conteo se importó del Excel sin saber la marca del rollo. Se apaga al
   /// moverlo al material correcto.
@@ -252,6 +258,7 @@ model Printer {
   createdAt      DateTime     @default(now())
 
   expenses Expense[]
+  loans    Loan[]
 
   @@index([organizationId])
 }
@@ -636,11 +643,11 @@ model Campaign {
   /// Lo que reporta la plataforma. Son la ÚNICA medida de una campaña que
   /// todavía no generó una venta atribuida: sin ellas solo se la puede juzgar
   /// por ROAS, que en ese caso es cero y no dice nada.
-  reach          Int? // personas alcanzadas
-  conversations  Int? // conversaciones iniciadas
-  profileVisits  Int? // visitas al perfil
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  reach         Int? // personas alcanzadas
+  conversations Int? // conversaciones iniciadas
+  profileVisits Int? // visitas al perfil
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   expenses Expense[]
   quotes   Quote[]
@@ -886,4 +893,54 @@ model StoreRequest {
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
   @@index([clientId])
+}
+
+/// PRÉSTAMO con el que se compró un equipo. El **saldo se DERIVA** (capital −
+/// abonos), nunca se almacena, igual que el de un pedido.
+///
+/// Un pago de préstamo **no es un `Expense`**: el equipo ya entró al ledger como
+/// inversión, y contar además cada cuota sería contar la misma máquina dos
+/// veces. Devolver capital no es un costo.
+model Loan {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  /// Lo prestado, en USD base.
+  principal      Decimal      @db.Decimal(12, 4)
+  /// Cuota mensual comprometida. Alimenta el nivel 2 del punto de equilibrio.
+  monthlyPayment Decimal      @default(0) @db.Decimal(12, 4)
+  startDate      DateTime?
+  /// Fecha en que se terminó de pagar. null = abierto (y su cuota cuenta).
+  closedAt       DateTime?
+  notes          String?
+
+  /// El equipo que se compró con el préstamo, si fue para uno.
+  printer   Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
+  printerId String?
+
+  payments  LoanPayment[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([organizationId])
+}
+
+model LoanPayment {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  loan           Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId         String
+
+  date      DateTime
+  amount    Decimal  @db.Decimal(12, 4)
+  /// La referencia del pago (transferencia, "cena", lo que sea): es lo que
+  /// permite reconciliar con el banco después.
+  reference String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([loanId])
 }
