@@ -22,7 +22,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
 | **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ✅ **Migrado** — $2.179,50 (ver §6) |
 | **Deuda** | Préstamo de la impresora P2S y sus pagos | `Loan` + `LoanPayment` | ✅ **Migrado** — saldo $750 |
-| **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | — | ❌ **No existe en la app**: es una feature nueva |
+| **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | `Goal` (lo real se deriva) | ✅ **Migrado** — 5 meses |
 
 ## 2. Lo que la app tiene y el Excel no
 
@@ -80,7 +80,7 @@ Analítica que hoy solo existe en la hoja:
 - **% de recurrencia de clientes** (clientes con 2+ compras sobre el total).
 - ~~**Los tres niveles de venta mensual necesaria**~~ → ✅ Dashboard.
 - ~~**Saldo del préstamo** y su cuota mensual~~ → ✅ Finanzas → Deuda.
-- El **seguimiento contra metas** mensuales (sigue pendiente: hoja `Metas`).
+- ~~El **seguimiento contra metas** mensuales~~ → ✅ Finanzas → Metas.
 
 Las dos primeras salían de datos que la app **ya tenía** (compras con marca y
 color): eran pantalla, no migración, y ya están hechas. Las tres últimas

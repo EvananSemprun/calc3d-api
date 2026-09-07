@@ -74,6 +74,7 @@ model Organization {
   storeRequests   StoreRequest[]
   loans           Loan[]
   loanPayments    LoanPayment[]
+  goals           Goal[]
 }
 
 model User {
@@ -943,4 +944,27 @@ model LoanPayment {
 
   @@index([organizationId])
   @@index([loanId])
+}
+
+/// META MENSUAL (hoja "Metas" del Excel). Solo guarda lo que el dueño se
+/// PROPONE; lo cumplido se DERIVA de las ventas, los pedidos y los clientes del
+/// mes. Guardar lo real lo dejaría viejo en cuanto entre una venta.
+///
+/// `month` es el primer día del mes a medianoche UTC, igual que `StockCount`.
+model Goal {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  month          DateTime
+
+  salesTarget      Decimal @default(0) @db.Decimal(12, 4)
+  ordersTarget     Int     @default(0)
+  newClientsTarget Int     @default(0)
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, month])
+  @@index([organizationId])
 }

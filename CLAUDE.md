@@ -385,6 +385,19 @@ en el repo web: se sobrescribe al sincronizar.
       equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
       build ESM de shared** (usa imports sin extensión, que el ESM nativo de
       Node no resuelve): se trae el CJS con `createRequire`.
+  - **Metas mensuales (2026-09-07)** (`goals/goals.module.ts`): modelo `Goal`
+    (mes UTC único por org, metas de ventas/encargos/clientes nuevos). **Solo se
+    guarda la meta**; lo cumplido se DERIVA, y las definiciones importan porque
+    tienen que significar lo mismo que en el Excel:
+    - **ventas** = `Sale` del mes + pedidos entregados en el mes (la misma
+      cuenta que el Dashboard llama ingresos).
+    - **encargos** = cantidad de pedidos del mes.
+    - **clientes nuevos** = los de PRIMERA compra en el mes; no alcanza con
+      contar clientes con actividad (un recurrente no vuelve a ser nuevo).
+    Helpers puros en `shared/calc/goal.ts`; `goalProgress` **no se recorta**
+    arriba de 1 (a diferencia de `breakEvenProgress`): pasarse de la meta es
+    información. Import: `prisma/import-metas.mjs`, que **verifica la
+    derivación** contra las columnas reales de la hoja y no escribe si difieren.
   - **Punto de equilibrio en TRES niveles (2026-09-07)** —
     `breakEvenLevels()` en `shared/calc/breakeven.ts`: no perder / además la
     cuota / además la reserva. `Settings.equipmentReserve` guarda la reserva;

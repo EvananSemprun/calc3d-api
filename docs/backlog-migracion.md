@@ -165,12 +165,31 @@ y verificación, como el de filamento.
 
 ---
 
-## 8. Metas (feature nueva) 🟡
+## 8. Metas ✅ HECHO (2026-09-07)
 
-8.1. Meta mensual de **ventas**, **encargos** y **clientes nuevos**.
-8.2. Real vs meta y % de cumplimiento, derivados de lo que ya hay.
-8.3. Mostrarlo en el Dashboard junto al punto de equilibrio.
-8.4. 🟡 Decidir si las metas se cargan a mano por mes o se proyectan.
+> Modelo `Goal` (migración `metas_mensuales`), `/goals`, página **Finanzas →
+> Metas** y tarjeta del mes en curso en el Dashboard. Importadas las 5 metas de
+> la hoja (sep 2026 – ene 2027): $1.975 de ventas, 44 encargos, 28 clientes
+> nuevos.
+>
+> **Solo se guarda la meta.** Las tres cifras reales se DERIVAN, con las mismas
+> definiciones de la hoja:
+> - **ventas** = ventas del mes + pedidos entregados en el mes (la misma cuenta
+>   que el Dashboard llama ingresos).
+> - **encargos** = cantidad de pedidos del mes.
+> - **clientes nuevos** = los que tuvieron su PRIMERA compra en el mes. No
+>   alcanza con contar clientes con actividad: Toplevel compró en septiembre
+>   pero su primera fue en agosto, y la hoja dice 4, no 5.
+>
+> El import **verifica esas definiciones** contra las columnas "reales" de la
+> hoja y no escribe si no coinciden. Septiembre da $68,50 / 5 / 4 en los dos.
+>
+> **8.4 resuelto: metas a mano, mes a mes.** Los números del Excel
+> (250 → 325 → 450 → 600 → enero 350) llevan adentro una decisión sobre la
+> temporada; una proyección automática la borraría.
+>
+> El avance **no se recorta arriba de 100 %** (a diferencia del equilibrio):
+> pasarse de la meta es información. La barra sí se recorta; el número no.
 
 ---
 

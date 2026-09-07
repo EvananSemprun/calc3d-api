@@ -565,3 +565,15 @@ export const LoanPaymentCreateSchema = z.object({
   reference: z.string().optional().nullable(),
 });
 export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
+
+// ---------- Metas mensuales ----------
+
+export const GoalUpsertSchema = z.object({
+  /** El mes, como `AAAA-MM`. */
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'El mes va como AAAA-MM (ej. 2026-09)'),
+  salesTarget: z.number().min(0).default(0),
+  ordersTarget: z.number().int().min(0).default(0),
+  newClientsTarget: z.number().int().min(0).default(0),
+  notes: z.string().optional().nullable(),
+});
+export type GoalUpsertDto = z.infer<typeof GoalUpsertSchema>;

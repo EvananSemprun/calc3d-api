@@ -24,6 +24,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { BackupModule } from './backup/backup.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { LoansModule } from './loans/loans.module';
+import { GoalsModule } from './goals/goals.module';
 import { StorageModule } from './storage/storage.module';
 import { StoreModule } from './store/store.module';
 import { StoreRequestsModule } from './store-requests/store-requests.module';
@@ -55,6 +56,7 @@ import { StorePublicModule } from './store-public/store-public.module';
     BackupModule,
     CampaignsModule,
     LoansModule,
+    GoalsModule,
     StorageModule,
     StoreModule,
     // Catálogo público: SIN sesión. Va último para dejar claro que es la única
