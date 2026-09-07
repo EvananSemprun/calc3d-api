@@ -632,6 +632,13 @@ model Campaign {
   endDate        DateTime?
   budget         Decimal?           @db.Decimal(12, 4) // presupuesto estimado (USD)
   notes          String?
+
+  /// Lo que reporta la plataforma. Son la ÚNICA medida de una campaña que
+  /// todavía no generó una venta atribuida: sin ellas solo se la puede juzgar
+  /// por ROAS, que en ese caso es cero y no dice nada.
+  reach          Int? // personas alcanzadas
+  conversations  Int? // conversaciones iniciadas
+  profileVisits  Int? // visitas al perfil
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 

@@ -264,6 +264,10 @@ export const CampaignCreateSchema = z.object({
   endDate: z.string().optional().nullable(),
   budget: z.number().min(0).optional().nullable(),
   notes: z.string().optional().nullable(),
+  /** Lo que reporta la plataforma; con esto sale el costo por conversación. */
+  reach: z.number().int().min(0).optional().nullable(),
+  conversations: z.number().int().min(0).optional().nullable(),
+  profileVisits: z.number().int().min(0).optional().nullable(),
 });
 export type CampaignCreateDto = z.infer<typeof CampaignCreateSchema>;
 

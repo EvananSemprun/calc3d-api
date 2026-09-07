@@ -34,3 +34,4 @@ coverage/
 # cantidades). El repo es PÚBLICO: el script de importación se versiona, el
 # dataset no. Se regenera del .xlsx cuando haga falta.
 apps/api/prisma/filamento-excel.json
+apps/api/prisma/negocio-excel.json

@@ -311,6 +311,27 @@ en el repo web: se sobrescribe al sincronizar.
       `rate`/`currencyCode` (columnas ya existían); el tipo Publicidad guarda `amount`
       en USD base (= Bs ÷ tasa) + `rate`/`currencyCode='VES'` para presentación. Tests:
       `campaign.spec.ts` (recomendación).
+    - **Métricas de la plataforma (2026-09-07)**: `Campaign` guarda `reach`,
+      `conversations` y `profileVisits` (opcionales, migración
+      `metricas_de_campana`) y el detalle deriva el **costo por conversación**.
+      Son la ÚNICA medida de una campaña que todavía no generó venta atribuida:
+      sin ellas el ROAS es 0× y no dice nada. ⚠️ **`serialize()` en
+      `campaigns.module.ts` arma la respuesta CAMPO POR CAMPO**: un campo nuevo
+      que no se agregue ahí existe en la base, pasa los tipos y **nunca llega al
+      cliente**. Hay que tocar `serialize()`, `create()` y `update()`.
+  - **Importación de las hojas del negocio** (`prisma/import-negocio.mjs` +
+    `negocio-excel.json`, ignorado): clientes, encargos, publicidad, inversión en
+    equipos e insumos. Mismo patrón que el de filamento: **sin `--commit` es un
+    ENSAYO**, escribe en una transacción y **verifica contra el Excel antes y
+    después** (montos cobrados y de pauta); si no cuadra, no escribe. Los encargos
+    entran como pedidos **DELIVERED con su abono** (ya estaban cobrados; sin el
+    abono quedan con saldo y no cuentan como ingreso). Atribución **conservadora**:
+    "Instagram" → `ORGANIC` y "Personal" → `OTHER`, sin enlazarlos a ninguna
+    campaña — inflar el ROI con ventas que quizá no vinieron de la pauta es
+    mentirse a favor. **NO toca `Ventas`** (ver `docs/excel-vs-app.md` §6).
+  - **El estado de la migración del Excel** vive en `docs/excel-vs-app.md` (mapa
+    hoja por hoja) y `docs/backlog-migracion.md` (las 10 actividades que faltan,
+    con las decisiones que bloquean cada una). Actualizarlos al avanzar.
   - **Registro dinámico de gastos**: el modal (front) elige el tipo (Filamento/
     Impresora/Componente/Empaque/Mantenimiento/General) y, si mapea a catálogo,
     deja reusar un item existente o crearlo inline → crea catálogo + gasto enlazado

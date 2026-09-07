@@ -336,6 +336,9 @@ export class CampaignsService {
         endDate: dto.endDate ? new Date(dto.endDate) : null,
         budget: dto.budget ?? null,
         notes: dto.notes ?? null,
+        reach: dto.reach ?? null,
+        conversations: dto.conversations ?? null,
+        profileVisits: dto.profileVisits ?? null,
       },
     });
   }
@@ -353,6 +356,9 @@ export class CampaignsService {
         ...(dto.endDate !== undefined && { endDate: dto.endDate ? new Date(dto.endDate) : null }),
         ...(dto.budget !== undefined && { budget: dto.budget ?? null }),
         ...(dto.notes !== undefined && { notes: dto.notes ?? null }),
+        ...(dto.reach !== undefined && { reach: dto.reach ?? null }),
+        ...(dto.conversations !== undefined && { conversations: dto.conversations ?? null }),
+        ...(dto.profileVisits !== undefined && { profileVisits: dto.profileVisits ?? null }),
       },
     });
   }
@@ -383,6 +389,9 @@ function serialize(c: {
   endDate: Date | null;
   budget: Prisma.Decimal | null;
   notes: string | null;
+  reach: number | null;
+  conversations: number | null;
+  profileVisits: number | null;
   createdAt: Date;
 }) {
   return {
@@ -395,6 +404,11 @@ function serialize(c: {
     endDate: c.endDate ? c.endDate.toISOString() : null,
     budget: c.budget != null ? Number(c.budget) : null,
     notes: c.notes,
+    // Lo que reporta la plataforma de anuncios: sin esto, una campaña que
+    // todavía no vendió solo se puede juzgar por ROAS, que da cero.
+    reach: c.reach,
+    conversations: c.conversations,
+    profileVisits: c.profileVisits,
     createdAt: c.createdAt.toISOString(),
   };
 }
