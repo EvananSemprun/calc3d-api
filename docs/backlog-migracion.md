@@ -55,19 +55,22 @@ y verificación, como el de filamento.
 
 ---
 
-## 2. Gastos (19 filas) 🟡
+## 2. Gastos ✅ HECHO (2026-09-07)
 
-2.1. **Decidir el mapeo de categorías**
-   - La hoja usa Insumos / Repuestos / Empaque / Diseño; la app tiene su propio
-     enum. Hay que definir la correspondencia una vez.
-
-2.2. **Decidir las fechas**
-   - Ninguna fila tiene fecha. Mismo criterio que las compras de filamento:
-     fecharlas al cierre del histórico y marcarlas como tales en la descripción.
-
-2.3. **Enlazar con catálogo donde corresponda**
-   - Los de categoría Repuestos deberían quedar enlazados a la impresora: es lo
-     que después alimenta el mantenimiento por hora (ver 9.3).
+> 16 de las 19 filas, $934. Script: `prisma/import-gastos.mjs`.
+> Categorías: Insumos y Empaque → CONSUMABLE · Repuestos → MAINTENANCE ·
+> Diseño → OTHER. Fechas al cierre del histórico (31/08), salvo los pagos al
+> diseñador, que nombran su mes y se fechan ahí.
+>
+> **Tres filas NO se importaron** porque ya estaban por otra hoja: la de
+> publicidad ($103,56 = las 7 campañas) y los imanes y el papel de burbujas
+> ($19, de `Materiales`). El script verifica que cada una esté realmente
+> cargada antes de saltarla; si no la encuentra, no escribe nada.
+>
+> Pendiente menor: **$82 de repuestos sin máquina asignada** (teclas, dos
+> boquillas, grasa). La fila no dice a cuál impresora fueron, y sin eso no
+> alimentan el mantenimiento por hora (ver 9.3). Solo "Repuestos A1" quedó
+> enlazado.
 
 ---
 

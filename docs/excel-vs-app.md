@@ -19,7 +19,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Encargos** | 7 encargos: fecha de pago, cliente, descripción, canal, monto, costo de material | `Order` DELIVERED + su abono | ✅ **Migrado** |
 | **Publicidad** | 7 campañas: fecha, formato, público, objetivo, gasto, alcance, conversaciones, visitas | `Campaign` + su gasto en el ledger | ✅ **Migrado** (se agregaron alcance/conversaciones/visitas al modelo) |
 | **Clientes** | 5 clientes. Solo nombre y tipo son datos; lo demás son fórmulas | `Client` | ✅ **Migrado** |
-| **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ❌ **Pendiente** — sin fecha y con categorías que no son las de la app |
+| **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
 | **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ❌ **Pendiente** — leerla es fácil; el riesgo es la conciliación (ver §6) |
 | **Deuda** | Préstamo de la impresora P2S y sus pagos | — | ❌ **No existe en la app**: es una feature nueva |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | — | ❌ **No existe en la app**: es una feature nueva |
