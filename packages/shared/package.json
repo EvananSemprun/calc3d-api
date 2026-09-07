@@ -1,6 +1,6 @@
 {
   "name": "@calc3d/shared",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "description": "Tipos, schemas Zod y motor de cálculo puro para Calc3D",
   "main": "dist/cjs/index.js",

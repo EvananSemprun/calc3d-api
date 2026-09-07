@@ -63,6 +63,10 @@ export interface FilamentPurchase {
   date: string;
   materialId: string | null;
   materialName: string | null;
+  /** Marca, tipo y color de la ficha: es con lo que se agrupa el análisis. */
+  brand: string | null;
+  type: string | null;
+  color: string | null;
   /** rollos comprados */
   quantity: number;
   /** lo pagado, en USD base (si se pagó en Bs, ya viene convertido) */

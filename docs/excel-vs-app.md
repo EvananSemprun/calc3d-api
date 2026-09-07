@@ -75,15 +75,15 @@ cuando el real es **$0,02/g** — el doble. A la hoja le falta una columna de
 
 Analítica que hoy solo existe en la hoja:
 
-- **Rollos por marca** e **inversión por marca** (`Resumen`).
-- **Top 10 de colores** por rollos comprados.
+- ~~**Rollos por marca** e **inversión por marca**~~ → ✅ Filamento → Análisis.
+- ~~**Top 10 de colores** por rollos comprados~~ → ✅ Filamento → Análisis.
 - **% de recurrencia de clientes** (clientes con 2+ compras sobre el total).
 - **Los tres niveles de venta mensual necesaria** y su seguimiento contra metas.
 - **Saldo del préstamo** y su cuota mensual.
 
-Las dos primeras salen de datos que la app **ya tiene** (compras con marca y
-color): son pantallas por hacer, no datos por migrar. Las tres últimas necesitan
-features nuevas.
+Las dos primeras salían de datos que la app **ya tenía** (compras con marca y
+color): eran pantalla, no migración, y ya están hechas. Las tres últimas
+necesitan features nuevas.
 
 ## 5. Orden sugerido para lo que falta
 

@@ -105,13 +105,16 @@ difícil es conciliar. **No empezar sin resolver 3.1 y 3.2.**
 
 ---
 
-## 4. Analítica de filamento 🟢
+## 4. Analítica de filamento ✅ HECHO (2026-09-07)
 
-Sin migración: los datos ya están en la app.
-
-4.1. **Rollos e inversión por marca** — nueva sección en Filamento.
-4.2. **Top de colores** por rollos comprados.
-4.3. Ambas salen de las 48 compras ya importadas; es solo pantalla y agregación.
+> Pestaña **Análisis** en Filamento: rollos e inversión por marca (con el costo
+> promedio por rollo y la participación de cada una), colores más comprados y
+> reparto por material. Agrega sobre las MISMAS compras que muestra la pestaña de
+> al lado con el helper puro `groupPurchases` (shared 0.7.3) — no hay endpoint
+> nuevo: dos fuentes para el mismo total terminan discrepando.
+>
+> Para poder agrupar, `GET /filament/purchases` ahora devuelve también la marca,
+> el tipo y el color de la ficha.
 
 ---
 

@@ -389,6 +389,16 @@ en el repo web: se sobrescribe al sincronizar.
     los dos meses devuelve `null`, no un número inventado. Helpers puros en
     `shared/calc/stock.ts`. Spec:
     `docs/superpowers/specs/2026-09-07-control-de-filamento-design.md`.
+  - **Analítica de filamento (2026-09-07, shared 0.7.3)**: `groupPurchases` en
+    `shared/calc/filament-analytics.ts` agrupa las compras por **marca, tipo o
+    color** (rollos, invertido, nº de compras y participación), ordenando por
+    ROLLOS —la pregunta es "¿qué compro más?", y un rollo caro no se usa más—.
+    Lo que no tiene el campo cargado cae en `UNSPECIFIED` ("Sin especificar"),
+    que es un grupo real: hay 9 rollos así. **No hay endpoint nuevo**: la
+    pantalla agrega sobre las mismas compras de `GET /filament/purchases`, que
+    ahora devuelve `brand`/`type`/`color`. Dos fuentes para el mismo total
+    terminan discrepando, y en un resumen no se nota. Tests:
+    `filament-analytics.spec.ts`.
   - **Importación del Excel** (`prisma/import-filamento.mjs` + `filamento-excel.json`):
     trae el control de filamento desde las hojas "Inventario" y "Stock mensual".
     Se corre a mano (`node --env-file=.env prisma/import-filamento.mjs`), **sin

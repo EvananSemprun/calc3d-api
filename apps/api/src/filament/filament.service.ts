@@ -72,7 +72,9 @@ export class FilamentService {
         ...dateWhere(from, to),
       },
       include: {
-        material: { select: { id: true, name: true, rollGrams: true } },
+        material: {
+          select: { id: true, name: true, rollGrams: true, brand: true, type: true, color: true },
+        },
         provider: { select: { name: true } },
       },
       orderBy: { date: 'desc' },
@@ -87,6 +89,9 @@ export class FilamentService {
         date: g.date.toISOString(),
         materialId: g.material?.id ?? null,
         materialName: g.material?.name ?? null,
+        brand: g.material?.brand ?? null,
+        type: g.material?.type ?? null,
+        color: g.material?.color ?? null,
         quantity,
         amount,
         costPerRoll,
