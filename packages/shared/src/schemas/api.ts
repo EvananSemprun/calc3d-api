@@ -366,6 +366,12 @@ export const OrderCreateSchema = z.object({
   /** Atribución de publicidad (null = sin atribuir). */
   originChannel: AttributionChannelSchema.optional().nullable(),
   campaignId: z.string().optional().nullable(),
+  /** Qué máquina lo imprimió: suma sus horas a la vida útil del equipo. */
+  printerId: z.string().optional().nullable(),
+  /** Horas de máquina del trabajo. null = no se midió. */
+  machineHours: z.number().min(0).optional().nullable(),
+  /** Piezas reimpresas por fallo. 0 es un dato; null es "sin medir". */
+  reprints: z.number().int().min(0).optional().nullable(),
 });
 export type OrderCreateDto = z.infer<typeof OrderCreateSchema>;
 

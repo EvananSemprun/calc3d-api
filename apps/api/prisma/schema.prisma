@@ -260,6 +260,7 @@ model Printer {
 
   expenses Expense[]
   loans    Loan[]
+  orders   Order[]
 
   @@index([organizationId])
 }
@@ -480,6 +481,18 @@ model Order {
   originChannel AttributionChannel?
   campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   campaignId    String?
+
+  /// LO QUE PASÓ AL PRODUCIRLO (medición, 2026-09-07). Los tres son opcionales:
+  /// se cargan cuando el trabajo se imprime, no al tomar el pedido, y un pedido
+  /// viejo sin cargar NO es un pedido de cero horas ni de cero fallos — es uno
+  /// sin medir, y las cuentas lo excluyen en vez de contarlo como perfecto.
+  printer      Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
+  printerId    String?
+  /// Horas de máquina que consumió el trabajo. Suman a la vida útil del equipo.
+  machineHours Decimal? @db.Decimal(12, 4)
+  /// Piezas que hubo que volver a imprimir por fallo. Cero es un dato válido
+  /// (se imprimió sin fallas); null es "no se midió".
+  reprints     Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

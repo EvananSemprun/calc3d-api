@@ -207,24 +207,24 @@ y verificación, como el de filamento.
 
 ---
 
-## 9. Medición que hoy no existe 🟢
+## 9. Medición que hoy no existe ✅ HECHO (2026-09-07)
 
-Nada que migrar: son datos que nadie tiene todavía. Cuanto antes se empiecen a
-registrar, antes sirven.
-
-9.1. **Horas de máquina acumuladas**
-   - Sumar las horas de cada trabajo a la impresora usada.
-   - Sin esto no se sabe qué tan cerca está cada equipo de su vida útil, y el
-     mantenimiento por hora es un número inventado.
-
-9.2. **Tasa real de fallos**
-   - Un campo de "reimpresiones por fallo" en el pedido.
-   - Convierte la merma de supuesto (8 %) en dato medido en dos meses.
-
-9.3. **Mantenimiento gastado vs cobrado**
-   - Comparar los repuestos comprados (gastos enlazados a la impresora, ver 2.3)
-     contra lo que se cobró por mantenimiento por hora.
-   - Hoy el campo está en cero: hay repuestos comprados que no tocan ningún precio.
+> Tres campos en el pedido (**impresora, horas de máquina, piezas reimpresas**),
+> una tarjeta para cargarlos en el detalle del pedido y la pantalla
+> **Finanzas → Producción** que los lee. Endpoint `GET /printers/usage`,
+> helpers puros en `shared/calc/production.ts`.
+>
+> Nada de esto se migra: son datos que empiezan a existir hoy. Lo que arreglan:
+> - **9.1 Horas acumuladas** → % de vida útil consumida por máquina.
+> - **9.2 Tasa real de fallos** → reimpresas ÷ piezas entregadas, expresada así
+>   para que sea comparable con la merma del 8 % que el motor asume.
+> - **9.3 Mantenimiento** → repuestos comprados contra lo cobrado por hora.
+>   Hoy: $10 gastados en la A1 contra $0 cobrados, porque la tarifa está en cero.
+>
+> ⚠️ **Un trabajo sin medir NO es un trabajo perfecto.** Los pedidos sin anotar
+> quedan FUERA de las cuentas en vez de contarse como cero horas y cero fallos.
+> La pantalla muestra siempre cuántos trabajos hay medidos: una tasa sacada de
+> dos pedidos no es una tasa, y esconder la muestra la haría parecer firme.
 
 ---
 

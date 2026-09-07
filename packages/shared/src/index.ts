@@ -13,6 +13,7 @@ export * from './calc/breakeven';
 export * from './calc/loan';
 export * from './calc/goal';
 export * from './calc/equipment';
+export * from './calc/production';
 export * from './calc/order';
 export * from './calc/product';
 export * from './calc/campaign';

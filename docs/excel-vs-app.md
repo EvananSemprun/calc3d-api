@@ -157,6 +157,10 @@ Vacíos que no son de migración: hoy nadie tiene el dato.
 
 | Qué falta | Por qué importa |
 |---|---|
-| **Horas de máquina acumuladas** | Sin ellas no se sabe qué tan cerca está cada impresora de su vida útil, y el mantenimiento por hora es un número inventado |
-| **Tasa real de fallos** | La merma (8 %) es un supuesto, no una medición. Un campo de "reimpresiones por fallo" en el pedido la vuelve dato en dos meses |
-| **Mantenimiento gastado vs cobrado** | El Excel **no cobra mantenimiento en absoluto**; la app tiene el campo pero arranca en cero. Hay repuestos ya comprados (boquillas, grasa) que hoy no tocan ningún precio |
+| **Horas de máquina acumuladas** | ✅ Se anotan por pedido; la pantalla Producción muestra el % de vida útil de cada equipo |
+| **Tasa real de fallos** | ✅ Campo "piezas reimpresas" en el pedido. Con dos meses anotados, la merma del 8 % deja de ser un supuesto |
+| **Mantenimiento gastado vs cobrado** | ✅ Se compara por máquina. Hoy: $10 gastados en la A1 contra $0 cobrados, porque la tarifa por hora está en cero |
+
+> Los tres se **empiezan a medir ahora**: la app tiene dónde anotarlos, pero el
+> dato no existe hasta que se cargue. Un pedido sin anotar queda fuera de las
+> cuentas, no cuenta como cero.

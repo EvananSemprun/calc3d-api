@@ -385,6 +385,16 @@ en el repo web: se sobrescribe al sincronizar.
       equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
       build ESM de shared** (usa imports sin extensión, que el ESM nativo de
       Node no resuelve): se trae el CJS con `createRequire`.
+  - **Medición de la producción (2026-09-07)** — `Order` gana `printerId`,
+    `machineHours` y `reprints` (migración `medicion_de_produccion`), y
+    `GET /printers/usage` los agrega por máquina con `shared/calc/production.ts`
+    (`lifeUsed`/`failureRate`/`productionStats`/`maintenanceBalance`).
+    ⚠️ **Un trabajo sin medir NO es un trabajo perfecto**: los pedidos con
+    `reprints` en null quedan FUERA del cálculo en vez de contar como cero
+    fallos, y la respuesta expone `measuredJobs`/`unmeasuredJobs` para que la UI
+    diga el tamaño de la muestra. `failureRate` es reimpresas ÷ piezas
+    ENTREGADAS, para que sea comparable con `waste.pct` del motor (que es un
+    recargo sobre lo que sí se entrega). Tests: `production.spec.ts`.
   - **Reposición de equipos (2026-09-07)** — `GET /printers/recovery` (⚠️ ruta
     literal declarada ANTES de `:id`) con `equipmentRecovery` de
     `shared/calc/equipment.ts`: reparte la ganancia acumulada entre las

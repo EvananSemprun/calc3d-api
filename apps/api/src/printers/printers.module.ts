@@ -14,6 +14,9 @@ import {
 import {
   PrinterSchema,
   equipmentRecovery,
+  lifeUsed,
+  maintenanceBalance,
+  productionStats,
   type OrderLine,
   type PrinterDto,
 } from '@calc3d/shared';
@@ -113,6 +116,75 @@ export class PrintersService {
     };
   }
 
+  /**
+   * MEDICIÓN DE LA PRODUCCIÓN (punto 9): horas de máquina acumuladas, tasa real
+   * de fallos y mantenimiento cobrado contra gastado.
+   *
+   * Los tres salen de lo que se anota en cada pedido al imprimirlo. Mientras no
+   * se anote, devuelven `null` o cero trabajos medidos: **no se rellena con
+   * supuestos**, que es justo lo que estos números vienen a reemplazar.
+   */
+  async usage(organizationId: string) {
+    const [printers, pedidos] = await Promise.all([
+      this.prisma.printer.findMany({
+        where: { organizationId },
+        select: {
+          id: true,
+          name: true,
+          lifetimeHours: true,
+          maintPerHour: true,
+          expenses: {
+            where: { category: 'MAINTENANCE' },
+            select: { amount: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.order.findMany({
+        where: { organizationId, status: { not: 'CANCELLED' } },
+        select: { printerId: true, machineHours: true, reprints: true, lines: true },
+      }),
+    ]);
+
+    const piezas = (lines: unknown) =>
+      ((lines ?? []) as OrderLine[]).reduce((s, l) => s + l.quantity, 0);
+    const aTrabajo = (o: (typeof pedidos)[number]) => ({
+      machineHours: o.machineHours == null ? null : Number(o.machineHours),
+      reprints: o.reprints,
+      pieces: piezas(o.lines),
+    });
+
+    const rows = printers.map((p) => {
+      const suyos = pedidos.filter((o) => o.printerId === p.id).map(aTrabajo);
+      const stats = productionStats(suyos);
+      const gastado = p.expenses.reduce((s, e) => s + Number(e.amount), 0);
+      return {
+        id: p.id,
+        name: p.name,
+        lifetimeHours: p.lifetimeHours,
+        maintPerHour: Number(p.maintPerHour),
+        jobs: suyos.length,
+        ...stats,
+        lifeUsed: lifeUsed(stats.hours, p.lifetimeHours),
+        maintenance: maintenanceBalance(gastado, Number(p.maintPerHour), stats.hours),
+      };
+    });
+
+    // El total incluye los trabajos SIN máquina asignada: para la tasa de
+    // fallos da igual en cuál se imprimió, y dejarlos afuera perdería medición.
+    const total = productionStats(pedidos.map(aTrabajo));
+
+    return {
+      printers: rows,
+      total: {
+        ...total,
+        /** Pedidos sin ninguna medición cargada: lo que falta por anotar. */
+        unmeasuredJobs: pedidos.filter((o) => o.reprints == null && o.machineHours == null).length,
+        jobs: pedidos.length,
+      },
+    };
+  }
+
   private async ensureOwned(organizationId: string, id: string) {
     const found = await this.prisma.printer.findFirst({ where: { id, organizationId } });
     if (!found) throw new NotFoundException('Impresora no encontrada');
@@ -129,10 +201,15 @@ export class PrintersController {
     return this.service.list(user.organizationId);
   }
 
-  /** Ruta literal ANTES de cualquier `:id`, o Nest la toma como un id. */
+  /** Rutas literales ANTES de cualquier `:id`, o Nest las toma como un id. */
   @Get('recovery')
   recovery(@CurrentUser() user: AuthUser) {
     return this.service.recovery(user.organizationId);
+  }
+
+  @Get('usage')
+  usage(@CurrentUser() user: AuthUser) {
+    return this.service.usage(user.organizationId);
   }
 
   @Post()

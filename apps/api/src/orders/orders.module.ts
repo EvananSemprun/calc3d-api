@@ -114,6 +114,11 @@ export class OrdersService {
         exchangeRates,
         originChannel: dto.originChannel ?? null,
         campaignId: dto.campaignId ?? null,
+        // Medición de la producción: se cargan al imprimir, no al tomar el
+        // pedido, así que casi siempre entran vacíos y se completan después.
+        printerId: dto.printerId ?? null,
+        machineHours: dto.machineHours ?? null,
+        reprints: dto.reprints ?? null,
       },
     });
   }
@@ -131,6 +136,9 @@ export class OrdersService {
         ...(dto.notes !== undefined && { notes: dto.notes ?? null }),
         ...(dto.originChannel !== undefined && { originChannel: dto.originChannel ?? null }),
         ...(dto.campaignId !== undefined && { campaignId: dto.campaignId ?? null }),
+        ...(dto.printerId !== undefined && { printerId: dto.printerId ?? null }),
+        ...(dto.machineHours !== undefined && { machineHours: dto.machineHours ?? null }),
+        ...(dto.reprints !== undefined && { reprints: dto.reprints ?? null }),
         ...(dto.lines && { lines: dto.lines as unknown as Prisma.InputJsonValue }),
         // Cambiar la moneda elegida re-congela la tasa del documento.
         ...(dto.currencyLabel !== undefined && {
