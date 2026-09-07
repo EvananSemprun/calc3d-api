@@ -385,6 +385,20 @@ en el repo web: se sobrescribe al sincronizar.
       equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
       build ESM de shared** (usa imports sin extensión, que el ESM nativo de
       Node no resuelve): se trae el CJS con `createRequire`.
+  - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
+    `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
+    con 11 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
+    Clientes, Publicidad, Deuda, Metas, Producción). **Decisión del dueño: el
+    Excel deja de ser un lugar donde cargar datos y pasa a ser una SALIDA de la
+    app**, así que no hay dos sistemas que puedan discrepar.
+    ⚠️ Las hojas se arman **reusando los servicios de cada pantalla**
+    (`FilamentService`, `GoalsService`, `LoansService`, `PrintersService`), NO
+    repitiendo las consultas: si el reporte hiciera sus propias cuentas,
+    terminaría diciendo algo distinto de lo que muestra la app, que es
+    exactamente el problema que esto resuelve. Los montos se escriben
+    redondeados al centavo (el formato de celda los mostraría bien igual, pero
+    el ruido de coma flotante se arrastra al operar sobre ellos en Excel) y los
+    totales van como fórmula `SUM()`, no como número muerto.
   - **Medición de la producción (2026-09-07)** — `Order` gana `printerId`,
     `machineHours` y `reprints` (migración `medicion_de_produccion`), y
     `GET /printers/usage` los agrega por máquina con `shared/calc/production.ts`

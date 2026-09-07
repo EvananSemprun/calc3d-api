@@ -237,5 +237,6 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 @Module({
   controllers: [PrintersController],
   providers: [PrintersService],
+  exports: [PrintersService],
 })
 export class PrintersModule {}

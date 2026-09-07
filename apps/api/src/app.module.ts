@@ -23,6 +23,7 @@ import { ProductsModule } from './products/products.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { BackupModule } from './backup/backup.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
+import { ReportsModule } from './reports/reports.module';
 import { LoansModule } from './loans/loans.module';
 import { GoalsModule } from './goals/goals.module';
 import { StorageModule } from './storage/storage.module';
@@ -57,6 +58,7 @@ import { StorePublicModule } from './store-public/store-public.module';
     CampaignsModule,
     LoansModule,
     GoalsModule,
+    ReportsModule,
     StorageModule,
     StoreModule,
     // Catálogo público: SIN sesión. Va último para dejar claro que es la única

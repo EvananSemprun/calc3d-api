@@ -228,29 +228,37 @@ y verificación, como el de filamento.
 
 ---
 
-## 10. El Excel: arreglar o retirar 🔴
+## 10. El Excel ✅ RESUELTO (2026-09-07)
 
-10.1. 🔴 **Decidir si la hoja sigue usándose en paralelo.**
-   - Si la app la reemplaza, arreglar sus bugs es trabajo que se tira.
-   - Si conviven, hay que arreglarlos o los dos sistemas van a discrepar.
-
-10.2. Si se sigue usando, los tres bugs confirmados:
-   - Consumo mensual negativo (`anterior + comprados − actual`).
-   - Conteo parcial leído como total.
-   - Merma aplicada solo a los gramos, no al desgaste ni a la luz.
-   - Y el cuarto: la columna *Costo por gramo* de `Inventario` divide entre 1000
-     fijo; le falta una columna de gramos por rollo.
+> **Decisión del dueño: conviven, pero el Excel deja de ser un lugar donde
+> cargar datos y pasa a ser una SALIDA.** `GET /reports/excel.xlsx` arma el
+> libro completo (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
+> Clientes, Publicidad, Deuda, Metas y Producción) y se baja desde
+> Configuración → Datos.
+>
+> Es mejor que las dos opciones que estaban planteadas: no hay dos sistemas que
+> puedan discrepar, porque solo hay uno y el otro es su reporte. Los tres bugs
+> de la hoja dejan de importar: nadie va a escribir ahí.
+>
+> Las hojas se arman **reusando los servicios de cada pantalla** (metas,
+> préstamos, filamento, producción), no repitiendo las consultas: si el reporte
+> hiciera sus propias cuentas, terminaría diciendo algo distinto de la app.
+>
+> Dependencia nueva en la API: **`exceljs`** (aprobada). `fast-csv` y `pdfkit`,
+> que ya estaban, no escriben un `.xlsx` real con varias hojas y formatos.
 
 ---
 
 ## Orden sugerido
 
-| # | Actividad | Por qué en ese lugar |
-|---|---|---|
-| 1 | Importaciones directas (1) | Datos limpios, sin decisiones pendientes |
-| 2 | Analítica de filamento (4) | Sin migración: solo pantalla sobre datos ya cargados |
-| 3 | Gastos (2) | Dos decisiones menores y queda cerrado el ledger |
-| 4 | Medición (9) | Cuanto antes se empiece a registrar, antes hay datos reales |
-| 5 | Ventas (3) | Necesita 3.1 y 3.2 decididas; es la de mayor riesgo |
-| 6 | Punto de equilibrio (5) + Deuda (7) | Van juntos: el nivel 2 depende de la cuota |
-| 7 | Reposición (6) y Metas (8) | Valor alto, pero dependen de que lo anterior esté cargado |
+**Las 10 actividades están hechas** (2026-09-07). Las 14 hojas del Excel están
+migradas y el propio Excel pasó a ser un reporte que la app genera.
+
+Lo único que queda abierto, y es del dueño, no del código:
+
+- **Los $23,50 de descuadre de `Ventas`** (punto 3.2). No se inventaron: la app
+  dice $2.179,50 y la fila 11 de la hoja vieja decía $2.203.
+- **$82 de repuestos sin máquina asignada**: la fila del Excel no dice a cuál
+  impresora fueron, y sin eso no alimentan el mantenimiento por hora.
+- **Empezar a anotar la producción** en cada pedido (punto 9). La herramienta
+  está; el dato aparece recién cuando se use.

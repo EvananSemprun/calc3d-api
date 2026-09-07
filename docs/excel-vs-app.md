@@ -5,6 +5,12 @@ migrar y para no volver a analizar el archivo desde cero.
 
 Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 
+> **El Excel ya no se edita a mano.** Desde 2026-09-07 la app lo GENERA:
+> Configuración → Datos → "Descargar reporte en Excel" (`GET
+> /reports/excel.xlsx`). Los datos se cargan en la app y el libro es su salida,
+> así que las diferencias que este documento describe son históricas: ya no hay
+> dos sistemas que puedan discrepar.
+
 ## 1. Hoja por hoja
 
 | Hoja | Qué información lleva | Dónde vive en la app | Estado |
