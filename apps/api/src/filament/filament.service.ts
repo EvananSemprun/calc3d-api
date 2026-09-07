@@ -38,6 +38,16 @@ export interface FilamentSummary {
   restock: { materialId: string; name: string; status: RestockStatus }[];
   /** rollos importados del Excel sin saber su marca */
   pendingBrandCheck: number;
+  /** fichas contadas este mes */
+  countedMaterials: number;
+  /** fichas que hay para contar */
+  totalMaterials: number;
+  /**
+   * true si se contaron todas. Con un conteo PARCIAL el total del mes es la suma
+   * de lo poco que se contó, y el consumo sale disparatado ("consumiste 28
+   * rollos" sin haber contado). La hoja tiene el mismo defecto; acá se avisa.
+   */
+  complete: boolean;
 }
 
 /**
@@ -168,6 +178,9 @@ export class FilamentService {
       purchased: comprados,
       restock,
       pendingBrandCheck: actual.filter((c) => c.needsBrandCheck).length,
+      countedMaterials: actual.length,
+      totalMaterials: materiales.length,
+      complete: materiales.length > 0 && actual.length >= materiales.length,
     };
   }
 

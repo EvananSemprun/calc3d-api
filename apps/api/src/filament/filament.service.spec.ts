@@ -184,6 +184,34 @@ describe('Resumen del mes', () => {
     expect(r.restock.map((x) => x.materialId)).not.toContain('m3');
   });
 
+  /**
+   * Contar 3 fichas de 57 y tomar ese total como el stock del mes hace que el
+   * consumo salga disparatado ("consumiste 28 rollos" sin haber contado). La
+   * hoja tiene el mismo defecto; acá al menos se avisa.
+   */
+  it('dice cuántas fichas se contaron de cuántas hay', async () => {
+    const prisma = makePrisma();
+    prisma.stockCount.findMany.mockResolvedValue([
+      { materialId: 'm1', sealed: 1, inUse: 0, running: 0, needsBrandCheck: false },
+    ]);
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+    expect(r.countedMaterials).toBe(1);
+    expect(r.totalMaterials).toBe(3);
+    expect(r.complete).toBe(false);
+  });
+
+  it('el conteo está completo cuando se contaron todas las fichas', async () => {
+    const prisma = makePrisma();
+    prisma.stockCount.findMany.mockResolvedValue(
+      MATERIALES.map((m) => ({ materialId: m.id, sealed: 1, inUse: 0, running: 0, needsBrandCheck: false })),
+    );
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+    expect(r.countedMaterials).toBe(3);
+    expect(r.complete).toBe(true);
+  });
+
   it('cuenta los rollos que quedaron pendientes de identificar', async () => {
     const prisma = makePrisma();
     prisma.stockCount.findMany.mockResolvedValue([

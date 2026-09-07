@@ -252,7 +252,26 @@ comprado a dos marcas son dos fichas a reponer. Es la consecuencia buscada de la
 decisión 1 — al reponer te dice de qué marca comprar.
 
 ### Fase 6 — Cierre
-CLAUDE.md de ambos repos + prueba manual de punta a punta.
+CLAUDE.md de los tres repos + prueba de punta a punta.
+
+**Lo que encontró la prueba (2026-09-07):**
+
+1. **Las fichas "Sin especificar" pedían reposición.** Al identificar un rollo,
+   la ficha temporal quedaba en cero y entraba en la lista como un color a
+   comprar. Ahora nacen `DISCONTINUED`. Efecto lateral bueno: la reposición pasó
+   de 18 a **15**, que es exactamente lo que cuenta la hoja.
+2. **Un conteo parcial se tomaba como completo.** Contar 1 ficha de 57 daba
+   "consumiste 28 rollos". El resumen ahora expone `countedMaterials`,
+   `totalMaterials` y `complete`, y la pantalla avisa: *"Llevás 1 de 57 fichas
+   contadas este mes. Hasta terminar el conteo, el total y el consumo no son de
+   fiar."*
+
+**Lo verificado de punta a punta:** registrar una compra actualiza el precio del
+rollo desde el servidor ($20 → $25 con 2 rollos a $50); identificar un rollo
+ambiguo baja el contador de 9 a 8 y mueve el rollo sin cambiar el total del mes;
+el consumo se calcula entre dos meses. Todo se revirtió al terminar: el estado
+quedó idéntico al de la importación (57 fichas, 48 compras, 36 conteos, 9
+pendientes).
 
 ---
 

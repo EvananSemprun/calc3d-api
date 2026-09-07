@@ -163,7 +163,14 @@ async function main() {
           color: f.color,
           rollPrice: round2(f.rollPrice),
           rollGrams: 1000,
-          status: estados.get(`${f.tipo}||${f.color}`) ?? 'ACTIVE',
+          // Las fichas "Sin especificar" son un marcador temporal para colgar
+          // rollos cuya marca no se sabe: nadie va a comprar "PLA Sin
+          // especificar Amarillo". Nacen DISCONTINUED para que, al identificar
+          // el rollo y dejarlas en cero, no aparezcan en la lista de reposición.
+          status:
+            f.marca === SIN_MARCA
+              ? 'DISCONTINUED'
+              : (estados.get(`${f.tipo}||${f.color}`) ?? 'ACTIVE'),
         },
       });
       ids.set(k, creado.id);

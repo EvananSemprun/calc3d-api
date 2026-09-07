@@ -377,6 +377,15 @@ en el repo web: se sobrescribe al sincronizar.
     y rollos contados): si no cuadra, no escribe. El JSON se regenera del `.xlsx`
     con openpyxl. Resultado del 2026-09-07: 57 fichas, 48 compras (66 rollos,
     $1290), 28 rollos contados de agosto y 9 pendientes de identificar.
+  - ⚠️ **Un conteo PARCIAL no es el stock del mes.** El resumen devuelve
+    `countedMaterials`/`totalMaterials`/`complete`: con 3 fichas contadas de 57,
+    el total del mes es la suma de esas 3 y el consumo sale disparatado
+    ("consumiste 28 rollos" sin haber contado). La hoja del Excel tiene el mismo
+    defecto; acá la pantalla lo avisa en vez de dejarlo pasar como dato firme.
+  - Las fichas **"Sin especificar"** (las que creó la importación para los rollos
+    sin marca) nacen `DISCONTINUED`: son un marcador temporal, y sin eso, al
+    identificar el rollo quedaban en cero y pedían reposición de un color que no
+    existe.
   - **El precio del rollo lo fija el SERVIDOR**: una compra de filamento con
     cantidad actualiza `Material.rollPrice = monto ÷ rollos` (`refreshRollPrice` en
     `expenses.service.ts`). Antes dependía de una casilla del formulario; si se
