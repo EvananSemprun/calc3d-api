@@ -56,6 +56,7 @@ model Organization {
   members         Membership[]
   settings        Settings?
   materials       Material[]
+  stockCounts     StockCount[]
   printers        Printer[]
   components      Component[]
   clients         Client[]
@@ -188,21 +189,55 @@ model Settings {
   productAlertMinMarginPct Float @default(0.15)
 }
 
+/// Si el color se sigue comprando o se decidió no reponerlo más. Un
+/// descontinuado NO entra en la lista de reposición aunque llegue a cero.
+enum MaterialStatus {
+  ACTIVE
+  DISCONTINUED
+}
+
 model Material {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
   name           String
   type           String?
   brand          String?
-  rollPrice      Decimal      @db.Decimal(12, 4)
-  rollGrams      Int          @default(1000)
+  rollPrice      Decimal        @db.Decimal(12, 4)
+  rollGrams      Int            @default(1000)
   color          String?
-  createdAt      DateTime     @default(now())
+  status         MaterialStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
 
-  expenses Expense[]
+  expenses    Expense[]
+  stockCounts StockCount[]
 
   @@index([organizationId])
+}
+
+/// Conteo FÍSICO de rollos al cierre de mes (hoja "Stock mensual" del Excel).
+/// El total NO se guarda: se deriva de las tres partes con `stockTotal`, para
+/// que no pueda contradecir a sus partes.
+model StockCount {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  material       Material     @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  materialId     String
+
+  /// Mes contado, como el primer día del mes a medianoche UTC.
+  month   DateTime
+  sealed  Int @default(0) // sin abrir
+  inUse   Int @default(0) // abierto, con material
+  running Int @default(0) // por acabarse (menos de un cuarto)
+
+  /// El conteo se importó del Excel sin saber la marca del rollo. Se apaga al
+  /// moverlo al material correcto.
+  needsBrandCheck Boolean  @default(false)
+  countedAt       DateTime @default(now())
+
+  @@unique([materialId, month])
+  @@index([organizationId, month])
 }
 
 model Printer {

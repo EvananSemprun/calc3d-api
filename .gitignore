@@ -29,3 +29,8 @@ Thumbs.db
 
 # Coverage
 coverage/
+
+# Datos del negocio extraídos del Excel del dueño (precios de compra, marcas y
+# cantidades). El repo es PÚBLICO: el script de importación se versiona, el
+# dataset no. Se regenera del .xlsx cuando haga falta.
+apps/api/prisma/filamento-excel.json

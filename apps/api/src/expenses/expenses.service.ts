@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  purchaseCostPerRoll,
   MaterialSchema,
   PrinterSchema,
   ComponentSchema,
@@ -52,8 +53,8 @@ export class ExpensesService {
     });
   }
 
-  create(organizationId: string, dto: ExpenseCreateDto) {
-    return this.prisma.expense.create({
+  async create(organizationId: string, dto: ExpenseCreateDto) {
+    const gasto = await this.prisma.expense.create({
       data: {
         organizationId,
         date: new Date(dto.date),
@@ -72,6 +73,28 @@ export class ExpensesService {
         currencyCode: dto.currencyCode ?? null,
       },
       include: this.linkInclude,
+    });
+
+    await this.refreshRollPrice(dto.materialId, dto.quantity, dto.amount);
+    return gasto;
+  }
+
+  /**
+   * "La última compra manda": el precio del rollo con el que se cotiza es lo que
+   * costó reponerlo la última vez. Lo fija el SERVIDOR y no una casilla del
+   * formulario — si dependiera de que alguien la marque, el día que se olvide se
+   * seguiría cotizando con un precio viejo, que es como se pierde margen sin
+   * darse cuenta. Sin cantidad no hay precio por rollo que calcular.
+   */
+  private async refreshRollPrice(
+    materialId: string | null | undefined,
+    quantity: number | null | undefined,
+    amount: number,
+  ) {
+    if (!materialId || !quantity || quantity <= 0) return;
+    await this.prisma.material.update({
+      where: { id: materialId },
+      data: { rollPrice: purchaseCostPerRoll(amount, quantity) },
     });
   }
 
@@ -99,6 +122,15 @@ export class ExpensesService {
         if (link.referenceField != null && link.referenceValue != null) {
           await model.update({ where: { id: linkId }, data: { [link.referenceField]: link.referenceValue } });
         }
+      }
+
+      // Una compra de filamento fija el precio del rollo, sin depender de la
+      // casilla de "usar como referencia" que manda el cliente.
+      if (link.kind === 'material' && linkId && expense.quantity && expense.quantity > 0) {
+        await model.update({
+          where: { id: linkId },
+          data: { rollPrice: purchaseCostPerRoll(expense.amount, expense.quantity) },
+        });
       }
 
       return tx.expense.create({

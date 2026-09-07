@@ -11,6 +11,7 @@ function makePrisma() {
       delete: jest.fn(),
       findMany: jest.fn(),
     },
+    material: { update: jest.fn() },
   };
 }
 
@@ -95,6 +96,63 @@ describe('ExpensesService', () => {
       expect(call.data.materialId).toBeNull();
       expect(call.data.printerId).toBeNull();
       expect(call.data.componentId).toBeNull();
+    });
+  });
+
+  /**
+   * "La última compra manda": el precio del rollo con el que se cotiza sale de
+   * lo que costó reponerlo la última vez. Lo calcula el SERVIDOR — si dependiera
+   * de una casilla del formulario, el día que se olvide se sigue cotizando con
+   * el precio de hace seis meses, que es como se pierde margen sin notarlo.
+   */
+  describe('create — el precio del rollo lo fija el servidor', () => {
+    it('una compra de filamento actualiza el precio del material', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e1' });
+
+      await service.create(ORG, {
+        date: '2026-09-07',
+        category: 'CONSUMABLE',
+        description: 'Compra PLA',
+        amount: 40,
+        isInvestment: false,
+        quantity: 2,
+        materialId: 'm1',
+      } as any);
+
+      expect(prisma.material.update).toHaveBeenCalledWith({
+        where: { id: 'm1' },
+        data: { rollPrice: 20 }, // 40 ÷ 2 rollos
+      });
+    });
+
+    it('sin cantidad no se puede saber el precio por rollo: no lo toca', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e2' });
+
+      await service.create(ORG, {
+        date: '2026-09-07',
+        category: 'CONSUMABLE',
+        description: 'Ajuste',
+        amount: 40,
+        isInvestment: false,
+        materialId: 'm1',
+      } as any);
+
+      expect(prisma.material.update).not.toHaveBeenCalled();
+    });
+
+    it('un gasto que no es de filamento no toca ningún catálogo', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e3' });
+
+      await service.create(ORG, {
+        date: '2026-09-07',
+        category: 'OTHER',
+        description: 'Internet',
+        amount: 30,
+        isInvestment: false,
+        quantity: 1,
+      } as any);
+
+      expect(prisma.material.update).not.toHaveBeenCalled();
     });
   });
 

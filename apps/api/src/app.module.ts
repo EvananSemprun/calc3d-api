@@ -7,6 +7,7 @@ import { UsersModule } from './users/users.module';
 import { SettingsModule } from './settings/settings.module';
 import { ExchangeRatesModule } from './exchange-rates/exchange-rates.module';
 import { MaterialsModule } from './materials/materials.module';
+import { FilamentModule } from './filament/filament.module';
 import { PrintersModule } from './printers/printers.module';
 import { ComponentsModule } from './components/components.module';
 import { CatalogOptionsModule } from './catalog-options/catalog-options.module';
@@ -36,6 +37,7 @@ import { StorePublicModule } from './store-public/store-public.module';
     SettingsModule,
     ExchangeRatesModule,
     MaterialsModule,
+    FilamentModule,
     PrintersModule,
     ComponentsModule,
     CatalogOptionsModule,

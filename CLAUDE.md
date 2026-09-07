@@ -353,6 +353,34 @@ en el repo web: se sobrescribe al sincronizar.
     el propio perfil: nombre, correo, contraseña). **No hay gestión de equipo** ni
     invitaciones (se quitó al pasar a app de un solo dueño; el módulo `organizations/`
     se eliminó).
+  - **Control de filamento (Fase 7)** (`filament/`): los dos controles que el dueño
+    llevaba en su Excel. **Compras** = los `Expense` con `materialId`, con costo por
+    rollo y por gramo DERIVADOS (`GET /filament/purchases`); el costo por gramo usa
+    el `rollGrams` REAL, no el ÷1000 fijo de la hoja. **Conteo físico mensual** =
+    tabla `StockCount` (una fila por material y mes; `sealed`/`inUse`/`running`, el
+    total se DERIVA con `stockTotal`) — `GET/PUT /filament/stock?month=AAAA-MM` y
+    `GET /filament/summary`. El conteo es **manual a propósito**: no se descuenta lo
+    que consumen los presupuestos porque no todo lo cotizado se imprime ni todo lo
+    impreso sale bien. `Material.status` (ACTIVE/DISCONTINUED) saca a los colores
+    descontinuados de la lista de reposición. El **consumo del mes** cuenta los
+    rollos comprados (`anterior + comprados − actual`): la hoja solo resta los dos
+    totales y por eso da negativo en un mes con compras. Sin el conteo de alguno de
+    los dos meses devuelve `null`, no un número inventado. Helpers puros en
+    `shared/calc/stock.ts`. Spec:
+    `docs/superpowers/specs/2026-09-07-control-de-filamento-design.md`.
+  - **Importación del Excel** (`prisma/import-filamento.mjs` + `filamento-excel.json`):
+    trae el control de filamento desde las hojas "Inventario" y "Stock mensual".
+    Se corre a mano (`node --env-file=.env prisma/import-filamento.mjs`), **sin
+    `--commit` es un ENSAYO** que calcula e imprime sin escribir. BORRA los
+    materiales y las compras de filamento que haya y los recrea; todo en una
+    transacción, y **verifica contra el Excel antes y después** (rollos, invertido
+    y rollos contados): si no cuadra, no escribe. El JSON se regenera del `.xlsx`
+    con openpyxl. Resultado del 2026-09-07: 57 fichas, 48 compras (66 rollos,
+    $1290), 28 rollos contados de agosto y 9 pendientes de identificar.
+  - **El precio del rollo lo fija el SERVIDOR**: una compra de filamento con
+    cantidad actualiza `Material.rollPrice = monto ÷ rollos` (`refreshRollPrice` en
+    `expenses.service.ts`). Antes dependía de una casilla del formulario; si se
+    olvidaba, se seguía cotizando con un precio viejo.
   - **Catálogos** (`materials/`, `printers/`, `components/`, `providers/`, `settings/`,
     `catalog-options/`): un módulo CRUD por catálogo. El **empaque ya no es un catálogo
     aparte**: se fusionó en `Component` con un campo `scope` (PER_PIECE = por pieza /
@@ -364,6 +392,11 @@ en el repo web: se sobrescribe al sincronizar.
 - `pnpm install`
 - `pnpm test:shared` — tests del motor (lo más importante).
 - `pnpm -r build` / `pnpm -r lint` / `pnpm -r test`
+  ⚠️ **`pnpm -r build` con la API corriendo en watch la TUMBA**: `nest build`
+  reescribe `dist/` bajo los pies del `nest start --watch` y el proceso muere sin
+  dejar nada escuchando en 3001. Si hay que compilar con el server arriba, usar
+  `pnpm --filter @calc3d/shared build` (que no toca `apps/api/dist`) o parar el
+  watch antes.
 - `pnpm --filter @calc3d/api exec prisma generate`
 - `pnpm --filter @calc3d/api exec prisma migrate dev`
 - `pnpm dev` — levanta la API (antes `pnpm dev:api` en el monorepo).
