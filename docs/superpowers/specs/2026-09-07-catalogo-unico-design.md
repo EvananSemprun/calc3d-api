@@ -62,9 +62,13 @@ adelante.
 
 ## 5. Fases (la app funciona entre una y otra)
 
-1. **La ficha absorbe el costeo.** `StoreProduct.input`, recosteo sobre la
+1. ✅ **La ficha absorbe el costeo.** `StoreProduct.input`, recosteo sobre la
    ficha, y la calculadora guarda ahí. Nada se borra.
-2. **Muere `Product`.** Módulo, pantalla, entrada del menú y la tabla (vacía).
+2. ✅ **Muere `Product`.** Módulo, pantalla, entrada del menú y la tabla (vacía,
+   con respaldo `pg_dump` antes de dropearla). La alerta de rentabilidad del
+   Dashboard y el "+ Desde productos" de Pedidos pasaron al catálogo nuevo; el
+   test multi-tenant de `ProductsService` se reapuntó a `StoreService`, que
+   además alimenta la vitrina pública.
 3. **Muere `Quote`.** El PDF de cotización pasa al pedido; se van el módulo, las
    pantallas, `/sales/from-quote` y el ciclo de cotización del Dashboard.
 

@@ -4,8 +4,10 @@ import { StoreService } from './store.service';
 /**
  * Regresión del catálogo de tienda del panel. Dos cosas que se fijan acá:
  *
- * - **El costo lo pone el servidor.** Nunca llega del cliente: se lee del
- *   producto o la cotización enlazados, verificando que sean de la organización.
+ * - **El costo lo pone el servidor.** Nunca llega del cliente: se calcula con el
+ *   motor sobre el `input` que manda la calculadora, o se lee de la cotización
+ *   enlazada verificando que sea de la organización. Si viajara en el cuerpo,
+ *   cualquiera publicaría con un costo inventado y el margen sería mentira.
  * - **La foto se verifica contra el almacenamiento.** La URL firmada acota la
  *   subida, pero es la confirmación la que decide qué queda registrado: si solo
  *   creyera lo que dice el cliente, bastaría con confirmar una clave ajena.
@@ -22,6 +24,25 @@ const BASE = {
   custom: false,
   specs: [],
   optionGroups: [],
+};
+
+/** Costeo mínimo que manda la calculadora: 1 pieza de 100 g de un rollo de $20. */
+const COSTEO = {
+  quantity: 1,
+  piecesPerBatch: 1,
+  filament: { name: 'PLA', rollPrice: 20, rollGrams: 1000, grams: 100 },
+  waste: { pct: 0.08 },
+  supplies: [],
+  printer: undefined,
+  electricity: { enabled: false, kwhPrice: 0 },
+  parallelPrinters: 1,
+  labor: { minutes: 0, hourlyRate: 0 },
+  extras: { packagingPerPiece: 0, otherPerOrder: 0 },
+  margins: { markup: 1, minMarginPct: 0.6, rounding: { mode: 'NONE' as const, increment: 1 } },
+  manualPrice: null,
+  wholesale: { tiers: [] },
+  currency: 'USD',
+  locale: 'en-US',
 };
 
 const FICHA = {
@@ -67,28 +88,30 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     head: jest.fn(),
     remove: jest.fn().mockResolvedValue(undefined),
   };
-  return { prisma, storage, service: new StoreService(prisma as never, storage as never) };
+  const recost = { loadCatalog: jest.fn(), recost: jest.fn().mockResolvedValue(null) };
+  return {
+    prisma,
+    storage,
+    service: new StoreService(prisma as never, storage as never, recost as never),
+  };
 }
 
 describe('Catálogo de tienda (panel)', () => {
   describe('el costo lo resuelve el servidor', () => {
-    it('lo toma del producto interno enlazado', async () => {
+    it('lo CALCULA con el motor sobre el costeo que manda la calculadora', async () => {
       const { prisma, service } = makeDeps();
-      prisma.product.findFirst.mockResolvedValue({ costAtSave: '1.2500' });
       await service.create(ORG, {
         ...BASE,
         name: 'Llavero',
         priceUsd: 3.5,
         kind: 'PHYSICAL',
-        productId: 'prod-1',
+        input: COSTEO,
       });
-      expect(prisma.storeProduct.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ costAtPublish: 1.25 }) }),
-      );
-      // Y el producto se buscó CON scope de organización.
-      expect(prisma.product.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'prod-1', organizationId: ORG } }),
-      );
+      const data = prisma.storeProduct.create.mock.calls[0][0].data;
+      // El costo del caso: 100 g de un rollo de $20/1000 g = $2, más 8 % de
+      // merma = $2.16. Nada de esto vino del cliente.
+      expect(Number(data.costAtPublish)).toBeCloseTo(2.16, 2);
+      expect(data.input).toBeTruthy();
     });
 
     it('lo toma del costo por unidad de la cotización enlazada', async () => {
@@ -165,7 +188,7 @@ describe('Catálogo de tienda (panel)', () => {
           name: 'X',
           priceUsd: 1,
           kind: 'PHYSICAL',
-          productId: 'ajeno',
+          quoteId: 'ajeno',
         }),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.storeProduct.create).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.module';
-import { ProductsService } from '../products/products.module';
+import { StoreService } from '../store/store.service';
 import { ClientsService } from '../clients/clients.module';
 
 /**
@@ -12,6 +12,8 @@ import { ClientsService } from '../clients/clients.module';
 const ORG = 'org-A';
 const OTHER = 'org-B';
 const ratesMock = { snapshotJson: jest.fn().mockResolvedValue(undefined) };
+const storageMock = { configured: false, publicUrl: jest.fn() };
+const recostMock = { loadCatalog: jest.fn(), recost: jest.fn().mockResolvedValue(null) };
 
 describe('Aislamiento multi-tenant (scope por organizationId)', () => {
   it('OrdersService.get filtra por { id, organizationId }', async () => {
@@ -38,13 +40,29 @@ describe('Aislamiento multi-tenant (scope por organizationId)', () => {
     await expect(service.get(ORG, 'o1')).rejects.toThrow(NotFoundException);
   });
 
-  it('ProductsService.get filtra por { id, organizationId }', async () => {
+  // El catálogo de tienda es el producto interno desde 2026-09-07, y además es
+  // lo que alimenta la vitrina pública: su scope importa más que ninguno.
+  it('StoreService.get filtra por { id, organizationId }', async () => {
     const prisma = {
-      product: { findFirst: jest.fn().mockResolvedValue(null) },
+      storeProduct: { findFirst: jest.fn().mockResolvedValue(null) },
     };
-    const service = new ProductsService(prisma as any, ratesMock as any);
+    const service = new StoreService(prisma as any, storageMock as any, recostMock as any);
     await expect(service.get(ORG, 'p1')).rejects.toThrow(NotFoundException);
-    expect(prisma.product.findFirst).toHaveBeenCalledWith({ where: { id: 'p1', organizationId: ORG } });
+    expect(prisma.storeProduct.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'p1', organizationId: ORG } }),
+    );
+  });
+
+  it('StoreService.get NO devuelve una ficha de otra organización', async () => {
+    const prisma = {
+      storeProduct: {
+        findFirst: jest.fn(({ where }: any) =>
+          where.organizationId === OTHER ? { id: 'p1', images: [], optionGroups: [] } : null,
+        ),
+      },
+    };
+    const service = new StoreService(prisma as any, storageMock as any, recostMock as any);
+    await expect(service.get(ORG, 'p1')).rejects.toThrow(NotFoundException);
   });
 
   it('ClientsService.get filtra por { id, organizationId }', async () => {

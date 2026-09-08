@@ -66,7 +66,6 @@ model Organization {
   expenses        Expense[]
   exchangeRates   ExchangeRate[]
   orders          Order[]
-  products        Product[]
   catalogOptions  CatalogOption[]
   storeProducts   StoreProduct[]
   storeCategories StoreCategory[]
@@ -538,29 +537,6 @@ model Payment {
 // El recosteo re-resuelve el CalcInput contra el catálogo de HOY (por nombre) y
 // corre el motor; la alerta de rentabilidad es ese delta hecho aviso. Nunca se
 // recostea silenciosamente: el dueño decide cuándo cambia el precio de venta.
-model Product {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId String
-
-  name       String
-  imageUrl   String? // solo URL (http/https); sin subida de archivos en esta fase
-  notes      String?
-  input      Json // snapshot del CalcInput
-  priceSet   Decimal @db.Decimal(12, 4) // precio de venta por unidad fijado por el dueño
-  costAtSave Decimal @db.Decimal(12, 4) // costo unitario al guardar (calculado por el motor)
-
-  currencyLabel String? // moneda de presentación elegida (null = solo USD)
-  exchangeRates Json? // snapshot de tasas al guardar (para el equivalente en Bs)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Fichas de tienda que se publicaron a partir de este producto.
-  storeProducts StoreProduct[]
-
-  @@index([organizationId])
-}
 
 // Tasas de cambio con NOMBRE (Fase 3 multi-moneda). Append-only: la fila más
 // reciente por `label` es la vigente; el resto es histórico. La IDENTIDAD de una
@@ -768,8 +744,6 @@ model StoreProduct {
   // ORIGEN DE COSTEO, opcional: enlaza la ficha con el producto interno o la
   // cotización de la que salió. Sirve para la alerta de rentabilidad; NUNCA sale
   // por la API pública. `SetNull` para que borrar el origen no borre la ficha.
-  product       Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-  productId     String?
   quote         Quote?   @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   quoteId       String?
   /**

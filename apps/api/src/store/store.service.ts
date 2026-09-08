@@ -17,6 +17,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
+import { RecostService } from './recost.service';
 
 /** Sufijos numéricos que se prueban antes de caer a uno aleatorio. */
 const SLUG_MAX_TRIES = 50;
@@ -36,6 +37,7 @@ export class StoreService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: ObjectStorageService,
+    private readonly recostService: RecostService,
   ) {}
 
   /** true si el servidor puede recibir fotos (el panel avisa en vez de fallar). */
@@ -45,13 +47,27 @@ export class StoreService {
 
   // ----- Fichas -----
 
+  /**
+   * Las fichas con su RECOSTEO: cuánto costaría hoy cada una y si el margen se
+   * cayó desde que se publicó. El catálogo se carga UNA vez para todas.
+   *
+   * `recost` es null en las fichas sin costeo (un servicio, algo cargado a
+   * mano). No es un error: es la mitad del catálogo.
+   */
   async list(organizationId: string) {
     const products = await this.prisma.storeProduct.findMany({
       where: { organizationId },
       orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
       include: FULL_INCLUDE,
     });
-    return products.map((p) => this.withImageUrls(p));
+    const conCosteo = products.some((p) => p.input);
+    const ctx = conCosteo ? await this.recostService.loadCatalog(organizationId) : undefined;
+    return Promise.all(
+      products.map(async (p) => ({
+        ...this.withImageUrls(p),
+        recost: await this.recostService.recost(organizationId, p, ctx),
+      })),
+    );
   }
 
   async get(organizationId: string, id: string) {
@@ -60,7 +76,10 @@ export class StoreService {
       include: FULL_INCLUDE,
     });
     if (!product) throw new NotFoundException('Producto de tienda no encontrado');
-    return this.withImageUrls(product);
+    return {
+      ...this.withImageUrls(product),
+      recost: await this.recostService.recost(organizationId, product),
+    };
   }
 
   async create(organizationId: string, dto: StoreProductCreateDto) {
@@ -73,7 +92,7 @@ export class StoreService {
     // sobre él; si no, se cae al origen heredado (producto/cotización).
     const costAtPublish = dto.input
       ? calculateQuote(dto.input).costPerUnit
-      : await this.resolveCost(organizationId, dto.productId, dto.quoteId);
+      : await this.resolveCost(organizationId, dto.quoteId);
     const position = await this.nextPosition(organizationId);
 
     const created = await this.prisma.storeProduct.create({
@@ -96,7 +115,6 @@ export class StoreService {
         position,
         categoryId: dto.categoryId ?? null,
         input: (dto.input as unknown as Prisma.InputJsonValue) ?? Prisma.DbNull,
-        productId: dto.productId ?? null,
         quoteId: dto.quoteId ?? null,
         costAtPublish,
         optionGroups: { create: this.optionGroupsData(dto.optionGroups) },
@@ -116,11 +134,10 @@ export class StoreService {
         : undefined;
 
     // Si cambió el origen de costeo, se vuelve a leer el costo del servidor.
-    const reBind = dto.productId !== undefined || dto.quoteId !== undefined;
+    const reBind = dto.quoteId !== undefined;
     const costAtPublish = reBind
       ? await this.resolveCost(
           organizationId,
-          dto.productId === undefined ? current.productId : dto.productId,
           dto.quoteId === undefined ? current.quoteId : dto.quoteId,
         )
       : undefined;
@@ -149,7 +166,6 @@ export class StoreService {
           ...(dto.minQty !== undefined && { minQty: dto.minQty }),
           ...(dto.visible !== undefined && { visible: dto.visible }),
           ...(dto.categoryId !== undefined && { categoryId: dto.categoryId ?? null }),
-          ...(dto.productId !== undefined && { productId: dto.productId ?? null }),
           ...(dto.quoteId !== undefined && { quoteId: dto.quoteId ?? null }),
           ...(costAtPublish !== undefined && { costAtPublish }),
           ...(dto.optionGroups !== undefined && {
@@ -188,29 +204,13 @@ export class StoreService {
   }
 
   /**
-   * Crea un borrador a partir de un producto interno o de una cotización. El
-   * precio y el costo salen del SERVIDOR, no del cliente: es lo que hace que el
-   * enlace con el costeo signifique algo.
+   * Crea un borrador a partir de una cotización. El precio y el costo salen del
+   * SERVIDOR, no del cliente.
+   *
+   * Sobrevive solo mientras exista `Quote`: desde el catálogo único, la
+   * calculadora crea la ficha directo con su costeo adentro.
    */
   async createFromSource(organizationId: string, dto: StoreProductFromSourceDto) {
-    if (dto.productId) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: dto.productId, organizationId },
-      });
-      if (!product) throw new NotFoundException('Producto no encontrado');
-      return this.create(organizationId, {
-        name: product.name,
-        kind: 'PHYSICAL',
-        priceUsd: Number(product.priceSet),
-        minQty: 1,
-        visible: false,
-        custom: false,
-        specs: [],
-        productId: product.id,
-        optionGroups: [],
-      });
-    }
-
     const quote = await this.prisma.quote.findFirst({
       where: { id: dto.quoteId, organizationId },
     });
@@ -391,19 +391,14 @@ export class StoreService {
    * Costo unitario del origen enlazado. Devuelve null si no hay origen: una
    * ficha cargada a mano simplemente no tiene alerta de rentabilidad.
    */
+  /**
+   * Costo heredado de una cotización, para las fichas publicadas desde ahí antes
+   * del catálogo único. Las nuevas traen su propio `input` y no pasan por acá.
+   */
   private async resolveCost(
     organizationId: string,
-    productId?: string | null,
     quoteId?: string | null,
   ): Promise<number | null> {
-    if (productId) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: productId, organizationId },
-        select: { costAtSave: true },
-      });
-      if (!product) throw new NotFoundException('Producto no encontrado');
-      return Number(product.costAtSave);
-    }
     if (quoteId) {
       const quote = await this.prisma.quote.findFirst({
         where: { id: quoteId, organizationId },

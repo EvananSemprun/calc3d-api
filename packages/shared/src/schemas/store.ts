@@ -104,8 +104,7 @@ export const StoreProductCreateSchema = z.object({
    * null / ausente = ficha sin costeo (un servicio, o algo cargado a mano).
    */
   input: CalcInputSchema.nullable().optional(),
-  /** Origen de costeo heredado (se elimina con `Product` y `Quote`). */
-  productId: z.string().nullable().optional(),
+  /** Origen de costeo heredado; se va junto con `Quote`. */
   quoteId: z.string().nullable().optional(),
   optionGroups: z.array(StoreOptionGroupSchema).max(10).default([]),
 });
@@ -114,15 +113,10 @@ export type StoreProductCreateDto = z.infer<typeof StoreProductCreateSchema>;
 export const StoreProductUpdateSchema = StoreProductCreateSchema.partial();
 export type StoreProductUpdateDto = z.infer<typeof StoreProductUpdateSchema>;
 
-/** Publicar en la tienda a partir de un producto interno o de una cotización. */
-export const StoreProductFromSourceSchema = z
-  .object({
-    productId: z.string().optional(),
-    quoteId: z.string().optional(),
-  })
-  .refine((v) => !!v.productId !== !!v.quoteId, {
-    message: 'Indicá un producto o una cotización, no ambos',
-  });
+/** Publicar en la tienda a partir de una cotización (heredado). */
+export const StoreProductFromSourceSchema = z.object({
+  quoteId: z.string().min(1),
+});
 export type StoreProductFromSourceDto = z.infer<typeof StoreProductFromSourceSchema>;
 
 /** Reordenar la vitrina: la posición es el índice en la lista. */

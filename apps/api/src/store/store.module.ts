@@ -28,6 +28,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { RecostService } from './recost.service';
 import { StoreService } from './store.service';
 
 /**
@@ -163,7 +164,7 @@ export class StoreController {
 
 @Module({
   controllers: [StoreController],
-  providers: [StoreService],
+  providers: [StoreService, RecostService],
   exports: [StoreService],
 })
 export class StoreModule {}

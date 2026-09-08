@@ -26,8 +26,8 @@ export class BackupService {
       sales,
       expenses,
       orders,
-      products,
       exchangeRates,
+      storeProducts,
     ] = await Promise.all([
       this.prisma.settings.findUnique({ where: { organizationId } }),
       this.prisma.material.findMany({ where: { organizationId } }),
@@ -39,8 +39,8 @@ export class BackupService {
       this.prisma.sale.findMany({ where: { organizationId } }),
       this.prisma.expense.findMany({ where: { organizationId } }),
       this.prisma.order.findMany({ where: { organizationId }, include: { payments: true } }),
-      this.prisma.product.findMany({ where: { organizationId } }),
       this.prisma.exchangeRate.findMany({ where: { organizationId } }),
+      this.prisma.storeProduct.findMany({ where: { organizationId } }),
     ]);
     return {
       // La fecha la estampa el servidor; el motor no depende de esto.
@@ -58,8 +58,8 @@ export class BackupService {
         sales,
         expenses,
         orders,
-        products,
         exchangeRates,
+        storeProducts,
       },
     };
   }
@@ -107,11 +107,18 @@ export class BackupService {
         break;
       }
       case 'products': {
-        const items = await this.prisma.product.findMany({ where: { organizationId }, orderBy: { name: 'asc' } });
+        // El catálogo es la ficha de tienda desde 2026-09-07: el producto
+        // interno dejó de existir.
+        const items = await this.prisma.storeProduct.findMany({
+          where: { organizationId },
+          orderBy: { name: 'asc' },
+        });
         rows = items.map((p) => ({
           nombre: p.name,
-          precio_venta: Number(p.priceSet),
-          costo_al_guardar: Number(p.costAtSave),
+          tipo: p.kind,
+          precio_venta: Number(p.priceUsd),
+          costo_al_publicar: p.costAtPublish == null ? '' : Number(p.costAtPublish),
+          visible: p.visible ? 'sí' : 'no',
           creado: p.createdAt.toISOString().slice(0, 10),
         }));
         break;

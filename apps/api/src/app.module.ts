@@ -19,7 +19,6 @@ import { ExportModule } from './export/export.module';
 import { SalesModule } from './sales/sales.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { OrdersModule } from './orders/orders.module';
-import { ProductsModule } from './products/products.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { BackupModule } from './backup/backup.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
@@ -52,7 +51,6 @@ import { StorePublicModule } from './store-public/store-public.module';
     SalesModule,
     ExpensesModule,
     OrdersModule,
-    ProductsModule,
     OnboardingModule,
     BackupModule,
     CampaignsModule,

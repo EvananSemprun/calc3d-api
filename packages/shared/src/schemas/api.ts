@@ -391,31 +391,6 @@ export type ProviderDto = z.infer<typeof ProviderSchema>;
 
 // ----- Productos (piezas costeadas reutilizables, Fase 4) -----
 
-/** URL de imagen opcional: solo http(s) (evita esquemas peligrosos en <img>). */
-const imageUrl = z
-  .string()
-  .trim()
-  .url('URL de imagen inválida')
-  .refine((u) => /^https?:\/\//i.test(u), 'La URL debe empezar por http:// o https://')
-  .optional()
-  .nullable();
-
-export const ProductCreateSchema = z.object({
-  name: z.string().min(1, 'El nombre es obligatorio'),
-  imageUrl,
-  notes: z.string().optional().nullable(),
-  /** Snapshot del CalcInput con el que se costeó la pieza. */
-  input: CalcInputSchema,
-  /** Precio de venta por unidad que fijó el dueño (su decisión, no se recalcula). */
-  priceSet: z.number().min(0, 'El precio no puede ser negativo'),
-  /** Moneda de presentación elegida (etiqueta de la tasa; null = solo USD). */
-  currencyLabel: z.string().optional().nullable(),
-});
-export type ProductCreateDto = z.infer<typeof ProductCreateSchema>;
-
-export const ProductUpdateSchema = ProductCreateSchema.partial();
-export type ProductUpdateDto = z.infer<typeof ProductUpdateSchema>;
-
 /** Re-fijar el precio de venta (el dueño acepta el nuevo costo y re-ancla el margen). */
 export const ProductRepriceSchema = z.object({
   priceSet: z.number().min(0, 'El precio no puede ser negativo'),

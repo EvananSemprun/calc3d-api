@@ -134,23 +134,12 @@ en el repo web: se sobrescribe al sincronizar.
     (flujo separado, sin generar `Sale`, sin doble conteo). **Ciclo de cotización**:
     conversión (aceptados/decididos), "por seguir" (SENT), "vencido" (DRAFT/SENT >
     7 días → recotizar). *(El link público de pedidos se eliminó con la capa SaaS.)*
-  - **Catálogo de productos (Fase 4)** (`products/products.module.ts`,
-    `features/products/api.ts`): modelo `Product` (nombre, `imageUrl?` SOLO url
-    http/https — sin subida de archivos; snapshot `input` del `CalcInput`;
-    `priceSet` = precio que fija el dueño; `costAtSave` = costo unitario
-    **calculado por el motor** al guardar —el cliente NO manda el costo—; snapshot
-    `exchangeRates`). El **recosteo** re-resuelve cada línea del `CalcInput` contra
-    el catálogo de HOY **por nombre** (el `CalcInput` embebe precios, NO IDs) y
-    corre `calculateQuote`; lo que no matchea (item renombrado/borrado) conserva el
-    precio congelado y se reporta en `unmatched`. Helpers puros en
-    `shared/calc/product.ts` (`productMarkup`, `costDeltaPct`, `productStatus`);
-    "margen" = **markup sobre costo** (coherente con el motor). Endpoints: CRUD
-    `/products` (list y get traen `recost` derivado) + `POST /products/:id/reprice`
-    (el dueño acepta el costo nuevo: re-fija `priceSet` y **re-ancla** `costAtSave`
-    al costo de hoy → apaga la alerta). **Alerta de rentabilidad por devaluación**:
-    `productStatus` marca `belowMin` cuando el markup de hoy cae bajo
-    `Settings.productAlertMinMarginPct` (fracción, default 0.15, editable en
-    Configuración → Productos). Nunca recostea silenciosamente.
+  - ~~**Catálogo de productos (Fase 4)**~~ — **ELIMINADO el 2026-09-07**. El
+    modelo `Product` y su módulo ya no existen: el catálogo único es
+    `StoreProduct`, que absorbió el costeo (`input` + `costAtPublish`). La tabla
+    se borró con 0 filas — la pantalla existió dos meses y nunca se usó. El
+    recosteo se mudó tal cual a `store/recost.service.ts`. Spec:
+    `docs/superpowers/specs/2026-09-07-catalogo-unico-design.md`.
   - **CRM + mapa + respaldo + onboarding (Fase 5)**:
     - **Contactos/CRM** (`clients.module.ts`, `features/contacts/api.ts`): el
       modelo `Client` gana `type ContactType` (CLIENT/SUPPLIER/ALLY/COMPETITOR,
@@ -176,16 +165,21 @@ en el repo web: se sobrescribe al sincronizar.
       armada a mano en el service** — nunca la fila de Prisma. La organización sale de
       `STORE_ORGANIZATION_ID`, **jamás de un parámetro del cliente**. Regresión:
       `store-public/store-public.service.spec.ts`.
-    - **`StoreProduct` NO es `Product`.** `Product` responde "¿cuánto me cuesta y a
-      cuánto lo vendo?" (snapshot del `CalcInput`, recosteo, alerta de margen);
-      `StoreProduct` responde "¿qué ve y compra el cliente?" (fotos, descripción,
-      opciones, visibilidad, slug). Fusionarlos haría que editar una foto tocara el
-      costeo — y un **servicio** no tiene `CalcInput`, así que ni entraría en
-      `Product`, que exige `input` y `costAtSave`. `StoreProduct` apunta
-      OPCIONALMENTE a un `Product` o un `Quote` como origen de costeo.
-    - **El costo lo pone el SERVIDOR**: `costAtPublish` no está en el DTO; se lee del
-      origen enlazado (`POST /store/products/from-source` con `productId` o `quoteId`
-      arma el borrador con nombre, precio sugerido y costo del snapshot).
+    - ⚠️ **`StoreProduct` ES el catálogo único** (2026-09-07). Antes había un
+      `Product` aparte "porque un servicio no tiene `CalcInput`". El argumento
+      solo valía si el catálogo único era `Product`, que EXIGE costeo; con la
+      ficha como catálogo el costeo es **opcional** (`input` en null) y el
+      servicio entra sin forzar nada. Los datos lo confirmaron: `Product` tenía
+      0 filas y una de las 3 fichas ya era un servicio.
+    - **El recosteo vive en `store/recost.service.ts`**: re-resuelve cada línea
+      del `CalcInput` guardado contra el catálogo **por nombre** (el snapshot
+      embebe precios, no ids). `list()` carga el catálogo UNA vez para todas las
+      fichas; `recost` es null en las que no tienen costeo.
+    - **El costo lo pone el SERVIDOR**: `costAtPublish` no está en el DTO. Se
+      CALCULA corriendo el motor sobre el `input` que manda la calculadora, o se
+      lee de la cotización enlazada (heredado). Si viajara en el cuerpo,
+      cualquiera publicaría con un costo inventado y el margen sería mentira.
+      Regresión: `store.service.spec.ts`.
     - **Sin stock**: la producción es bajo pedido y `leadTimeDays` ocupa ese lugar.
       Las opciones (color/tamaño) van **sin combinatoria** — no hay SKU por
       combinación porque no hay existencias que llevar; el recargo por opción alcanza.
