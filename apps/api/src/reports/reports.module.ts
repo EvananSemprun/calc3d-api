@@ -185,7 +185,6 @@ export class ReportsService {
       { header: 'Abonado', width: 12 },
       { header: 'Saldo', width: 12 },
       { header: 'Impresora', width: 20 },
-      { header: 'Horas', width: 9 },
       { header: 'Reimpresas', width: 11 },
       { header: 'Detalle', width: 50 },
     ]);
@@ -201,7 +200,6 @@ export class ReportsService {
         orderPaid(p.payments.map((x) => Number(x.amount))),
         orderBalance(lines, p.payments.map((x) => Number(x.amount))),
         p.printer?.name ?? '',
-        p.machineHours == null ? '' : Number(p.machineHours),
         p.reprints ?? '',
         lines.map((l) => `${l.quantity}× ${l.description}`).join(' · '),
       ]);
@@ -401,7 +399,7 @@ export class ReportsService {
     const hProd = hoja(wb, 'Producción', [
       { header: 'Impresora', width: 26 },
       { header: 'Trabajos', width: 10 },
-      { header: 'Horas', width: 10 },
+      { header: 'Horas (contador)', width: 16 },
       { header: 'Vida útil', width: 11 },
       { header: '% usado', width: 10 },
       { header: 'Piezas medidas', width: 14 },
@@ -430,7 +428,12 @@ export class ReportsService {
     formatoDinero(hProd, 9, 10);
     hProd.addRow([]);
     hProd.addRow([
-      `${produccion.total.jobs - produccion.total.unmeasuredJobs} de ${produccion.total.jobs} pedidos tienen la producción anotada.`,
+      `${produccion.total.jobs - produccion.total.unmeasuredJobs} de ${produccion.total.jobs} pedidos tienen los fallos anotados.`,
+    ]).font = { italic: true, size: 9 };
+    hProd.addRow([
+      produccion.total.printersWithoutReading > 0
+        ? `${produccion.total.printersWithoutReading} impresora(s) sin ninguna lectura del contador: sus horas figuran en cero porque no se sabe.`
+        : 'Las horas salen del contador de cada máquina, no de la suma de los pedidos.',
     ]).font = { italic: true, size: 9 };
 
     return wb;

@@ -366,10 +366,8 @@ export const OrderCreateSchema = z.object({
   /** Atribución de publicidad (null = sin atribuir). */
   originChannel: AttributionChannelSchema.optional().nullable(),
   campaignId: z.string().optional().nullable(),
-  /** Qué máquina lo imprimió: suma sus horas a la vida útil del equipo. */
+  /** Qué máquina lo imprimió (para atribuir los fallos, no las horas). */
   printerId: z.string().optional().nullable(),
-  /** Horas de máquina del trabajo. null = no se midió. */
-  machineHours: z.number().min(0).optional().nullable(),
   /** Piezas reimpresas por fallo. 0 es un dato; null es "sin medir". */
   reprints: z.number().int().min(0).optional().nullable(),
 });
@@ -583,3 +581,15 @@ export const GoalUpsertSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 export type GoalUpsertDto = z.infer<typeof GoalUpsertSchema>;
+
+// ---------- Lectura mensual del contador de una impresora ----------
+
+export const PrinterReadingUpsertSchema = z.object({
+  printerId: z.string().min(1),
+  /** El mes, como `AAAA-MM`. */
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'El mes va como AAAA-MM (ej. 2026-09)'),
+  /** Horas ACUMULADAS que muestra la máquina, no las del mes. */
+  hours: z.number().min(0),
+  note: z.string().optional().nullable(),
+});
+export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>;

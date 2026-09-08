@@ -5,7 +5,11 @@
  *
  *  - **Horas de máquina**: sin ellas nadie sabe qué tan cerca está cada equipo
  *    de su vida útil, y el costo de desgaste (inversión ÷ vida útil) es un
- *    supuesto que nunca se contrasta.
+ *    supuesto que nunca se contrasta. Se llevan como el stock de filamento:
+ *    una **lectura del contador de la máquina, una vez por mes**, y NO sumando
+ *    las horas de cada pedido. Atarlas a los pedidos dejaría fuera todo lo que
+ *    se imprime sin vender —pruebas, calibraciones, regalos, una tanda que
+ *    salió mal—, que gasta vida útil exactamente igual.
  *  - **Tasa real de fallos**: la merma del 8 % es un número elegido, no medido.
  *    Con dos meses de pedidos anotados pasa a ser un dato.
  *  - **Mantenimiento cobrado vs gastado**: hay repuestos comprados que hoy no
@@ -18,8 +22,6 @@
  */
 
 export interface ProductionJobLike {
-  /** Horas de máquina del trabajo; null si no se midió. */
-  machineHours: number | null;
   /** Piezas reimpresas por fallo; **0 es un dato**, null es "sin medir". */
   reprints: number | null;
   /** Piezas entregadas del pedido. */
@@ -47,8 +49,6 @@ export function failureRate(reprints: number, pieces: number): number | null {
 }
 
 export interface ProductionStats {
-  /** Horas de máquina acumuladas (de todos los trabajos que las anotaron). */
-  hours: number;
   /** Cuántos trabajos tienen los fallos anotados. Es la confianza del dato. */
   measuredJobs: number;
   /** Piezas de esos trabajos medidos, no de todos. */
@@ -63,9 +63,6 @@ export function productionStats(jobs: ProductionJobLike[]): ProductionStats {
   const reprints = conFallos.reduce((s, j) => s + (j.reprints ?? 0), 0);
 
   return {
-    // Las horas se cuentan aparte: se puede saber cuánto imprimió la máquina
-    // sin haber contado las reimpresiones.
-    hours: round4(jobs.reduce((s, j) => s + (j.machineHours ?? 0), 0)),
     measuredJobs: conFallos.length,
     pieces,
     reprints,
@@ -91,3 +88,45 @@ export function maintenanceBalance(
 }
 
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
+// ----- Lecturas del contador de la máquina -----
+//
+// Igual que el conteo mensual de rollos: se anota lo que MARCA la máquina, no
+// lo que uno cree que imprimió. Un mes salteado no rompe nada — la lectura
+// siguiente sigue siendo acumulada— pero sí deja sin saber el consumo de ese
+// mes, y eso se dice, no se rellena.
+
+export interface PrinterReadingLike {
+  /** `AAAA-MM` */
+  month: string;
+  /** Horas acumuladas que muestra la máquina en ese cierre. */
+  hours: number;
+}
+
+/** La lectura más reciente. `null` si nunca se anotó ninguna. */
+export function latestReading(readings: PrinterReadingLike[]): PrinterReadingLike | null {
+  if (!readings.length) return null;
+  return readings.reduce((a, b) => (b.month > a.month ? b : a));
+}
+
+/**
+ * Horas impresas EN ese mes: la lectura del mes menos la del anterior.
+ *
+ * `null` si falta cualquiera de las dos, con el mismo criterio que el consumo
+ * de rollos: sin las dos puntas no se sabe cuánto se gastó, y es preferible
+ * decirlo a inventar un número.
+ */
+export function hoursThisMonth(
+  readings: PrinterReadingLike[],
+  month: string,
+): number | null {
+  const actual = readings.find((r) => r.month === month);
+  if (!actual) return null;
+  const anterior = readings
+    .filter((r) => r.month < month)
+    .reduce<PrinterReadingLike | null>((a, b) => (!a || b.month > a.month ? b : a), null);
+  if (!anterior) return null;
+  // Un contador que baja (placa cambiada, lectura mal anotada) no da horas
+  // negativas: como consumo, eso no significa nada.
+  return Math.max(0, round4(actual.hours - anterior.hours));
+}

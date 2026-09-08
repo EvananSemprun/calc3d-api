@@ -399,10 +399,22 @@ en el repo web: se sobrescribe al sincronizar.
     redondeados al centavo (el formato de celda los mostraría bien igual, pero
     el ruido de coma flotante se arrastra al operar sobre ellos en Excel) y los
     totales van como fórmula `SUM()`, no como número muerto.
-  - **Medición de la producción (2026-09-07)** — `Order` gana `printerId`,
-    `machineHours` y `reprints` (migración `medicion_de_produccion`), y
-    `GET /printers/usage` los agrega por máquina con `shared/calc/production.ts`
-    (`lifeUsed`/`failureRate`/`productionStats`/`maintenanceBalance`).
+  - **Medición de la producción (2026-09-07)** — dos datos que se cargan en dos
+    lugares distintos, y la distinción es del dueño:
+    - **HORAS: lectura mensual del contador** (`PrinterReading`, único por
+      impresora+mes, migración `lectura_mensual_de_horas`). `hours` es
+      ACUMULADO —lo que marca la máquina—, y las horas del mes se derivan
+      restando la lectura anterior (`hoursThisMonth`). ⚠️ **NO se suman las
+      horas de los pedidos**: también se imprime fuera del negocio (pruebas,
+      calibraciones, regalos, tandas falladas) y eso gasta vida útil igual.
+      `Order.machineHours` existió unas horas y se eliminó por esto.
+      `GET/PUT /printers/readings?month=AAAA-MM`.
+    - **FALLOS: `Order.reprints`** (+ `printerId` para atribuirlos), que es lo
+      único que tiene sentido por pedido: una tasa de fallos se mide contra
+      piezas entregadas.
+    `GET /printers/usage` junta las dos con `shared/calc/production.ts`
+    (`lifeUsed`/`failureRate`/`productionStats`/`maintenanceBalance`/
+    `latestReading`/`hoursThisMonth`).
     ⚠️ **Un trabajo sin medir NO es un trabajo perfecto**: los pedidos con
     `reprints` en null quedan FUERA del cálculo en vez de contar como cero
     fallos, y la respuesta expone `measuredJobs`/`unmeasuredJobs` para que la UI

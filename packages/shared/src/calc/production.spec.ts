@@ -30,21 +30,12 @@ describe('failureRate', () => {
 });
 
 describe('productionStats', () => {
-  it('suma las horas de máquina de los trabajos medidos', () => {
-    const s = productionStats([
-      { machineHours: 5, reprints: 0, pieces: 10 },
-      { machineHours: 3.5, reprints: 1, pieces: 20 },
-    ]);
-
-    expect(s.hours).toBe(8.5);
-  });
-
   it('IGNORA los trabajos sin medir en vez de contarlos como perfectos', () => {
     // Un pedido viejo sin cargar no es un pedido de cero fallos: es uno sin
     // medir. Contarlo como 0 bajaría la tasa real con datos que no existen.
     const s = productionStats([
-      { machineHours: 4, reprints: 2, pieces: 10 },
-      { machineHours: null, reprints: null, pieces: 90 },
+      { reprints: 2, pieces: 10 },
+      { reprints: null, pieces: 90 },
     ]);
 
     expect(s.measuredJobs).toBe(1);
@@ -54,21 +45,21 @@ describe('productionStats', () => {
   });
 
   it('sin ningún trabajo medido no inventa una tasa', () => {
-    const s = productionStats([{ machineHours: null, reprints: null, pieces: 40 }]);
+    const s = productionStats([{ reprints: null, pieces: 40 }]);
 
     expect(s.measuredJobs).toBe(0);
     expect(s.failureRate).toBeNull();
-    expect(s.hours).toBe(0);
   });
 
-  it('cuenta las horas aunque no se hayan anotado los fallos', () => {
-    // Los dos datos son independientes: se puede saber cuánto imprimió la
-    // máquina sin haber contado las reimpresiones.
-    const s = productionStats([{ machineHours: 6, reprints: null, pieces: 10 }]);
+  it('suma las piezas y las reimpresiones de todos los trabajos medidos', () => {
+    const s = productionStats([
+      { reprints: 0, pieces: 10 },
+      { reprints: 1, pieces: 20 },
+    ]);
 
-    expect(s.hours).toBe(6);
-    expect(s.measuredJobs).toBe(0);
-    expect(s.failureRate).toBeNull();
+    expect(s.measuredJobs).toBe(2);
+    expect(s.pieces).toBe(30);
+    expect(s.failureRate).toBeCloseTo(1 / 30, 4);
   });
 });
 

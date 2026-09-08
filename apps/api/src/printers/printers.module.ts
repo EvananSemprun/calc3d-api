@@ -9,16 +9,24 @@ import {
   Param,
   Patch,
   Post,
+  Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
+  PrinterReadingUpsertSchema,
   PrinterSchema,
   equipmentRecovery,
+  hoursThisMonth,
+  latestReading,
   lifeUsed,
   maintenanceBalance,
+  monthKey,
+  monthStart,
   productionStats,
   type OrderLine,
   type PrinterDto,
+  type PrinterReadingUpsertDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
@@ -137,36 +145,49 @@ export class PrintersService {
             where: { category: 'MAINTENANCE' },
             select: { amount: true },
           },
+          readings: { select: { month: true, hours: true }, orderBy: { month: 'asc' } },
         },
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.order.findMany({
         where: { organizationId, status: { not: 'CANCELLED' } },
-        select: { printerId: true, machineHours: true, reprints: true, lines: true },
+        select: { printerId: true, reprints: true, lines: true },
       }),
     ]);
 
     const piezas = (lines: unknown) =>
       ((lines ?? []) as OrderLine[]).reduce((s, l) => s + l.quantity, 0);
     const aTrabajo = (o: (typeof pedidos)[number]) => ({
-      machineHours: o.machineHours == null ? null : Number(o.machineHours),
       reprints: o.reprints,
       pieces: piezas(o.lines),
     });
+    const mes = monthKey(new Date());
 
     const rows = printers.map((p) => {
       const suyos = pedidos.filter((o) => o.printerId === p.id).map(aTrabajo);
-      const stats = productionStats(suyos);
       const gastado = p.expenses.reduce((s, e) => s + Number(e.amount), 0);
+      const lecturas = p.readings.map((r) => ({
+        month: monthKey(r.month),
+        hours: Number(r.hours),
+      }));
+      // Las horas salen del CONTADOR de la máquina, no de los pedidos: también
+      // se imprime fuera del negocio, y eso gasta vida útil igual.
+      const ultima = latestReading(lecturas);
+      const horas = ultima?.hours ?? 0;
+
       return {
         id: p.id,
         name: p.name,
         lifetimeHours: p.lifetimeHours,
         maintPerHour: Number(p.maintPerHour),
         jobs: suyos.length,
-        ...stats,
-        lifeUsed: lifeUsed(stats.hours, p.lifetimeHours),
-        maintenance: maintenanceBalance(gastado, Number(p.maintPerHour), stats.hours),
+        ...productionStats(suyos),
+        hours: horas,
+        lastReading: ultima,
+        hoursThisMonth: hoursThisMonth(lecturas, mes),
+        // null (y no 0 %) mientras no haya ninguna lectura: no se sabe.
+        lifeUsed: ultima ? lifeUsed(horas, p.lifetimeHours) : null,
+        maintenance: maintenanceBalance(gastado, Number(p.maintPerHour), horas),
       };
     });
 
@@ -176,13 +197,71 @@ export class PrintersService {
 
     return {
       printers: rows,
+      month: mes,
       total: {
         ...total,
-        /** Pedidos sin ninguna medición cargada: lo que falta por anotar. */
-        unmeasuredJobs: pedidos.filter((o) => o.reprints == null && o.machineHours == null).length,
+        hours: rows.reduce((s, r) => s + r.hours, 0),
+        /** Máquinas que todavía no tienen ninguna lectura del contador. */
+        printersWithoutReading: rows.filter((r) => !r.lastReading).length,
+        /** Pedidos sin los fallos anotados: lo que falta por medir. */
+        unmeasuredJobs: pedidos.filter((o) => o.reprints == null).length,
         jobs: pedidos.length,
       },
     };
+  }
+
+  /**
+   * Las lecturas de un mes, con TODAS las impresoras — las leídas y las que no.
+   * Igual que el conteo de rollos: `hours` en null significa **sin leer**, que
+   * no es lo mismo que cero horas.
+   */
+  async readings(organizationId: string, month: string) {
+    const printers = await this.prisma.printer.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        name: true,
+        lifetimeHours: true,
+        readings: { select: { month: true, hours: true, note: true }, orderBy: { month: 'asc' } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return printers.map((p) => {
+      const lecturas = p.readings.map((r) => ({
+        month: monthKey(r.month),
+        hours: Number(r.hours),
+        note: r.note,
+      }));
+      const delMes = lecturas.find((r) => r.month === month) ?? null;
+      return {
+        printerId: p.id,
+        name: p.name,
+        lifetimeHours: p.lifetimeHours,
+        hours: delMes?.hours ?? null,
+        note: delMes?.note ?? null,
+        previous: latestReading(lecturas.filter((r) => r.month < month)),
+        hoursThisMonth: hoursThisMonth(lecturas, month),
+        lifeUsed: delMes ? lifeUsed(delMes.hours, p.lifetimeHours) : null,
+      };
+    });
+  }
+
+  async saveReading(organizationId: string, dto: PrinterReadingUpsertDto) {
+    await this.ensureOwned(organizationId, dto.printerId);
+    const month = monthStart(dto.month);
+    await this.prisma.printerReading.upsert({
+      where: { printerId_month: { printerId: dto.printerId, month } },
+      create: {
+        organizationId,
+        printerId: dto.printerId,
+        month,
+        hours: dto.hours,
+        note: dto.note ?? null,
+      },
+      update: { hours: dto.hours, note: dto.note ?? null },
+    });
+    return this.readings(organizationId, dto.month);
   }
 
   private async ensureOwned(organizationId: string, id: string) {
@@ -210,6 +289,19 @@ export class PrintersController {
   @Get('usage')
   usage(@CurrentUser() user: AuthUser) {
     return this.service.usage(user.organizationId);
+  }
+
+  @Get('readings')
+  readings(@CurrentUser() user: AuthUser, @Query('month') month: string) {
+    return this.service.readings(user.organizationId, month);
+  }
+
+  @Put('readings')
+  saveReading(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(PrinterReadingUpsertSchema)) dto: PrinterReadingUpsertDto,
+  ) {
+    return this.service.saveReading(user.organizationId, dto);
   }
 
   @Post()

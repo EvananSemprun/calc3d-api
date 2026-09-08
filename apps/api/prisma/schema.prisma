@@ -75,6 +75,7 @@ model Organization {
   loans           Loan[]
   loanPayments    LoanPayment[]
   goals           Goal[]
+  printerReadings PrinterReading[]
 }
 
 model User {
@@ -261,6 +262,7 @@ model Printer {
   expenses Expense[]
   loans    Loan[]
   orders   Order[]
+  readings PrinterReading[]
 
   @@index([organizationId])
 }
@@ -482,17 +484,18 @@ model Order {
   campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   campaignId    String?
 
-  /// LO QUE PASÓ AL PRODUCIRLO (medición, 2026-09-07). Los tres son opcionales:
-  /// se cargan cuando el trabajo se imprime, no al tomar el pedido, y un pedido
-  /// viejo sin cargar NO es un pedido de cero horas ni de cero fallos — es uno
-  /// sin medir, y las cuentas lo excluyen en vez de contarlo como perfecto.
-  printer      Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
-  printerId    String?
-  /// Horas de máquina que consumió el trabajo. Suman a la vida útil del equipo.
-  machineHours Decimal? @db.Decimal(12, 4)
+  /// LO QUE PASÓ AL PRODUCIRLO (medición, 2026-09-07). Opcionales: se cargan al
+  /// imprimir, no al tomar el pedido, y un pedido sin cargar NO es un pedido de
+  /// cero fallos — es uno sin medir, y las cuentas lo excluyen.
+  ///
+  /// Las HORAS de máquina NO están acá: se llevan como lectura mensual del
+  /// contador (`PrinterReading`), porque también se imprime fuera de los
+  /// pedidos y eso gasta vida útil igual.
+  printer   Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
+  printerId String?
   /// Piezas que hubo que volver a imprimir por fallo. Cero es un dato válido
   /// (se imprimió sin fallas); null es "no se midió".
-  reprints     Int?
+  reprints  Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -979,5 +982,33 @@ model Goal {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, month])
+  @@index([organizationId])
+}
+
+/// LECTURA MENSUAL DEL CONTADOR DE UNA IMPRESORA.
+///
+/// Se anota lo que MARCA la máquina al cierre del mes, igual que el conteo de
+/// rollos: `hours` es acumulado, no las horas del mes. Las horas del mes se
+/// DERIVAN restando la lectura anterior (`hoursThisMonth`), y si falta alguna
+/// de las dos el consumo es "sin dato", no cero.
+///
+/// Vive acá y no en el pedido porque también se imprime fuera del negocio
+/// —pruebas, calibraciones, regalos, tandas falladas— y eso gasta vida útil.
+model PrinterReading {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  printer        Printer      @relation(fields: [printerId], references: [id], onDelete: Cascade)
+  printerId      String
+  /// Primer día del mes a medianoche UTC, igual que `StockCount`.
+  month          DateTime
+  /// Horas ACUMULADAS que muestra la máquina en ese cierre.
+  hours          Decimal      @db.Decimal(12, 2)
+  note           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([printerId, month])
   @@index([organizationId])
 }

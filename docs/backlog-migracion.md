@@ -209,9 +209,14 @@ y verificación, como el de filamento.
 
 ## 9. Medición que hoy no existe ✅ HECHO (2026-09-07)
 
-> Tres campos en el pedido (**impresora, horas de máquina, piezas reimpresas**),
-> una tarjeta para cargarlos en el detalle del pedido y la pantalla
-> **Finanzas → Producción** que los lee. Endpoint `GET /printers/usage`,
+> **Corregido el mismo día por el dueño:** las horas NO van por pedido. Se
+> llevan como el stock de filamento —una **lectura mensual del contador** de
+> cada máquina— porque también se imprime fuera del negocio (pruebas,
+> calibraciones, regalos, tandas falladas) y eso gasta vida útil igual. Atarlas
+> a los pedidos dejaba esas horas sin contar.
+>
+> Quedó así: **horas** en `PrinterReading` (lectura por mes, editable en
+> Producción) y **fallos** en el pedido (`reprints` + `printerId`). Endpoint `GET /printers/usage`,
 > helpers puros en `shared/calc/production.ts`.
 >
 > Nada de esto se migra: son datos que empiezan a existir hoy. Lo que arreglan:
