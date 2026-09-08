@@ -1,12 +1,14 @@
 import { z } from 'zod';
+import { CalcInputSchema } from './calc';
 
 /**
- * Contratos de la TIENDA (catálogo público).
+ * Contratos de la TIENDA — el catálogo ÚNICO del negocio.
  *
- * La ficha de tienda es un modelo aparte del `Product` interno: aquel guarda el
- * costeo (snapshot del `CalcInput`, costo, recosteo) y esta guarda lo que ve el
- * cliente. Los precios viajan en **USD** — la base del motor; los bolívares son
- * capa de presentación y se calculan con la tasa vigente al mostrarlos.
+ * Desde 2026-09-07 la ficha de tienda es también el producto interno: guarda lo
+ * que ve el cliente (fotos, opciones, visibilidad, slug) **y** su costeo
+ * (`input` + `costAtPublish`), que es opcional. Un servicio o algo cargado a
+ * mano simplemente no lo tiene. Spec:
+ * `docs/superpowers/specs/2026-09-07-catalogo-unico-design.md`.
  */
 
 /** Producto físico (se imprime y se entrega) o servicio (diseño, reparación). */
@@ -94,7 +96,15 @@ export const StoreProductCreateSchema = z.object({
   minQty: z.number().int().positive().default(1),
   visible: z.boolean().default(false),
   categoryId: z.string().nullable().optional(),
-  /** Origen de costeo. El COSTO no se acepta del cliente: lo lee el backend. */
+  /**
+   * Costeo de la ficha: el `CalcInput` con el que se calculó, tal cual lo deja
+   * la calculadora. **El COSTO no se acepta del cliente**: el servidor lo
+   * deriva corriendo el motor sobre este input.
+   *
+   * null / ausente = ficha sin costeo (un servicio, o algo cargado a mano).
+   */
+  input: CalcInputSchema.nullable().optional(),
+  /** Origen de costeo heredado (se elimina con `Product` y `Quote`). */
   productId: z.string().nullable().optional(),
   quoteId: z.string().nullable().optional(),
   optionGroups: z.array(StoreOptionGroupSchema).max(10).default([]),

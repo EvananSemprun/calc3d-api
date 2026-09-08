@@ -777,6 +777,15 @@ model StoreProduct {
    */
   costAtPublish Decimal? @db.Decimal(12, 4)
 
+  /// Snapshot del `CalcInput` con el que se costeó la ficha, tal como lo dejó
+  /// la calculadora. Es lo que permite el RECOSTEO: recalcular con los precios
+  /// de hoy y avisar si el margen se cayó.
+  ///
+  /// **null es normal**, no un error: una ficha cargada a mano o un SERVICIO no
+  /// tienen costeo. Que el costeo sea opcional acá —y obligatorio en el viejo
+  /// `Product`— es justamente lo que permite un catálogo único.
+  input Json?
+
   images       StoreImage[]
   optionGroups StoreOptionGroup[]
 

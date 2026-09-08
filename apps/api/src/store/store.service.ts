@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   STORE_IMAGE_MAX_BYTES,
+  calculateQuote,
   STORE_IMAGE_MAX_COUNT,
   STORE_IMAGE_MIME_TYPES,
   slugify,
@@ -68,7 +69,11 @@ export class StoreService {
 
     await this.assertCategory(organizationId, dto.categoryId);
     // El COSTO no se acepta del cliente: se lee del origen enlazado, si lo hay.
-    const costAtPublish = await this.resolveCost(organizationId, dto.productId, dto.quoteId);
+    // El costo lo pone el SERVIDOR: si la ficha trae costeo, se corre el motor
+    // sobre él; si no, se cae al origen heredado (producto/cotización).
+    const costAtPublish = dto.input
+      ? calculateQuote(dto.input).costPerUnit
+      : await this.resolveCost(organizationId, dto.productId, dto.quoteId);
     const position = await this.nextPosition(organizationId);
 
     const created = await this.prisma.storeProduct.create({
@@ -90,6 +95,7 @@ export class StoreService {
         visible: dto.visible,
         position,
         categoryId: dto.categoryId ?? null,
+        input: (dto.input as unknown as Prisma.InputJsonValue) ?? Prisma.DbNull,
         productId: dto.productId ?? null,
         quoteId: dto.quoteId ?? null,
         costAtPublish,
