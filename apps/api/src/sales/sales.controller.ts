@@ -1,10 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   SaleCreateSchema,
-  SaleFromQuoteSchema,
   SaleUpdateSchema,
   type SaleCreateDto,
-  type SaleFromQuoteDto,
   type SaleUpdateDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -27,13 +25,7 @@ export class SalesController {
     return this.service.create(user.organizationId, dto);
   }
 
-  @Post('from-quote')
-  fromQuote(
-    @CurrentUser() user: AuthUser,
-    @Body(new ZodValidationPipe(SaleFromQuoteSchema)) dto: SaleFromQuoteDto,
-  ) {
-    return this.service.fromQuote(user.organizationId, dto);
-  }
+
 
   @Patch(':id')
   update(

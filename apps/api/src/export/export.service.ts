@@ -8,21 +8,42 @@ import {
 } from '@calc3d/shared';
 import PDFDocument from 'pdfkit';
 import { writeToString } from 'fast-csv';
-import { QuotesService } from '../quotes/quotes.service';
+import { NotFoundException } from '@nestjs/common';
+import { calculateQuote, type CalcInput } from '@calc3d/shared';
+import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * DESGLOSE INTERNO de una ficha del catálogo: costos, márgenes y mayoreo.
+ *
+ * ⚠️ **NO se le manda al cliente.** Para eso está `QuoteNoteService`, que emite
+ * la cotización del pedido sin costos. Este documento publica la ganancia del
+ * negocio y es de uso propio.
+ *
+ * Colgaba del presupuesto hasta 2026-09-07; ahora sale de la ficha, que es
+ * donde vive el costeo. Se recalcula con `calculateQuote` sobre el `input`
+ * guardado: los números son los mismos que muestra la pantalla.
+ */
 @Injectable()
 export class ExportService {
-  constructor(private readonly quotes: QuotesService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private async load(organizationId: string, id: string) {
-    const quote = await this.quotes.get(organizationId, id);
-    const totals = quote.totals as unknown as CalcResult;
-    return { quote, totals };
+    const ficha = await this.prisma.storeProduct.findFirst({
+      where: { id, organizationId },
+    });
+    if (!ficha) throw new NotFoundException('Producto no encontrado');
+    if (!ficha.input) {
+      throw new NotFoundException(
+        'Esta ficha no tiene costeo: se cargó a mano o es un servicio, así que no hay desglose que mostrar',
+      );
+    }
+    const totals = calculateQuote(ficha.input as unknown as CalcInput);
+    return { ficha, totals };
   }
 
   /** Genera el PDF de la cotización con desglose y precios. */
   async pdf(organizationId: string, id: string): Promise<Buffer> {
-    const { quote, totals } = await this.load(organizationId, id);
+    const { ficha, totals } = await this.load(organizationId, id);
     const c = totals.currency;
     const l = totals.locale;
     const money = (n: number) => formatMoney(n, c, l);
@@ -32,15 +53,15 @@ export class ExportService {
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
     // Encabezado
-    doc.fontSize(20).text('Cotización', { align: 'left' });
+    doc.fontSize(20).text('Desglose interno', { align: 'left' });
     doc.moveDown(0.3);
-    doc.fontSize(12).fillColor('#444').text(quote.name);
+    doc.fontSize(12).fillColor('#444').text(ficha.name);
     doc
       .fontSize(10)
       .fillColor('#666')
       .text(`Cantidad: ${totals.quantity} piezas`)
-      .text(`Versión: ${quote.version}    Estado: ${quote.status}`)
-      .text(`Fecha: ${new Date(quote.createdAt).toLocaleDateString(l)}`);
+      .text(`Precio publicado: ${money(Number(ficha.priceUsd))}    ${ficha.visible ? 'Publicada' : 'Oculta'}`)
+      .text(`Fecha: ${new Date(ficha.createdAt).toLocaleDateString(l)}`);
     doc.moveDown();
 
     // Resumen
@@ -88,7 +109,8 @@ export class ExportService {
 
     // Equivalente en moneda secundaria con la tasa CONGELADA en el presupuesto.
     // El snapshot trae solo la moneda secundaria de la organización.
-    const snap = (quote.exchangeRates ?? null) as ExchangeRateSnapshot | null;
+    // La ficha no congela tasas: el equivalente en Bs se mira en pantalla.
+    const snap = null as ExchangeRateSnapshot | null;
     const frozen = snap ? Object.entries(snap)[0] : undefined;
     if (frozen) {
       const [code, fr] = frozen;

@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import {
   type PriceResult,
   type SaleCreateDto,
-  type SaleFromQuoteDto,
   type SaleUpdateDto,
 } from '@calc3d/shared';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -44,7 +43,6 @@ export class SalesService {
         amount: dto.amount,
         kind: dto.kind,
         clientId: dto.clientId || null,
-        quoteId: dto.quoteId || null,
         note: dto.note || null,
         exchangeRates: await this.rates.snapshotJson(organizationId),
         originChannel: dto.originChannel ?? null,
@@ -53,30 +51,7 @@ export class SalesService {
     });
   }
 
-  async fromQuote(organizationId: string, dto: SaleFromQuoteDto) {
-    const quote = await this.prisma.quote.findFirst({
-      where: { id: dto.quoteId, organizationId },
-    });
-    if (!quote) throw new NotFoundException('Presupuesto no encontrado');
-    const totals = quote.totals as Record<string, unknown> | null;
-    const amount = sellingTotal(totals, quote.quantity);
-    return this.prisma.sale.create({
-      data: {
-        organizationId,
-        date: dto.date ? new Date(dto.date) : new Date(),
-        amount,
-        kind: dto.kind,
-        clientId: quote.clientId,
-        quoteId: quote.id,
-        note: dto.note ?? quote.name,
-        // La venta congela la tasa VIGENTE (el dinero entra hoy), no la del presupuesto.
-        exchangeRates: await this.rates.snapshotJson(organizationId),
-        // Hereda la atribución del presupuesto (arrastre cotización → venta).
-        originChannel: quote.originChannel,
-        campaignId: quote.campaignId,
-      },
-    });
-  }
+
 
   async update(organizationId: string, id: string, dto: SaleUpdateDto) {
     await this.ensureOwned(organizationId, id);

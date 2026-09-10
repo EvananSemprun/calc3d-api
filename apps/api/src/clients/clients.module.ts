@@ -39,12 +39,8 @@ export class ClientsService {
     const client = await this.prisma.client.findFirst({ where: { id, organizationId } });
     if (!client) throw new NotFoundException('Contacto no encontrado');
 
-    const [quotes, orders, sales] = await Promise.all([
-      this.prisma.quote.findMany({
-        where: { organizationId, clientId: id },
-        select: { id: true, name: true, status: true, createdAt: true, totals: true },
-        orderBy: { createdAt: 'desc' },
-      }),
+    // Sin presupuestos: cotizar es el primer estado de un pedido desde 2026-09-07.
+    const [orders, sales] = await Promise.all([
       this.prisma.order.findMany({
         where: { organizationId, clientId: id },
         select: { id: true, code: true, status: true, createdAt: true, lines: true, payments: { select: { amount: true } } },
@@ -71,7 +67,7 @@ export class ClientsService {
       };
     });
 
-    return { ...client, history: { quotes, orders: orderRows, sales } };
+    return { ...client, history: { orders: orderRows, sales } };
   }
 
   create(organizationId: string, dto: ClientDto) {

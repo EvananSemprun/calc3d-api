@@ -6,12 +6,10 @@ import {
   STORE_IMAGE_MAX_COUNT,
   STORE_IMAGE_MIME_TYPES,
   slugify,
-  type CalcResult,
   type StoreCategoryDto,
   type StoreImageConfirmDto,
   type StoreImageUploadUrlDto,
   type StoreProductCreateDto,
-  type StoreProductFromSourceDto,
   type StoreProductUpdateDto,
 } from '@calc3d/shared';
 import { Prisma } from '@prisma/client';
@@ -88,11 +86,9 @@ export class StoreService {
 
     await this.assertCategory(organizationId, dto.categoryId);
     // El COSTO no se acepta del cliente: se lee del origen enlazado, si lo hay.
-    // El costo lo pone el SERVIDOR: si la ficha trae costeo, se corre el motor
-    // sobre él; si no, se cae al origen heredado (producto/cotización).
-    const costAtPublish = dto.input
-      ? calculateQuote(dto.input).costPerUnit
-      : await this.resolveCost(organizationId, dto.quoteId);
+    // El costo lo pone el SERVIDOR: se corre el motor sobre el costeo que manda
+    // la calculadora. Sin costeo no hay costo, y eso es válido (un servicio).
+    const costAtPublish = dto.input ? calculateQuote(dto.input).costPerUnit : null;
     const position = await this.nextPosition(organizationId);
 
     const created = await this.prisma.storeProduct.create({
@@ -115,7 +111,6 @@ export class StoreService {
         position,
         categoryId: dto.categoryId ?? null,
         input: (dto.input as unknown as Prisma.InputJsonValue) ?? Prisma.DbNull,
-        quoteId: dto.quoteId ?? null,
         costAtPublish,
         optionGroups: { create: this.optionGroupsData(dto.optionGroups) },
       },
@@ -133,14 +128,8 @@ export class StoreService {
         ? await this.uniqueSlug(organizationId, dto.slug ?? slugify(dto.name ?? current.name), id)
         : undefined;
 
-    // Si cambió el origen de costeo, se vuelve a leer el costo del servidor.
-    const reBind = dto.quoteId !== undefined;
-    const costAtPublish = reBind
-      ? await this.resolveCost(
-          organizationId,
-          dto.quoteId === undefined ? current.quoteId : dto.quoteId,
-        )
-      : undefined;
+    // Recostear al editar: si viene un costeo nuevo, el servidor recalcula.
+    const costAtPublish = dto.input ? calculateQuote(dto.input).costPerUnit : undefined;
 
     await this.prisma.$transaction(async (tx) => {
       // Los grupos de opciones se editan como bloque: reemplazarlos entero evita
@@ -166,7 +155,6 @@ export class StoreService {
           ...(dto.minQty !== undefined && { minQty: dto.minQty }),
           ...(dto.visible !== undefined && { visible: dto.visible }),
           ...(dto.categoryId !== undefined && { categoryId: dto.categoryId ?? null }),
-          ...(dto.quoteId !== undefined && { quoteId: dto.quoteId ?? null }),
           ...(costAtPublish !== undefined && { costAtPublish }),
           ...(dto.optionGroups !== undefined && {
             optionGroups: { create: this.optionGroupsData(dto.optionGroups) },
@@ -203,36 +191,7 @@ export class StoreService {
     return this.list(organizationId);
   }
 
-  /**
-   * Crea un borrador a partir de una cotización. El precio y el costo salen del
-   * SERVIDOR, no del cliente.
-   *
-   * Sobrevive solo mientras exista `Quote`: desde el catálogo único, la
-   * calculadora crea la ficha directo con su costeo adentro.
-   */
-  async createFromSource(organizationId: string, dto: StoreProductFromSourceDto) {
-    const quote = await this.prisma.quote.findFirst({
-      where: { id: dto.quoteId, organizationId },
-    });
-    if (!quote) throw new NotFoundException('Presupuesto no encontrado');
-    const totals = quote.totals as unknown as CalcResult;
-    // El precio final del presupuesto es el que se publica. Un snapshot anterior
-    // a shared 0.7.0 no lo trae: publicar en 0 dejaría el producto regalado.
-    const precio = totals.price?.final;
-    if (!precio) throw new BadRequestException('El presupuesto no tiene un precio calculado');
 
-    return this.create(organizationId, {
-      name: quote.name,
-      kind: 'PHYSICAL',
-      priceUsd: precio,
-      minQty: 1,
-      visible: false,
-      custom: false,
-      specs: [],
-      quoteId: quote.id,
-      optionGroups: [],
-    });
-  }
 
   // ----- Fotos -----
 
@@ -391,25 +350,7 @@ export class StoreService {
    * Costo unitario del origen enlazado. Devuelve null si no hay origen: una
    * ficha cargada a mano simplemente no tiene alerta de rentabilidad.
    */
-  /**
-   * Costo heredado de una cotización, para las fichas publicadas desde ahí antes
-   * del catálogo único. Las nuevas traen su propio `input` y no pasan por acá.
-   */
-  private async resolveCost(
-    organizationId: string,
-    quoteId?: string | null,
-  ): Promise<number | null> {
-    if (quoteId) {
-      const quote = await this.prisma.quote.findFirst({
-        where: { id: quoteId, organizationId },
-        select: { totals: true },
-      });
-      if (!quote) throw new NotFoundException('Presupuesto no encontrado');
-      const totals = quote.totals as unknown as CalcResult;
-      return totals.costPerUnit ?? null;
-    }
-    return null;
-  }
+
 
   private async nextPosition(organizationId: string): Promise<number> {
     const last = await this.prisma.storeProduct.findFirst({

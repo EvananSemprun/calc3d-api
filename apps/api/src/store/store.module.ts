@@ -14,14 +14,12 @@ import {
   StoreImageConfirmSchema,
   StoreImageUploadUrlSchema,
   StoreProductCreateSchema,
-  StoreProductFromSourceSchema,
   StoreProductUpdateSchema,
   StoreReorderSchema,
   type StoreCategoryDto,
   type StoreImageConfirmDto,
   type StoreImageUploadUrlDto,
   type StoreProductCreateDto,
-  type StoreProductFromSourceDto,
   type StoreProductUpdateDto,
   type StoreReorderDto,
 } from '@calc3d/shared';
@@ -87,14 +85,7 @@ export class StoreController {
     return this.service.create(user.organizationId, dto);
   }
 
-  /** Publicar a partir de un producto interno o de una cotización. */
-  @Post('products/from-source')
-  createFromSource(
-    @CurrentUser() user: AuthUser,
-    @Body(new ZodValidationPipe(StoreProductFromSourceSchema)) dto: StoreProductFromSourceDto,
-  ) {
-    return this.service.createFromSource(user.organizationId, dto);
-  }
+
 
   @Patch('products/reorder')
   reorder(

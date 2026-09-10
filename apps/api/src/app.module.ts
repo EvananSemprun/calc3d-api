@@ -14,7 +14,6 @@ import { CatalogOptionsModule } from './catalog-options/catalog-options.module';
 import { ClientsModule } from './clients/clients.module';
 import { ProvidersModule } from './providers/providers.module';
 import { CalcModule } from './calc/calc.module';
-import { QuotesModule } from './quotes/quotes.module';
 import { ExportModule } from './export/export.module';
 import { SalesModule } from './sales/sales.module';
 import { ExpensesModule } from './expenses/expenses.module';
@@ -46,7 +45,6 @@ import { StorePublicModule } from './store-public/store-public.module';
     ClientsModule,
     ProvidersModule,
     CalcModule,
-    QuotesModule,
     ExportModule,
     SalesModule,
     ExpensesModule,

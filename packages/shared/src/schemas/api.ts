@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CalcInputSchema } from './calc';
 
 /**
  * Si un componente del CATÁLOGO se usa por pieza o una sola vez por pedido.
@@ -391,40 +390,8 @@ export type ProviderDto = z.infer<typeof ProviderSchema>;
 
 // ----- Productos (piezas costeadas reutilizables, Fase 4) -----
 
-/** Re-fijar el precio de venta (el dueño acepta el nuevo costo y re-ancla el margen). */
-export const ProductRepriceSchema = z.object({
-  priceSet: z.number().min(0, 'El precio no puede ser negativo'),
-});
-export type ProductRepriceDto = z.infer<typeof ProductRepriceSchema>;
 
-// ----- Presupuestos -----
 
-export const QuoteStatusSchema = z.enum(['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED']);
-export type QuoteStatusDto = z.infer<typeof QuoteStatusSchema>;
-
-export const QuoteCreateSchema = z.object({
-  name: z.string().min(1, 'El nombre es obligatorio'),
-  clientId: z.string().optional().nullable(),
-  status: QuoteStatusSchema.optional(),
-  input: CalcInputSchema,
-  /** Moneda de presentación elegida (etiqueta de la tasa; null = solo USD). */
-  currencyLabel: z.string().optional().nullable(),
-  /** Atribución de publicidad (null = sin atribuir). */
-  originChannel: AttributionChannelSchema.optional().nullable(),
-  campaignId: z.string().optional().nullable(),
-});
-export type QuoteCreateDto = z.infer<typeof QuoteCreateSchema>;
-
-export const QuoteUpdateSchema = z.object({
-  name: z.string().min(1).optional(),
-  clientId: z.string().optional().nullable(),
-  status: QuoteStatusSchema.optional(),
-  input: CalcInputSchema.optional(),
-  currencyLabel: z.string().optional().nullable(),
-  originChannel: AttributionChannelSchema.optional().nullable(),
-  campaignId: z.string().optional().nullable(),
-});
-export type QuoteUpdateDto = z.infer<typeof QuoteUpdateSchema>;
 
 // ----- Finanzas: ventas, gastos, compras de filamento -----
 
@@ -448,14 +415,6 @@ export type SaleCreateDto = z.infer<typeof SaleCreateSchema>;
 export const SaleUpdateSchema = SaleCreateSchema.partial();
 export type SaleUpdateDto = z.infer<typeof SaleUpdateSchema>;
 
-/** Convertir un presupuesto en venta (el monto se toma de sus totales). */
-export const SaleFromQuoteSchema = z.object({
-  quoteId: z.string().min(1),
-  date: z.string().optional(),
-  kind: SaleKindSchema.default('ENCARGO'),
-  note: z.string().optional().nullable(),
-});
-export type SaleFromQuoteDto = z.infer<typeof SaleFromQuoteSchema>;
 
 export const ExpenseCategorySchema = z.enum([
   'EQUIPMENT',

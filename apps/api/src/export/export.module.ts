@@ -4,21 +4,20 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { DocumentsModule } from '../documents/documents.module';
 import { QuoteNoteService } from '../documents/quote-note.service';
-import { QuotesModule } from '../quotes/quotes.module';
 import { ExportService } from './export.service';
 
-@Controller('quotes/:id')
+/**
+ * COTIZACIÓN PARA EL CLIENTE — cuelga del PEDIDO desde 2026-09-07.
+ *
+ * Cotizar dejó de ser una entidad aparte: un pedido en estado "Cotizado" ES la
+ * cotización, y si el cliente acepta, ese mismo registro sigue adelante.
+ */
+@Controller('orders/:id')
 @UseGuards(JwtAuthGuard)
-export class ExportController {
-  constructor(
-    private readonly service: ExportService,
-    private readonly quoteNote: QuoteNoteService,
-  ) {}
+export class OrderQuoteController {
+  constructor(private readonly quoteNote: QuoteNoteService) {}
 
-  /**
-   * Cotización PARA EL CLIENTE, en el formato del negocio. Sin costos ni
-   * márgenes: lo que se manda por fuera.
-   */
+  /** Lo que se le manda al cliente: sin costos ni márgenes. */
   @Get('cotizacion.pdf')
   async clientQuotePdf(
     @CurrentUser() user: AuthUser,
@@ -33,9 +32,18 @@ export class ExportController {
     });
     res.end(buffer);
   }
+}
 
-  /** Desglose INTERNO (costos, márgenes, mayoreo). NO enviar al cliente. */
-  @Get('pdf')
+/**
+ * DESGLOSE INTERNO de una ficha del catálogo. ⚠️ NO se le manda al cliente:
+ * lleva costos, márgenes y mayoreo.
+ */
+@Controller('store/products/:id')
+@UseGuards(JwtAuthGuard)
+export class ExportController {
+  constructor(private readonly service: ExportService) {}
+
+  @Get('desglose.pdf')
   async pdf(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() res: Response) {
     const buffer = await this.service.pdf(user.organizationId, id);
     res.set({
@@ -46,20 +54,20 @@ export class ExportController {
     res.end(buffer);
   }
 
-  @Get('csv')
+  @Get('desglose.csv')
   async csv(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() res: Response) {
     const csv = await this.service.csv(user.organizationId, id);
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="cotizacion-${id}.csv"`,
+      'Content-Disposition': `attachment; filename="desglose-interno-${id}.csv"`,
     });
     res.end(csv);
   }
 }
 
 @Module({
-  imports: [QuotesModule, DocumentsModule],
-  controllers: [ExportController],
+  imports: [DocumentsModule],
+  controllers: [OrderQuoteController, ExportController],
   providers: [ExportService],
 })
 export class ExportModule {}

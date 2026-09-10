@@ -73,7 +73,6 @@ interface CampaignStats {
   sales: number;
   orders: number;
   ordersTotal: number;
-  quotes: number;
 }
 
 const emptyStats = (): CampaignStats => ({
@@ -84,17 +83,8 @@ const emptyStats = (): CampaignStats => ({
   sales: 0,
   orders: 0,
   ordersTotal: 0,
-  quotes: 0,
 });
 
-/** Costo del lote embebido en el snapshot `totals` de una cotización (o 0). */
-function costFromTotals(totals: unknown): number | null {
-  if (totals && typeof totals === 'object' && 'costBatch' in totals) {
-    const c = Number((totals as { costBatch: unknown }).costBatch);
-    return Number.isFinite(c) ? c : null;
-  }
-  return null;
-}
 
 @Injectable()
 export class CampaignsService {
@@ -102,22 +92,18 @@ export class CampaignsService {
 
   /** Métricas por campaña (mapa campaignId → stats) para toda la organización. */
   private async statsByCampaign(organizationId: string): Promise<Map<string, CampaignStats>> {
-    const [expenses, sales, orders, quotes] = await Promise.all([
+    const [expenses, sales, orders] = await Promise.all([
       this.prisma.expense.findMany({
         where: { organizationId, campaignId: { not: null } },
         select: { campaignId: true, amount: true },
       }),
       this.prisma.sale.findMany({
         where: { organizationId, campaignId: { not: null } },
-        select: { campaignId: true, amount: true, quote: { select: { totals: true } } },
+        select: { campaignId: true, amount: true },
       }),
       this.prisma.order.findMany({
         where: { organizationId, campaignId: { not: null } },
         select: { campaignId: true, lines: true },
-      }),
-      this.prisma.quote.findMany({
-        where: { organizationId, campaignId: { not: null } },
-        select: { campaignId: true },
       }),
     ]);
 
@@ -137,18 +123,16 @@ export class CampaignsService {
       const amount = Number(s.amount);
       st.sales += 1;
       st.revenue += amount;
-      const cost = s.quote ? costFromTotals(s.quote.totals) : null;
-      if (cost != null) {
-        st.hasCost = true;
-        st.profit += amount - cost;
-      }
+      // ⚠️ La GANANCIA por campaña quedó sin fuente al eliminarse los
+      // presupuestos (2026-09-07): era lo único que ataba una venta a su costo.
+      // El ROI se apaga y la salud de la campaña se juzga por ROAS, que es lo
+      // que el helper ya prioriza. Inventar un costo sería peor que no tenerlo.
     }
     for (const o of orders) {
       const st = at(o.campaignId!);
       st.orders += 1;
       st.ordersTotal += orderTotal((o.lines as unknown as OrderLine[]) ?? []);
     }
-    for (const q of quotes) at(q.campaignId!).quotes += 1;
 
     // Redondeo de presentación (2 dp) para dinero.
     for (const s of map.values()) {
@@ -232,7 +216,6 @@ export class CampaignsService {
         recomendacion: campaignRecommendation(st).title,
         ventas: st.sales,
         pedidos: st.orders,
-        cotizaciones: st.quotes,
       };
     });
     if (rows.length === 0) return '';
@@ -297,7 +280,6 @@ export class CampaignsService {
     this.row(doc, 'Ventas atribuidas', String(st.sales));
     this.row(doc, 'Ticket promedio', st.sales > 0 ? fmt(st.revenue / st.sales) : '—');
     this.row(doc, 'Pedidos atribuidos', `${st.orders} (${fmt(st.ordersTotal)})`);
-    this.row(doc, 'Cotizaciones atribuidas', String(st.quotes));
 
     doc.moveDown(1.5);
     doc

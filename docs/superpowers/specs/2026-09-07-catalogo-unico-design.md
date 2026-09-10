@@ -69,8 +69,18 @@ adelante.
    Dashboard y el "+ Desde productos" de Pedidos pasaron al catálogo nuevo; el
    test multi-tenant de `ProductsService` se reapuntó a `StoreService`, que
    además alimenta la vitrina pública.
-3. **Muere `Quote`.** El PDF de cotización pasa al pedido; se van el módulo, las
-   pantallas, `/sales/from-quote` y el ciclo de cotización del Dashboard.
+3. ✅ **Muere `Quote`.** El PDF de cotización pasa al pedido
+   (`GET /orders/:id/cotizacion.pdf`) y el desglose INTERNO pasa a la ficha
+   (`GET /store/products/:id/desglose.pdf`, que ahora tiene el costeo). Se
+   fueron el módulo, las pantallas, `/sales/from-quote`, `Sale.quoteId`,
+   `StoreProduct.quoteId`, el `from-source` del catálogo y los 4 borradores de
+   prueba (con `pg_dump` antes).
+
+   **Lo que se perdió, y hay que decirlo:** la **ganancia por campaña**. Era el
+   presupuesto lo único que ataba una venta a su costo, así que el ROI se apaga
+   y la salud de la campaña se juzga por **ROAS**, que es lo que el helper ya
+   priorizaba. Inventar un costo hubiera sido peor que no tenerlo. También se
+   fue la métrica "cotizaciones atribuidas".
 
 ## 6. Lo que NO cambia
 

@@ -15,7 +15,6 @@ const base: CampaignMetricsInput = {
   hasCost: false,
   sales: 0,
   orders: 0,
-  quotes: 0,
 };
 
 describe('campaign metrics', () => {

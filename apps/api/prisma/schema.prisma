@@ -16,13 +16,6 @@ enum Role {
   COLLABORATOR
 }
 
-enum QuoteStatus {
-  DRAFT
-  SENT
-  ACCEPTED
-  REJECTED
-}
-
 // Tipo de contacto en el directorio/CRM (Fase 5). CLIENT es el default para no
 // romper los clientes existentes; SUPPLIER/ALLY/COMPETITOR se activan en la UI.
 enum ContactType {
@@ -61,7 +54,6 @@ model Organization {
   components      Component[]
   clients         Client[]
   providers       Provider[]
-  quotes          Quote[]
   sales           Sale[]
   expenses        Expense[]
   exchangeRates   ExchangeRate[]
@@ -301,7 +293,6 @@ model Client {
   lat            Float?
   lng            Float?
   createdAt      DateTime       @default(now())
-  quotes         Quote[]
   sales          Sale[]
   orders         Order[]
   storeRequests  StoreRequest[]
@@ -325,59 +316,15 @@ model Provider {
 
 // Un presupuesto guarda un SNAPSHOT del CalcInput y de los totales calculados,
 // para integridad histórica de precios (no cambia si luego editas un catálogo).
-model Quote {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId String
-  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  clientId       String?
-
-  name     String
-  quantity Int
-  status   QuoteStatus @default(DRAFT)
-
-  // Correlativo por organización para el N.º de cotización del documento que ve
-  // el cliente. Opcional: los presupuestos creados antes de esta columna se
-  // rellenan en la migración, pero el tipo queda nullable por seguridad.
-  code Int?
-
-  // Versionado: las versiones comparten el mismo originalQuoteId (o su propio id la v1).
-  version         Int     @default(1)
-  originalQuoteId String?
-
-  input  Json // CalcInput (snapshot de entradas)
-  totals Json // CalcResult (snapshot de resultados)
-
-  currencyLabel String? // moneda de presentación elegida (null = solo USD)
-  exchangeRates Json? // snapshot de tasas al crear: { <moneda>: { rate, source, at, label } }
-
-  // Atribución de publicidad (Fase 1). null = "Sin atribuir".
-  originChannel AttributionChannel?
-  campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  campaignId    String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  sales         Sale[]
-  storeProducts StoreProduct[]
-
-  @@unique([organizationId, code])
-  @@index([organizationId])
-  @@index([originalQuoteId])
-  @@index([campaignId])
-}
 
 // Venta registrada (transacción individual). El total del día/periodo se agrega
-// al vuelo. Puede venir de un presupuesto (quoteId) o registrarse a mano.
+// al vuelo. Se registra a mano o desde la operación del día.
 model Sale {
   id             String       @id @default(cuid())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
   client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId       String?
-  quote          Quote?       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
-  quoteId        String?
 
   date   DateTime
   amount Decimal  @db.Decimal(12, 4)
@@ -643,7 +590,6 @@ model Campaign {
   updatedAt     DateTime @updatedAt
 
   expenses Expense[]
-  quotes   Quote[]
   orders   Order[]
   sales    Sale[]
 
@@ -744,9 +690,8 @@ model StoreProduct {
   // ORIGEN DE COSTEO, opcional: enlaza la ficha con el producto interno o la
   // cotización de la que salió. Sirve para la alerta de rentabilidad; NUNCA sale
   // por la API pública. `SetNull` para que borrar el origen no borre la ficha.
-  quote         Quote?   @relation(fields: [quoteId], references: [id], onDelete: SetNull)
-  quoteId       String?
   /**
+   * /**
    * Costo unitario congelado al publicar (USD). Interno.
    */
   costAtPublish Decimal? @db.Decimal(12, 4)

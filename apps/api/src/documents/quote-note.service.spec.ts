@@ -15,47 +15,6 @@ import { QuoteNoteService } from './quote-note.service';
 const ORG = 'org-A';
 const OTHER = 'org-B';
 
-const PRECIO = {
-  markup: 0.5,
-  suggested: 1.8,
-  rounded: 1.85,
-  final: 1.85,
-  isManual: false,
-  marginReal: 0.48,
-  profitPerUnit: 0.6,
-  diffVsSuggested: 0.05,
-  status: 'OK' as const,
-};
-
-const TOTALS = {
-  quantity: 200,
-  currency: 'USD',
-  locale: 'en-US',
-  costBatch: 250,
-  costPerUnit: 1.25,
-  price: PRECIO,
-  order: {
-    units: 200,
-    listUnitPrice: 1.85,
-    discountPct: 0,
-    unitPrice: 1.85,
-    fromTier: false,
-    total: 370,
-    profit: 120,
-    status: 'OK' as const,
-  },
-  breakdown: {
-    material: 100,
-    wear: 20,
-    power: 10,
-    supplies: 80,
-    labor: 20,
-    extras: 20,
-    wasteAmount: 10,
-  },
-  supplies: [],
-};
-
 const IDENTITY = {
   emisor: 'Banano Lab',
   rif: '28488961',
@@ -67,17 +26,19 @@ const IDENTITY = {
 
 const identityMock = { load: jest.fn().mockResolvedValue(IDENTITY) };
 
-function quotePrismaMock(quote: Record<string, unknown> | null) {
-  return { quote: { findFirst: jest.fn().mockResolvedValue(quote) } };
+function orderPrismaMock(order: Record<string, unknown> | null) {
+  return { order: { findFirst: jest.fn().mockResolvedValue(order) } };
 }
 
-const QUOTE = {
-  id: 'q1',
+/** Un pedido en estado Cotizado: eso ES una cotización desde 2026-09-07. */
+const PEDIDO = {
+  id: 'o1',
   code: 7,
-  name: 'Llaveros de Copa del Mundial',
-  version: 2,
+  status: 'QUOTED',
   createdAt: new Date('2026-08-22T12:00:00Z'),
-  totals: TOTALS,
+  lines: [
+    { description: 'Llaveros de Copa del Mundial', quantity: 200, unit: 'u', unitPrice: 1.85 },
+  ],
   exchangeRates: null,
   client: { name: 'Inversiones Theodora', rif: 'J-401234567', phone: '0414 1112233' },
 };
@@ -91,8 +52,8 @@ describe('Cotización para el cliente', () => {
     const parrafo = jest.spyOn(BusinessDoc.prototype, 'paragraph');
     const nota = jest.spyOn(BusinessDoc.prototype, 'note');
 
-    const service = new QuoteNoteService(quotePrismaMock(QUOTE) as any, identityMock as any);
-    await service.pdf(ORG, 'q1');
+    const service = new QuoteNoteService(orderPrismaMock(PEDIDO) as any, identityMock as any);
+    await service.pdf(ORG, 'o1');
 
     const visible = JSON.stringify([
       items.mock.calls,
@@ -104,66 +65,47 @@ describe('Cotización para el cliente', () => {
     for (const prohibido of ['costo', 'margen', 'ganancia', 'desglose', 'markup', 'mayoreo']) {
       expect(visible).not.toContain(prohibido);
     }
-    // Y tampoco los NÚMEROS del costo, que delatan el margen igual que la palabra.
-    expect(visible).not.toContain('250');
-    expect(visible).not.toContain('1.25');
   });
 
-  it('cobra el precio final del motor, no una cuenta propia', async () => {
+  it('cobra lo que dicen las líneas del pedido, no una cuenta propia', async () => {
     const items = jest.spyOn(BusinessDoc.prototype, 'itemsTable');
-    const service = new QuoteNoteService(quotePrismaMock(QUOTE) as any, identityMock as any);
-    await service.pdf(ORG, 'q1');
+    const service = new QuoteNoteService(orderPrismaMock(PEDIDO) as any, identityMock as any);
+    await service.pdf(ORG, 'o1');
 
     const [, rows, total] = items.mock.calls[0];
-    // Un solo renglón: el precio final × las piezas. Los recargos (diseño,
-    // urgencia, mínimo) se eliminaron del motor en shared 0.7.0.
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual(['1', QUOTE.name, '200', '$1.85', '$370.00']);
+    expect(rows[0]).toEqual([
+      '1',
+      'Llaveros de Copa del Mundial',
+      '200 u',
+      '$1.85',
+      '$370.00',
+    ]);
     expect(total).toBe('Total: $370.00');
   });
 
-  /**
-   * Si el pedido alcanza un tramo de mayoreo, el cliente paga ESE precio. Y lo
-   * ve desglosado: cobrarle $10,68 pelado pierde el argumento de venta —el
-   * descuento por cantidad es justamente lo que ganó por comprar más.
-   */
-  it('con descuento por cantidad lo muestra desglosado y cobra el precio del tramo', async () => {
+  it('un pedido con varios artículos lleva un renglón por cada uno', async () => {
     const items = jest.spyOn(BusinessDoc.prototype, 'itemsTable');
-    const conDescuento = {
-      ...QUOTE,
-      totals: {
-        ...TOTALS,
-        order: {
-          units: 200,
-          listUnitPrice: 1.85,
-          discountPct: 0.15,
-          unitPrice: 1.6,
-          fromTier: true,
-          total: 320,
-          profit: 70,
-          status: 'BELOW_TARGET' as const,
-        },
-      },
+    const varios = {
+      ...PEDIDO,
+      lines: [
+        { description: 'Llaveros', quantity: 200, unit: 'u', unitPrice: 1.85 },
+        { description: 'Soporte de escritorio', quantity: 12, unit: 'u', unitPrice: 7.5 },
+      ],
     };
-    const service = new QuoteNoteService(quotePrismaMock(conDescuento) as any, identityMock as any);
-    await service.pdf(ORG, 'q1');
+    const service = new QuoteNoteService(orderPrismaMock(varios) as any, identityMock as any);
+    await service.pdf(ORG, 'o1');
 
     const [, rows, total] = items.mock.calls[0];
     expect(rows).toHaveLength(2);
-    // Renglón 1: el precio de LISTA, para que se vea de dónde parte.
-    expect(rows[0]).toEqual(['1', QUOTE.name, '200', '$1.85', '$370.00']);
-    // Renglón 2: lo que se descontó por cantidad.
-    expect(rows[1][1]).toContain('Descuento por cantidad');
-    expect(rows[1][1]).toContain('15');
-    expect(rows[1][4]).toBe('-$50.00');
-    // Y el total es el que se va a cobrar de verdad.
-    expect(total).toBe('Total: $320.00');
+    expect(rows[1][4]).toBe('$90.00');
+    expect(total).toBe('Total: $460.00');
   });
 
   it('numera el documento con el correlativo y el año', async () => {
     const cabecera = jest.spyOn(BusinessDoc.prototype, 'keyValueTable');
-    const service = new QuoteNoteService(quotePrismaMock(QUOTE) as any, identityMock as any);
-    await service.pdf(ORG, 'q1');
+    const service = new QuoteNoteService(orderPrismaMock(PEDIDO) as any, identityMock as any);
+    await service.pdf(ORG, 'o1');
     expect(cabecera.mock.calls[0][0][0]).toEqual([
       'N.º de cotización:',
       '007-2026',
@@ -172,34 +114,33 @@ describe('Cotización para el cliente', () => {
     ]);
   });
 
-  it('no inventa un número si el presupuesto es anterior al correlativo', async () => {
-    const cabecera = jest.spyOn(BusinessDoc.prototype, 'keyValueTable');
+  /** Un pedido sin líneas no tiene nada que cotizar: mejor fallar que emitir en 0. */
+  it('no emite un documento vacío si el pedido no tiene artículos', async () => {
     const service = new QuoteNoteService(
-      quotePrismaMock({ ...QUOTE, code: null }) as any,
+      orderPrismaMock({ ...PEDIDO, lines: [] }) as any,
       identityMock as any,
     );
-    await service.pdf(ORG, 'q1');
-    expect(cabecera.mock.calls[0][0][0][1]).toBe('S/N-2026');
+    await expect(service.pdf(ORG, 'o1')).rejects.toThrow(NotFoundException);
   });
 
   it('devuelve un PDF real', async () => {
-    const service = new QuoteNoteService(quotePrismaMock(QUOTE) as any, identityMock as any);
-    const pdf = await service.pdf(ORG, 'q1');
+    const service = new QuoteNoteService(orderPrismaMock(PEDIDO) as any, identityMock as any);
+    const pdf = await service.pdf(ORG, 'o1');
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
   });
 
-  it('no emite el documento de una cotización de otra organización', async () => {
+  it('no emite el documento de un pedido de otra organización', async () => {
     const prisma = {
-      quote: {
+      order: {
         findFirst: jest.fn(({ where }: any) =>
-          Promise.resolve(where.organizationId === OTHER ? QUOTE : null),
+          Promise.resolve(where.organizationId === OTHER ? PEDIDO : null),
         ),
       },
     };
     const service = new QuoteNoteService(prisma as any, identityMock as any);
-    await expect(service.pdf(ORG, 'q1')).rejects.toThrow(NotFoundException);
-    expect(prisma.quote.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'q1', organizationId: ORG } }),
+    await expect(service.pdf(ORG, 'o1')).rejects.toThrow(NotFoundException);
+    expect(prisma.order.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'o1', organizationId: ORG } }),
     );
   });
 });

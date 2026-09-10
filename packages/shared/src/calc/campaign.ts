@@ -16,7 +16,6 @@ export interface CampaignMetricsInput {
   hasCost: boolean;
   sales: number;
   orders: number;
-  quotes: number;
 }
 
 export type CampaignHealth = 'PROFITABLE' | 'AT_RISK' | 'LOSS' | 'NO_DATA';

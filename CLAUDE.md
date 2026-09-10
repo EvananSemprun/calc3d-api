@@ -104,12 +104,15 @@ en el repo web: se sobrescribe al sincronizar.
     - `documents/delivery-note.service.ts` → `GET /orders/:id/delivery-note.pdf`.
       N.° = `Order.code` + año. Tabla Ítem/Descripción/Cantidad/Unidad/Observaciones
       **SIN precios** (es constancia de entrega, no factura).
-    - `documents/quote-note.service.ts` → `GET /quotes/:id/cotizacion.pdf`. **Es lo
+    - `documents/quote-note.service.ts` → **`GET /orders/:id/cotizacion.pdf`**
+      (colgaba del presupuesto hasta 2026-09-07). Un renglón por línea del
+      pedido; sin líneas, falla en vez de emitir un documento vacío. **Es lo
       que se le manda al CLIENTE**: descripción, cantidad, precio unitario y total,
       más los extras del motor (diseño/urgencia/ajuste por mínimo) como renglones
       propios para que las cuentas cuadren. **NUNCA costos, márgenes ni mayoreo** —
-      para eso está `GET /quotes/:id/pdf` (`ExportService`), que es **interno** y se
-      descarga como `desglose-interno-*.pdf`. Fijado por
+      para eso está **`GET /store/products/:id/desglose.pdf`** (`ExportService`), que
+      es **interno**, sale de la ficha (que tiene el `input`) y se recalcula con
+      `calculateQuote` para que diga lo mismo que la pantalla. Fijado por
       `documents/quote-note.service.spec.ts`.
     - **Fechas en UTC** (`documents/document-format.ts`): `deliveryDate` se guarda a
       medianoche UTC; formatear en la zona local imprimía el día ANTERIOR. Validez
@@ -451,14 +454,14 @@ en el repo web: se sobrescribe al sincronizar.
     default 0.4). NO entran en el precio por pieza. Helpers puros en
     `shared/calc/breakeven.ts` (`fixedCostsTotal`, `breakEvenRevenue` = fijos÷margen,
     `breakEvenProgress`).
-  - **Presupuestos / cotizaciones (Quotes)** (`quotes/quotes.controller.ts`): CRUD
-    `/quotes`; cada presupuesto guarda un **snapshot JSON** del `CalcInput` + `totals`
-    (integridad histórica de precios, NO tablas-línea normalizadas). **Versionado**:
-    `Quote.version` + `Quote.originalQuoteId` (todas las versiones comparten el mismo
-    `originalQuoteId`; la v1 usa su propio id). Endpoints extra: `GET /quotes/:id/versions`
-    (historial), `POST /quotes/:id/duplicate` (crea versión nueva), `PATCH /quotes/:id/status`
-    (ciclo DRAFT/SENT/ACCEPTED/…). El front deriva conversión / "por seguir" (SENT) /
-    "vencido" (>7 días) desde estos datos.
+  - ~~**Presupuestos / cotizaciones (Quotes)**~~ — **ELIMINADO el 2026-09-07**.
+    Cotizar es el **primer estado de un pedido** (`QUOTED`), no una entidad
+    aparte: ya tiene cliente, líneas, moneda y documento, y si el cliente acepta
+    ese mismo registro sigue adelante. Se fueron el modelo, el módulo, las
+    pantallas, `/sales/from-quote`, `Sale.quoteId` y `StoreProduct.quoteId`.
+    ⚠️ **La GANANCIA por campaña quedó sin fuente**: el presupuesto era lo único
+    que ataba una venta a su costo. El ROI se apaga y la campaña se juzga por
+    ROAS. Spec: `docs/superpowers/specs/2026-09-07-catalogo-unico-design.md`.
   - **Cuenta del dueño** (`users/`): solo `GET /users/me` y `PATCH /users/me` (editar
     el propio perfil: nombre, correo, contraseña). **No hay gestión de equipo** ni
     invitaciones (se quitó al pasar a app de un solo dueño; el módulo `organizations/`

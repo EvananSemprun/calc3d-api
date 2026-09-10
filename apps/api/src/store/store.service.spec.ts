@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { StoreProductCreateSchema } from '@calc3d/shared';
 import { StoreService } from './store.service';
 
 /**
@@ -116,52 +117,40 @@ describe('Catálogo de tienda (panel)', () => {
 
     it('lo toma del costo por unidad de la cotización enlazada', async () => {
       const { prisma, service } = makeDeps();
-      prisma.quote.findFirst.mockResolvedValue({ totals: { costPerUnit: 0.87 } });
       await service.create(ORG, {
         ...BASE,
         name: 'Llavero',
         priceUsd: 3.5,
         kind: 'PHYSICAL',
-        quoteId: 'q-1',
+        input: COSTEO,
       });
-      expect(prisma.storeProduct.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ costAtPublish: 0.87 }) }),
-      );
-    });
-
-    it('el borrador desde una cotización toma su PRECIO FINAL', async () => {
-      const { prisma, service } = makeDeps();
-      prisma.quote.findFirst.mockResolvedValue({
-        id: 'q-1',
-        name: 'Llavero lote',
-        totals: { costPerUnit: 0.87, price: { final: 3.5 } },
-      });
-
-      await service.createFromSource(ORG, { quoteId: 'q-1' } as never);
-
-      expect(prisma.storeProduct.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ priceUsd: 3.5, costAtPublish: 0.87 }),
-        }),
-      );
+      const data = prisma.storeProduct.create.mock.calls[0][0].data;
+      // 100 g de un rollo de $20/1000 g = $2, más 8 % de merma = $2.16.
+      expect(Number(data.costAtPublish)).toBeCloseTo(2.16, 2);
+      expect(data.input).toBeTruthy();
     });
 
     /**
-     * Una cotización guardada antes de shared 0.7.0 no tiene `price`. Publicarla
-     * con precio 0 la dejaría a la venta regalada en la tienda pública.
+     * El costo NO está en el DTO. Si alguien lo manda en el cuerpo, el pipe de
+     * Zod lo descarta y el servidor escribe el suyo: publicar con un costo
+     * inventado dejaría el margen —y la alerta de rentabilidad— en mentira.
      */
-    it('rechaza una cotización sin precio final en vez de publicar en 0', async () => {
+    it('IGNORA un costo mandado por el cliente y escribe el que calculó', async () => {
       const { prisma, service } = makeDeps();
-      prisma.quote.findFirst.mockResolvedValue({
-        id: 'q-viejo',
-        name: 'Formato viejo',
-        totals: { costPerUnit: 0.87, prices: [{ priceRounded: 3.5 }] },
-      });
+      const parsed = StoreProductCreateSchema.parse({
+        ...BASE,
+        name: 'Llavero',
+        priceUsd: 3.5,
+        kind: 'PHYSICAL',
+        input: COSTEO,
+        costAtPublish: 0.01,
+      } as never);
 
-      await expect(service.createFromSource(ORG, { quoteId: 'q-viejo' } as never)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      expect(prisma.storeProduct.create).not.toHaveBeenCalled();
+      expect('costAtPublish' in parsed).toBe(false);
+
+      await service.create(ORG, parsed);
+      const data = prisma.storeProduct.create.mock.calls[0][0].data;
+      expect(Number(data.costAtPublish)).toBeCloseTo(2.16, 2);
     });
 
     it('una ficha cargada a mano simplemente no tiene costo', async () => {
@@ -175,23 +164,6 @@ describe('Catálogo de tienda (panel)', () => {
       expect(prisma.storeProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ costAtPublish: null }) }),
       );
-    });
-
-    it('no se puede enlazar el producto de otra organización', async () => {
-      const { prisma, service } = makeDeps();
-      prisma.product.findFirst.mockImplementation(({ where }: { where: { organizationId: string } }) =>
-        Promise.resolve(where.organizationId === OTHER ? { costAtSave: '1' } : null),
-      );
-      await expect(
-        service.create(ORG, {
-          ...BASE,
-          name: 'X',
-          priceUsd: 1,
-          kind: 'PHYSICAL',
-          quoteId: 'ajeno',
-        }),
-      ).rejects.toThrow(NotFoundException);
-      expect(prisma.storeProduct.create).not.toHaveBeenCalled();
     });
   });
 
