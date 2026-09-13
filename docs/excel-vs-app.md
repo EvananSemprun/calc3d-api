@@ -26,7 +26,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Publicidad** | 7 campañas: fecha, formato, público, objetivo, gasto, alcance, conversaciones, visitas | `Campaign` + su gasto en el ledger | ✅ **Migrado** (se agregaron alcance/conversaciones/visitas al modelo) |
 | **Clientes** | 5 clientes. Solo nombre y tipo son datos; lo demás son fórmulas | `Client` | ✅ **Migrado** |
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
-| **Ventas** | Grilla semanal desde febrero. Los montos están en el texto, pero **ya vienen parseados** en las filas auxiliares | `Sale` | ✅ **Migrado** — $2.179,50 (ver §6) |
+| **Ventas** | Grilla semanal desde febrero. Los montos están en el texto de cada día; las filas auxiliares que los parseaban **llegaron vacías** (ver §6) | `Sale` | ✅ **Sincronizado** — $2.233,96 (ver §6) |
 | **Deuda** | Préstamo de la impresora P2S y sus pagos | `Loan` + `LoanPayment` | ✅ **Migrado** — saldo $750 |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | `Goal` (lo real se deriva) | ✅ **Migrado** — 5 meses |
 
@@ -107,22 +107,28 @@ necesitan features nuevas.
 
 ## 6. `Ventas`: cómo se lee y dónde está la trampa
 
-**Leerla es fácil.** La hoja ya resolvió el parseo sola:
+**Fila 18** (`aux: lunes de la semana`): la fecha real del lunes de las **52
+semanas**, como fecha. No hay que inferir el año de los encabezados. Ningún
+domingo tuvo venta en 52 semanas.
 
-- **Fila 18** (`aux: lunes de la semana`): la fecha real del lunes de las **52
-  semanas**, como fecha. No hay que inferir el año de los encabezados.
-- **Filas 19 a 24** (`aux: monto Lunes` … `Sabado`): los montos **ya parseados y
-  calculados**, con valor guardado en el archivo. No hay que interpretar texto.
-- **Ningún domingo tuvo venta** en 52 semanas, por eso no hay fila auxiliar.
+⚠️ **Las filas auxiliares 19-24 NO se pueden usar.** Eran FÓRMULAS que parseaban
+el monto de cada día, y el libro se guardó sin recalcular: `openpyxl` con
+`data_only=True` devuelve `None` en todas. Un lector que confíe en ellas ve un
+mostrador de **$0** y no falla — simplemente no carga nada.
+
+Hay que **parsear el texto del día** (`"Martes 3: 10$"` → `10`), que es lo que
+hace `montos_del_texto()` en el extractor. Se validó contra la propia hoja: el
+parseo reproduce exactamente los mismos totales que dieron las auxiliares cuando
+sí tenían valor, incluido el descuadre de $23,50 al centavo.
 
 **La trampa: la fila 11 (`Total`) no es el mostrador.**
 
 | | Monto |
 |---|---|
-| Suma de los días (filas 19-24) — mostrador real | **$720** |
-| Fila 11 (`Total ($)`), escrita a mano | **$2.203** |
-| Diferencia | **$1.483** |
-| Notas de encargos de la fila 10 (27 semanas) | **$1.459,50** |
+| Suma de los días (parseando el texto) — mostrador real | **$726** |
+| Fila 11 (`Total ($)`), escrita a mano | **$2.257,46** |
+| Diferencia | **$1.531,46** |
+| Notas de encargos de la fila 10 | **$1.507,96** |
 | **Descuadre sin explicación** | **$23,50** |
 
 Importar la fila 11 como ventas de mostrador **infla el mostrador un 200 %**.
@@ -138,7 +144,7 @@ como una nota semanal:
 | **Encargos que solo existen como nota semanal** | **$1.292** |
 
 O sea: el riesgo de **duplicar** es de ~$136,50, no de $1.459. Y quedarse solo con
-los días tira **$1.292 de $2.203: el 59 % de la facturación histórica**.
+los días tira **$1.292 de $2.257,46: el 57 % de la facturación histórica**.
 
 **Cómo se importó (2026-09-07):**
 
@@ -149,11 +155,32 @@ los días tira **$1.292 de $2.203: el 59 % de la facturación histórica**.
    (ENCARGO, fechada el lunes, sin cliente, con la nota copiada). El descuento de
    lo ya cargado es **semana por semana**, no por fecha de corte: un corte en
    agosto perdía $46 de semanas cuya nota vale más que sus pedidos.
-4. **Los $23,50 de descuadre** NO se importaron: la app dice $2.179,50 y la fila
-   11 dice $2.203. Esa diferencia es el descuadre de la hoja, repartido en 9
-   semanas. Las dos que importan:
+4. **Los $23,50 de descuadre** NO se importaron. Esa diferencia es el descuadre
+   de la hoja, repartido en 9 semanas. Las dos que importan:
    - **Semana 2**: la nota dice "Encargos: 9$" y el total **nunca los sumó**.
    - **Semana 3**: $20 de diferencia **sin ninguna nota** que la explique.
+
+**Cómo se re-sincronizó (2026-09-09):** `prisma/sincronizar-excel.mjs`, pensado
+para correrse **cada vez que el Excel cambie** (los `import-*.mjs` son de carga
+inicial y fallan si ya hay datos). Compara contra la base y escribe SOLO la
+diferencia; correrlo dos veces seguidas no hace nada la segunda vez.
+
+⚠️ **Un encargo se identifica por cliente + monto + DESCRIPCIÓN, nunca por fecha.**
+La fecha no sirve: un pedido cargado a mano puede tener un día distinto del que
+quedó escrito en la hoja (un cliente, 10/09 en la app y 09/09 en el Excel). Pero
+**tolerar unos días es peor que exigir la fecha exacta**: la hoja tiene dos
+encargos de un mismo cliente por $10 en la misma semana ("2 macetas" el 05/09 y "2
+materos" el 09/09), y con tolerancia el segundo se daba por cargado — una venta
+real que desaparecía en silencio. La descripción sí es identidad: la escribió el
+dueño y es la que el import copió a la línea del pedido. Cada pedido de la base
+se consume una sola vez, para que uno no tape dos filas iguales del Excel.
+
+El script también **recalcula los agregados semanales**: cada semana vale
+`nota − pedidos de esa semana`, y el agregado se borra cuando llega a cero (le
+pasó a la del 07/09 al entrar sus cuatro encargos).
+
+Resultado: mostrador **$726**, encargos **$1.507,96**, ingresos **$2.233,96**
+contra los $2.257,46 de la fila 11 — el mismo descuadre de $23,50 de siempre.
 
 ---
 

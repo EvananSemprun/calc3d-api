@@ -76,10 +76,11 @@ y verificación, como el de filamento.
 
 ## 3. Ventas ✅ HECHO (2026-09-07)
 
-> 87 ventas de mostrador ($720, día por día con su fecha real) + 25 ventas
-> semanales de encargos ($1.323). Con los $136,50 ya cargados como pedidos, la
-> facturación histórica queda en **$2.179,50**.
-> Script: `prisma/import-ventas.mjs`.
+> 88 ventas de mostrador ($726, día por día con su fecha real) + 25 ventas
+> semanales de encargos ($1.323). Con los $184,96 ya cargados como pedidos, la
+> facturación histórica queda en **$2.233,96**.
+> Scripts: `prisma/import-ventas.mjs` (carga inicial) y
+> `prisma/sincronizar-excel.mjs` (re-sincronización, 2026-09-09).
 >
 > **3.1 resuelto** (los $1.292 históricos): entran como venta semanal agregada,
 > fechada el lunes, sin cliente ni detalle y con la nota original copiada. No
@@ -92,7 +93,7 @@ y verificación, como el de filamento.
 > de agosto donde la nota vale más que los pedidos de la hoja `Encargos`.
 >
 > **3.2 sigue abierto** (los $23,50 de descuadre): NO se inventaron. La app dice
-> $2.179,50 y la fila 11 de la hoja dice $2.203; esa diferencia es exactamente
+> $2.233,96 y la fila 11 de la hoja dice $2.257,46; esa diferencia es exactamente
 > el descuadre que la hoja no explica. Los dos casos claros:
 > la semana del 02/02 (nota "Encargos: 9$" que el total nunca sumó) y la del
 > 09/02 ($20 sin ninguna nota).
@@ -262,7 +263,8 @@ migradas y el propio Excel pasó a ser un reporte que la app genera.
 Lo único que queda abierto, y es del dueño, no del código:
 
 - **Los $23,50 de descuadre de `Ventas`** (punto 3.2). No se inventaron: la app
-  dice $2.179,50 y la fila 11 de la hoja vieja decía $2.203.
+  dice $2.233,96 y la fila 11 de la hoja dice $2.257,46. El número se mantuvo
+  idéntico al re-leer el Excel el 2026-09-09, lo que confirma que es de la hoja.
 - **$82 de repuestos sin máquina asignada**: la fila del Excel no dice a cuál
   impresora fueron, y sin eso no alimentan el mantenimiento por hora.
 - **Empezar a anotar la producción** en cada pedido (punto 9). La herramienta

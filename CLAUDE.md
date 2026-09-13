@@ -337,9 +337,24 @@ en el repo web: se sobrescribe al sincronizar.
       incluye encargos (infla el mostrador un 200 %). El mostrador son las filas
       auxiliares 19-24. Los encargos viven solo como nota de texto y se
       descuentan **semana por semana** contra los pedidos ya cargados; un corte
-      por fecha perdía $46. Resultado: 87 ventas COUNTER ($720) + 25 ENCARGO
-      semanales ($1.323) + $136,50 en pedidos = **$2.179,50**, contra los $2.203
-      de la fila 11. Esos $23,50 son el descuadre de la hoja y NO se inventaron.
+      por fecha perdía $46. Resultado: 88 ventas COUNTER ($726) + 25 ENCARGO
+      semanales ($1.323) + $184,96 en pedidos = **$2.233,96**, contra los
+      $2.257,46 de la fila 11. Esos $23,50 son el descuadre de la hoja y NO se
+      inventaron.
+  - **Re-sincronización del Excel** (`prisma/sincronizar-excel.mjs`): los
+    `import-*.mjs` son de carga INICIAL y fallan si ya hay datos; este compara
+    contra la base y escribe **solo la diferencia**, así que se corre cada vez
+    que el Excel cambie (ensayo por defecto, `--commit` para escribir).
+    - ⚠️ **Un encargo se identifica por cliente + monto + DESCRIPCIÓN, jamás por
+      fecha.** La fecha del Excel y la de la app pueden diferir por un día; pero
+      *tolerar* días es PEOR que exigirla exacta: la hoja tiene dos encargos del
+      mismo cliente por $10 en la misma semana ("2 macetas" y "2 materos") y con
+      tolerancia el segundo se daba por cargado — una venta real que se perdía
+      en silencio. Cada pedido de la base se consume una sola vez.
+    - ⚠️ **Las filas auxiliares 19-24 de `Ventas` vienen VACÍAS**: eran fórmulas
+      y el libro se guardó sin recalcular, así que `data_only=True` devuelve
+      `None`. Hay que parsear el texto del día (`"Martes 3: 10$"`). Un lector
+      que confíe en ellas ve un mostrador de $0 y **no falla**.
   - **El estado de la migración del Excel** vive en `docs/excel-vs-app.md` (mapa
     hoja por hoja) y `docs/backlog-migracion.md` (las 10 actividades que faltan,
     con las decisiones que bloquean cada una). Actualizarlos al avanzar.
