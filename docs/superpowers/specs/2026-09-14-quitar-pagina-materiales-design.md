@@ -129,9 +129,10 @@ cantidad no lo toca: no cambia.
   `['filament-stock']`, `['filament-summary']` y `['filament-purchases']`.
 
 ### 4.3b Stock del mes — filtros (pedido del dueño, 2026-09-14)
-- `FilterBar` con **Buscar** (color o marca, sin acentos), **Tipo** (los que hay en
-  el conteo) y **Estado** (Todas / Activas / Descontinuadas, **arranca en Todas**),
-  recordados en `filament:stock:q|type|status`.
+- `FilterBar` con selects de **Color** (acotado al Tipo elegido), **Marca**, **Tipo**
+  (los que hay en el conteo) y **Estado** (Todas / Activas / Descontinuadas,
+  **arranca en Todas**), recordados en `filament:stock:color|brand|type|status`.
+  (Al principio Color y Marca eran un buscador de texto; el dueño pidió selects.)
 - ⚠️ Solo cambian lo que **se ve**. Cerrar el mes sigue mandando TODAS las fichas.
   Con fichas ocultas: aviso "Se ven X de Y fichas. Al cerrar el mes se guardan
   todas, también las ocultas." + "Quitar filtros", y la confirmación de cierre lo

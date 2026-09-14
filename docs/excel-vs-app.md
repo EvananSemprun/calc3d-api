@@ -182,6 +182,17 @@ pasó a la del 07/09 al entrar sus cuatro encargos).
 Resultado: mostrador **$726**, encargos **$1.507,96**, ingresos **$2.233,96**
 contra los $2.257,46 de la fila 11 — el mismo descuadre de $23,50 de siempre.
 
+**Re-sincronización del 2026-09-14** (+1 cliente, +1 encargo, +3 días de mostrador;
+mostrador $734, encargos cobrados $196,96, todo ✓). Cómo regenerar el JSON sin romperlo:
+- `negocio-excel.json` se **actualiza, no se rehace**: se leen del `.xlsx` solo
+  `Clientes`, `Encargos` y el texto de `Ventas`, y se reemplazan esas tres partes.
+  Antes de escribir se comprueba que **ninguna fila vieja cambió** (solo agrega);
+  si una cambió, el script de sync no la corrige y hay que mirarla a mano.
+- ⚠️ **Desde la semana del 31/08 la fila 10 de `Ventas` ("Notas") viene VACÍA.**
+  Las semanas `2026-08-31` y `2026-09-07` del JSON no salen de una nota: son la
+  **suma de lo cobrado en `Encargos` esa semana** (lunes a domingo). Hay que
+  recalcularlas así; regenerarlas desde la fila 10 las borraría del JSON.
+
 ---
 
 ## 7. Lo que no mide ninguno de los dos
