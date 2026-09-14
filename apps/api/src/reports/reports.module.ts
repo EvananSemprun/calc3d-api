@@ -4,10 +4,10 @@ import ExcelJS from 'exceljs';
 import {
   breakEvenLevels,
   fixedCostsTotal,
+  businessDateKey,
   groupPurchases,
   loanBalance,
   loanPaid,
-  monthKey,
   monthlyLoanPayments,
   orderBalance,
   orderPaid,
@@ -96,8 +96,10 @@ export class ReportsService {
       this.printers.usage(organizationId),
     ]);
 
-    const mesActual = monthKey(new Date());
-    const stock = await this.filament.stock(organizationId, mesActual);
+    // "Stock mensual" muestra el ÚLTIMO MES CERRADO: un mes abierto (o reabierto
+    // a medio corregir) no es un dato final.
+    const mesStock = await this.filament.lastClosedMonth(organizationId);
+    const stock = mesStock ? await this.filament.stock(organizationId, mesStock) : [];
 
     const ingresoVentas = suma(ventas.map((v) => Number(v.amount)));
     const ingresoPedidos = suma(pedidos.map((p) => orderTotal(p.lines as unknown as OrderLine[])));
@@ -271,7 +273,10 @@ export class ReportsService {
       { header: 'Por acabarse', width: 12 },
       { header: 'Total', width: 10 },
     ]);
-    hStock.addRow([`Conteo de ${mesActual}`]).font = { italic: true, size: 9 };
+    hStock.addRow([mesStock ? `Conteo cerrado de ${mesStock}` : 'Todavía no hay meses cerrados']).font = {
+      italic: true,
+      size: 9,
+    };
     for (const r of stock) {
       hStock.addRow([
         r.type ?? '',
@@ -281,7 +286,8 @@ export class ReportsService {
         r.counted ? r.sealed : '',
         r.counted ? r.inUse : '',
         r.counted ? r.running : '',
-        // Sin conteo va vacío: "no contado" no es "cero rollos".
+        // La hoja muestra un mes cerrado: counted siempre es true. El guard
+        // queda por si cambia la fuente.
         r.counted ? stockTotal(r) : 'sin contar',
       ]);
     }
@@ -517,7 +523,9 @@ export class ReportsController {
   @Get('excel.xlsx')
   async excel(@CurrentUser() user: AuthUser, @Res() res: Response) {
     const wb = await this.service.workbook(user.organizationId);
-    const nombre = `reporte-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    // "Hoy" en hora de Venezuela: el servidor corre en UTC y desde las 20:00 el
+    // archivo salía con la fecha de mañana.
+    const nombre = `reporte-${businessDateKey(new Date())}.xlsx`;
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

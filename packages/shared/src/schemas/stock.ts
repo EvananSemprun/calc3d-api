@@ -9,6 +9,13 @@ import { z } from 'zod';
 export const MaterialStatusSchema = z.enum(['ACTIVE', 'DISCONTINUED']);
 export type MaterialStatus = z.infer<typeof MaterialStatusSchema>;
 
+/**
+ * Descontinuar o reactivar una ficha (`PATCH /materials/:id/status`). Va aparte
+ * del formulario de la ficha a propósito: guardar un precio nunca cambia el estado.
+ */
+export const MaterialStatusUpdateSchema = z.object({ status: MaterialStatusSchema });
+export type MaterialStatusUpdateDto = z.infer<typeof MaterialStatusUpdateSchema>;
+
 /** Mes del conteo, como `AAAA-MM`. */
 export const MonthSchema = z
   .string()
@@ -31,12 +38,37 @@ export const StockCountPartsSchema = z.object({
 });
 export type StockCountParts = z.infer<typeof StockCountPartsSchema>;
 
-/** Guardar el conteo de un material en un mes. */
-export const StockCountUpsertSchema = StockCountPartsSchema.extend({
-  materialId: z.string().min(1, 'Falta el material'),
+/**
+ * CERRAR el conteo de un mes: la única forma de escribir conteos. Lo que no
+ * viene en `counts` se guarda en 0 (casillas vacías = no hay, como el Excel).
+ */
+export const StockMonthCloseSchema = z.object({
   month: MonthSchema,
+  counts: z
+    .array(StockCountPartsSchema.extend({ materialId: z.string().min(1, 'Falta el material') }))
+    .max(500, 'Demasiadas fichas en un solo cierre')
+    .default([]),
 });
-export type StockCountUpsertDto = z.infer<typeof StockCountUpsertSchema>;
+export type StockMonthCloseDto = z.infer<typeof StockMonthCloseSchema>;
+
+/** Reabrir un mes cerrado para corregirlo. */
+export const StockMonthReopenSchema = z.object({ month: MonthSchema });
+export type StockMonthReopenDto = z.infer<typeof StockMonthReopenSchema>;
+
+/** Estado del cierre de un mes (`GET /filament/stock/status`). */
+export interface StockMonthStatus {
+  /** `AAAA-MM` */
+  month: string;
+  closed: boolean;
+  /** ISO; null si está abierto */
+  closedAt: string | null;
+  /** ISO de la última reapertura; null si nunca se reabrió */
+  reopenedAt: string | null;
+  /** hoy, en la zona del negocio, ya es el último día del mes o después */
+  canClose: boolean;
+  /** `'AAAA-MM-DD'`: desde qué día se puede cerrar */
+  closableFrom: string;
+}
 
 /** Una fila del conteo, como la ve la pantalla. */
 export interface StockCountRow extends StockCountParts {
@@ -50,10 +82,14 @@ export interface StockCountRow extends StockCountParts {
   total: number;
   /**
    * El conteo se importó del Excel sin saber la marca del rollo. Se apaga al
-   * moverlo al material correcto.
+   * CERRAR el mes (el cierre escribe `needsBrandCheck: false` en todas las
+   * fichas), no al moverlo al material correcto.
    */
   needsBrandCheck: boolean;
-  /** true si ese mes todavía no se contó (las tres casillas vienen en cero) */
+  /**
+   * true si el mes está CERRADO (lo no marcado vale 0); false si está
+   * abierto o reabierto.
+   */
   counted: boolean;
 }
 

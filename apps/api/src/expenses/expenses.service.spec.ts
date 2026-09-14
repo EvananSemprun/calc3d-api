@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ExpensesService } from './expenses.service';
 
 /** Prisma mockeado: cada método usado por el servicio es un jest.fn() plano. */
@@ -11,7 +11,7 @@ function makePrisma() {
       delete: jest.fn(),
       findMany: jest.fn(),
     },
-    material: { update: jest.fn() },
+    material: { update: jest.fn(), updateMany: jest.fn() },
   };
 }
 
@@ -106,7 +106,7 @@ describe('ExpensesService', () => {
    * el precio de hace seis meses, que es como se pierde margen sin notarlo.
    */
   describe('create — el precio del rollo lo fija el servidor', () => {
-    it('una compra de filamento actualiza el precio del material', async () => {
+    it('una compra de filamento fija el precio del rollo y reactiva la ficha', async () => {
       prisma.expense.create.mockResolvedValue({ id: 'e1' });
 
       await service.create(ORG, {
@@ -119,10 +119,13 @@ describe('ExpensesService', () => {
         materialId: 'm1',
       } as any);
 
-      expect(prisma.material.update).toHaveBeenCalledWith({
-        where: { id: 'm1' },
-        data: { rollPrice: 20 }, // 40 ÷ 2 rollos
+      // Regresión de IDOR: la escritura sobre la ficha filtra por la organización
+      // del token; con un materialId ajeno, updateMany no encuentra nada.
+      expect(prisma.material.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1', organizationId: ORG },
+        data: { rollPrice: 20, status: 'ACTIVE' }, // 40 ÷ 2 rollos; comprarla la vuelve a activa
       });
+      expect(prisma.material.update).not.toHaveBeenCalled();
     });
 
     it('sin cantidad no se puede saber el precio por rollo: no lo toca', async () => {
@@ -138,6 +141,7 @@ describe('ExpensesService', () => {
       } as any);
 
       expect(prisma.material.update).not.toHaveBeenCalled();
+      expect(prisma.material.updateMany).not.toHaveBeenCalled();
     });
 
     it('un gasto que no es de filamento no toca ningún catálogo', async () => {
@@ -153,6 +157,7 @@ describe('ExpensesService', () => {
       } as any);
 
       expect(prisma.material.update).not.toHaveBeenCalled();
+      expect(prisma.material.updateMany).not.toHaveBeenCalled();
     });
   });
 
@@ -303,5 +308,66 @@ describe('ExpensesService.createWithDefinition', () => {
     ).rejects.toThrow(NotFoundException);
 
     expect(tx.expense.create).not.toHaveBeenCalled();
+  });
+
+  it("modo 'existing' kind material con rollos: fija el precio y la reactiva", async () => {
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG });
+    tx.expense.create.mockResolvedValue({ id: 'e-mat' });
+
+    await service.createWithDefinition(ORG, {
+      expense: {
+        date: '2026-09-13',
+        amount: 50,
+        category: 'CONSUMABLE',
+        description: 'Recompra PLA',
+        isInvestment: false,
+        quantity: 2,
+      },
+      link: { kind: 'material', mode: 'existing', id: 'mat-9' },
+    } as any);
+
+    expect(tx.material.update).toHaveBeenCalledWith({
+      where: { id: 'mat-9' },
+      data: { rollPrice: 25, status: 'ACTIVE' },
+    });
+  });
+
+  /**
+   * Regresión de seguridad: `referenceField` viaja en el body. Solo puede ser el
+   * precio de ESE tipo de ficha y con un valor no negativo; si no, cualquier
+   * campo numérico (gramos del rollo, vida útil, unidades por paquete) se
+   * escribiría sin las reglas de su schema.
+   */
+  it.each([
+    ['material', 'rollGrams', 0],
+    ['material', 'status', 1],
+    ['material', 'organizationId', 1],
+    ['printer', 'lifetimeHours', 0],
+    ['component', 'unitsPerPackage', 0],
+    ['material', 'price', 10], // el precio de OTRO tipo de ficha
+  ])("modo 'existing' kind %s con referenceField '%s' → 400 y no escribe nada", async (kind, field, value) => {
+    const delegate = tx[kind as 'material' | 'printer' | 'component'];
+    delegate.findFirst.mockResolvedValue({ id: 'x-1', organizationId: ORG });
+
+    await expect(
+      service.createWithDefinition(ORG, {
+        expense: { date: '2026-09-13', amount: 10, category: 'CONSUMABLE', description: 'x', isInvestment: false },
+        link: { kind, mode: 'existing', id: 'x-1', referenceField: field, referenceValue: value },
+      } as any),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(delegate.update).not.toHaveBeenCalled();
+    expect(tx.expense.create).not.toHaveBeenCalled();
+  });
+
+  it("modo 'existing' con el precio de su tipo pero negativo → 400", async () => {
+    tx.printer.findFirst.mockResolvedValue({ id: 'pr-1', organizationId: ORG });
+
+    await expect(
+      service.createWithDefinition(ORG, {
+        expense: { date: '2026-09-13', amount: 10, category: 'EQUIPMENT', description: 'x', isInvestment: true },
+        link: { kind: 'printer', mode: 'existing', id: 'pr-1', referenceField: 'price', referenceValue: -5 },
+      } as any),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.printer.update).not.toHaveBeenCalled();
   });
 });

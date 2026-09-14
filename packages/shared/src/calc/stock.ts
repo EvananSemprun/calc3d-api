@@ -73,6 +73,147 @@ export function restockStatus(
   return 'OK';
 }
 
+// ----- Reposición por COLOR -----
+//
+// La marca cambia de un mes a otro (este mes Creality, el otro Bambu Lab): lo
+// que se maneja en el estante es el TIPO + COLOR. Decisión del dueño,
+// 2026-09-13. La hoja del Excel ya contaba así, por eso muchas fichas de una
+// segunda marca nunca tuvieron conteo propio.
+
+/** Una ficha de filamento, con lo que necesita la reposición. */
+export interface RestockMaterial {
+  id: string;
+  type: string | null;
+  color: string | null;
+  brand: string | null;
+  status: MaterialStatus;
+}
+
+/**
+ * - `OUT`: no queda ningún rollo de ese color, de ninguna marca.
+ * - `LOW`: hay alguno por acabarse.
+ * - `SUGGEST`: de los colores que MÁS se compran (más rollos que el promedio
+ *   por color) y queda 1 rollo o menos: conviene tener otro antes de quedarse
+ *   sin el que más se usa.
+ */
+export type RestockGroupStatus = 'OUT' | 'LOW' | 'SUGGEST';
+
+export interface RestockGroup {
+  /** `tipo|color` normalizado */
+  key: string;
+  /** "PLA Negro" */
+  label: string;
+  status: RestockGroupStatus;
+  /** rollos que quedan, sumando todas las marcas */
+  total: number;
+  running: number;
+  /** rollos comprados de ese color hasta el cierre del mes */
+  purchased: number;
+  brands: string[];
+}
+
+export interface RestockByColor {
+  /** solo los que hay que comprar, de más comprado a menos */
+  groups: RestockGroup[];
+  /** colores contados ese mes: todos si el mes tiene algún conteo, ninguno si no */
+  countedColors: number;
+  /** colores que se siguen reponiendo (no todos sus fichas descontinuadas) */
+  totalColors: number;
+  /** rollos comprados por color, en promedio: el umbral de "los que más se compran" */
+  averagePurchased: number;
+}
+
+const normalizar = (s: string | null) => (s ?? '').trim().toLowerCase();
+
+/**
+ * Agrupa las fichas por tipo + color y decide qué comprar.
+ *
+ * - Como en el Excel, si el mes se contó (hay al menos un conteo), un color o
+ *   una marca sin nada marcado es CERO: no hay. Decisión del dueño, 2026-09-13.
+ *   Solo un mes sin NINGÚN conteo es "sin dato": sin eso, al abrir un mes nuevo
+ *   todos los colores saldrían "sin rollos".
+ * - Un color con TODAS sus fichas descontinuadas no cuenta ni se pide; si solo
+ *   una marca está descontinuada, el color se sigue reponiendo.
+ * - "Los que más se compran" sale de las compras de la cuenta, no de un número
+ *   fijo: los que superan el promedio de rollos por color.
+ */
+export function restockByColor(
+  materials: RestockMaterial[],
+  counts: Record<string, StockCountParts | undefined>,
+  purchased: Record<string, number | undefined>,
+): RestockByColor {
+  const grupos = new Map<string, { label: string; fichas: RestockMaterial[] }>();
+  for (const m of materials) {
+    const key = `${normalizar(m.type)}|${normalizar(m.color)}`;
+    const grupo = grupos.get(key);
+    if (grupo) {
+      grupo.fichas.push(m);
+    } else {
+      const label =
+        [m.type, m.color]
+          .map((x) => x?.trim())
+          .filter(Boolean)
+          .join(' ') || 'Sin tipo ni color';
+      grupos.set(key, { label, fichas: [m] });
+    }
+  }
+
+  const mesContado = Object.values(counts).some((c) => !!c);
+
+  const filas = [...grupos.entries()]
+    .filter(([, g]) => g.fichas.some((m) => m.status !== 'DISCONTINUED'))
+    .map(([key, g]) => {
+      const conteos = g.fichas
+        .map((m) => counts[m.id])
+        .filter((c): c is StockCountParts => !!c);
+      const suma = conteos.reduce(
+        (a, c) => ({ sealed: a.sealed + c.sealed, inUse: a.inUse + c.inUse, running: a.running + c.running }),
+        { sealed: 0, inUse: 0, running: 0 },
+      );
+      return {
+        key,
+        label: g.label,
+        // Casillas vacías = no hay: lo que no se marcó en un mes contado suma cero.
+        counted: mesContado,
+        total: stockTotal(suma),
+        running: suma.running,
+        purchased: g.fichas.reduce((s, m) => s + (purchased[m.id] ?? 0), 0),
+        brands: [...new Set(g.fichas.map((m) => m.brand?.trim()).filter((b): b is string => !!b))],
+      };
+    });
+
+  const averagePurchased = filas.length
+    ? filas.reduce((s, f) => s + f.purchased, 0) / filas.length
+    : 0;
+
+  const groups: RestockGroup[] = [];
+  for (const f of filas) {
+    if (!f.counted) continue;
+    let status: RestockGroupStatus | null = null;
+    if (f.total === 0) status = 'OUT';
+    else if (f.running > 0) status = 'LOW';
+    else if (f.purchased > averagePurchased && f.total <= 1) status = 'SUGGEST';
+    if (!status) continue;
+    groups.push({
+      key: f.key,
+      label: f.label,
+      status,
+      total: f.total,
+      running: f.running,
+      purchased: f.purchased,
+      brands: f.brands,
+    });
+  }
+  groups.sort((a, b) => b.purchased - a.purchased || a.label.localeCompare(b.label, 'es'));
+
+  return {
+    groups,
+    countedColors: filas.filter((f) => f.counted).length,
+    totalColors: filas.length,
+    averagePurchased,
+  };
+}
+
 // ----- El mes del conteo -----
 //
 // Se guarda como el primer día del mes a medianoche UTC, igual que
@@ -100,4 +241,44 @@ export function previousMonth(month: string): string {
   const d = monthStart(month);
   d.setUTCMonth(d.getUTCMonth() - 1);
   return monthKey(d);
+}
+
+// ----- Cierre de mes -----
+//
+// "El último día del mes" se decide en la zona horaria del negocio. El servidor
+// corre en UTC y Venezuela está en UTC−4: comparar en UTC dejaría cerrar agosto
+// desde las 20:00 del 30. Es el mismo error que ya rompió el calendario del panel.
+
+/** Zona horaria del negocio (Banano Lab, Venezuela). */
+export const BUSINESS_TIME_ZONE = 'America/Caracas';
+
+/** La fecha de HOY en la zona del negocio, como `'AAAA-MM-DD'`. */
+export function businessDateKey(now: Date, timeZone = BUSINESS_TIME_ZONE): string {
+  // Se arma con las PARTES y no con el texto formateado: el patrón de un locale
+  // puede cambiar entre motores y versiones, y una fecha con otro orden
+  // compararía mal como texto sin avisar.
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const valor = (tipo: 'year' | 'month' | 'day') => partes.find((p) => p.type === tipo)?.value ?? '';
+  return `${valor('year')}-${valor('month')}-${valor('day')}`;
+}
+
+/** Último día del mes, como `'AAAA-MM-DD'`: desde ese día se puede cerrar. */
+export function monthCloseDay(month: string): string {
+  const inicio = monthStart(month);
+  const ultimo = new Date(Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth() + 1, 0));
+  return ultimo.toISOString().slice(0, 10);
+}
+
+/**
+ * true si el mes ya se puede cerrar: hoy, en la zona del negocio, es su último
+ * día o después. Sin límite hacia adelante (decisión del dueño): si se pasó el
+ * día, el mes se cierra igual.
+ */
+export function canCloseMonth(month: string, now: Date, timeZone = BUSINESS_TIME_ZONE): boolean {
+  return businessDateKey(now, timeZone) >= monthCloseDay(month);
 }

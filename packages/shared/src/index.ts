@@ -6,6 +6,7 @@ export * from './schemas/store-request';
 export * from './schemas/stock';
 export * from './calc/types';
 export * from './calc/calculateQuote';
+export * from './calc/wholesale';
 export * from './calc/charge-equivalents';
 export * from './calc/stock';
 export * from './calc/filament-analytics';

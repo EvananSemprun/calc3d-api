@@ -34,6 +34,9 @@ interface CatalogDelegate {
   update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<{ id: string }>;
 }
 
+/** El único campo de referencia que puede escribir un gasto sobre cada tipo de ficha: su precio. */
+const PRICE_FIELD = { material: 'rollPrice', printer: 'price', component: 'packagePrice' } as const;
+
 @Injectable()
 export class ExpensesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -75,7 +78,7 @@ export class ExpensesService {
       include: this.linkInclude,
     });
 
-    await this.refreshRollPrice(dto.materialId, dto.quantity, dto.amount);
+    await this.refreshRollPrice(organizationId, dto.materialId, dto.quantity, dto.amount);
     return gasto;
   }
 
@@ -85,16 +88,21 @@ export class ExpensesService {
    * formulario — si dependiera de que alguien la marque, el día que se olvide se
    * seguiría cotizando con un precio viejo, que es como se pierde margen sin
    * darse cuenta. Sin cantidad no hay precio por rollo que calcular.
+   *
+   * Comprar rollos de una ficha descontinuada la vuelve a ACTIVA: si se volvió a
+   * comprar, se sigue manejando. `updateMany` con la organización: con el id de
+   * una ficha ajena no escribe nada.
    */
   private async refreshRollPrice(
+    organizationId: string,
     materialId: string | null | undefined,
     quantity: number | null | undefined,
     amount: number,
   ) {
     if (!materialId || !quantity || quantity <= 0) return;
-    await this.prisma.material.update({
-      where: { id: materialId },
-      data: { rollPrice: purchaseCostPerRoll(amount, quantity) },
+    await this.prisma.material.updateMany({
+      where: { id: materialId, organizationId },
+      data: { rollPrice: purchaseCostPerRoll(amount, quantity), status: 'ACTIVE' },
     });
   }
 
@@ -120,16 +128,23 @@ export class ExpensesService {
         const owned = await model.findFirst({ where: { id: linkId, organizationId } });
         if (!owned) throw new NotFoundException('Definición no encontrada');
         if (link.referenceField != null && link.referenceValue != null) {
+          // `referenceField` viaja en el body: solo puede ser el precio de este tipo
+          // de ficha y no negativo. Si no, escribiría cualquier campo numérico
+          // (gramos del rollo, vida útil…) sin las reglas de su schema.
+          if (link.referenceField !== PRICE_FIELD[link.kind] || link.referenceValue < 0) {
+            throw new BadRequestException('Campo de referencia inválido');
+          }
           await model.update({ where: { id: linkId }, data: { [link.referenceField]: link.referenceValue } });
         }
       }
 
       // Una compra de filamento fija el precio del rollo, sin depender de la
-      // casilla de "usar como referencia" que manda el cliente.
+      // casilla de "usar como referencia" que manda el cliente, y reactiva la
+      // ficha si estaba descontinuada. La ficha ya se validó como propia arriba.
       if (link.kind === 'material' && linkId && expense.quantity && expense.quantity > 0) {
         await model.update({
           where: { id: linkId },
-          data: { rollPrice: purchaseCostPerRoll(expense.amount, expense.quantity) },
+          data: { rollPrice: purchaseCostPerRoll(expense.amount, expense.quantity), status: 'ACTIVE' },
         });
       }
 

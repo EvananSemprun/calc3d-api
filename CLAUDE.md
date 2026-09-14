@@ -12,6 +12,13 @@ luego hay que **sincronizarlo al repo web** (`calc3d-web`, que corre
 `pnpm sync:shared` desde aquí) para que ambos queden alineados. No edites shared
 en el repo web: se sobrescribe al sincronizar.
 
+> ⚠️ **Si cambia la FORMA de una respuesta de la API, se despliega primero la
+> API y después el panel.** Se despliegan por separado: un panel nuevo leyendo
+> la respuesta vieja se cae al dibujar. Pasó en desarrollo el 2026-09-13 con la
+> reposición por color (shared 0.11.0): la pantalla se actualizó en caliente,
+> React Query conservaba el resumen viejo sin `brands` y `RestockCard` rompió en
+> `g.brands.length`. En local se arregla recargando; en producción no.
+
 ## Estructura
 - `packages/shared` — tipos, schemas Zod (contratos front/back) y **motor de
   cálculo puro** (decimal.js). Sin Nest ni DB. Tests Jest (caso del llavero).
@@ -117,6 +124,15 @@ en el repo web: se sobrescribe al sincronizar.
     - **Fechas en UTC** (`documents/document-format.ts`): `deliveryDate` se guarda a
       medianoche UTC; formatear en la zona local imprimía el día ANTERIOR. Validez
       de la cotización: `QUOTE_VALIDITY_DAYS = 15` (constante, sin UI todavía).
+    - ⚠️ **"Hoy" y "este mes" se deciden en hora de Venezuela**, no con
+      `new Date()` a pelo: el servidor corre en UTC y desde las 20:00 de Caracas
+      ya cree que es mañana (o el mes siguiente, el último día). Usar
+      `businessDateKey(now)` de shared (`'AAAA-MM-DD'`; `.slice(0, 7)` para el mes)
+      y aceptar `now = new Date()` como parámetro para poder testear el borde.
+      Arreglado el 2026-09-13 en `PrintersService.usage` (horas del mes) y en el
+      nombre del Excel (`reporte-AAAA-MM-DD.xlsx`); tests:
+      `printers/printers.service.spec.ts`, `reports/reports.controller.spec.ts`.
+      `monthKey(fecha)` sigue siendo correcto para fechas YA guardadas (día 1 UTC).
     - `Quote.code` = correlativo por organización (max+1, igual que `Order`); cada
       versión duplicada toma el suyo. Los presupuestos previos se numeraron en la
       migración; sin correlativo el documento sale como `S/N-{año}`.
@@ -358,12 +374,20 @@ en el repo web: se sobrescribe al sincronizar.
   - **El estado de la migración del Excel** vive en `docs/excel-vs-app.md` (mapa
     hoja por hoja) y `docs/backlog-migracion.md` (las 10 actividades que faltan,
     con las decisiones que bloquean cada una). Actualizarlos al avanzar.
-  - **Registro dinámico de gastos**: el modal (front) elige el tipo (Filamento/
-    Impresora/Componente/Empaque/Mantenimiento/General) y, si mapea a catálogo,
-    deja reusar un item existente o crearlo inline → crea catálogo + gasto enlazado
-    en una acción. **Los PATCH de catálogo son PARCIALES** (`XSchema.partial()`), no
-    exigen el objeto completo. El alta desde el catálogo NO genera gasto (para
-    sembrar/importar).
+  - **Registro dinámico de gastos** (`POST /expenses/with-definition`,
+    `ExpensesService.createWithDefinition`): el modal (front) elige el tipo
+    (Filamento/Impresora/Componente/Empaque/Mantenimiento/General) y, si mapea a
+    catálogo, deja reusar un item existente o crearlo inline → crea catálogo +
+    gasto enlazado en una acción. **Los PATCH de catálogo son PARCIALES**
+    (`XSchema.partial()`), no exigen el objeto completo. El alta desde el
+    catálogo NO genera gasto (para sembrar/importar).
+    ⚠️ En modo "existing", `link.referenceField`/`referenceValue` ("usar como
+    precio de referencia") viajan en el body: el servidor solo acepta el campo de
+    PRECIO de ese tipo de ficha (`rollPrice`/`price`/`packagePrice`) y un valor
+    ≥ 0 — cualquier otro campo u otro valor negativo es **400**. Antes escribía
+    el campo tal cual llegaba (mass-assignment: podía pisar `rollGrams`,
+    `lifetimeHours`, `unitsPerPackage` o incluso `status`/`organizationId` sin
+    las reglas de su schema). Regresión: `expenses.service.spec.ts`.
   - **Combobox creatable + listas administradas** (`catalog-options/`): la marca, el
     tipo y el color del **filamento** viven en una **lista administrada aparte**:
     tabla `CatalogOption` (por org, `kind` = MATERIAL_BRAND/MATERIAL_TYPE/
@@ -486,14 +510,15 @@ en el repo web: se sobrescribe al sincronizar.
     rollo y por gramo DERIVADOS (`GET /filament/purchases`); el costo por gramo usa
     el `rollGrams` REAL, no el ÷1000 fijo de la hoja. **Conteo físico mensual** =
     tabla `StockCount` (una fila por material y mes; `sealed`/`inUse`/`running`, el
-    total se DERIVA con `stockTotal`) — `GET/PUT /filament/stock?month=AAAA-MM` y
-    `GET /filament/summary`. El conteo es **manual a propósito**: no se descuenta lo
+    total se DERIVA con `stockTotal`) — `GET /filament/stock?month=AAAA-MM` y
+    `GET /filament/summary`. Se escribe SOLO cerrando el mes (ver "Cierre
+    mensual"). El conteo es **manual a propósito**: no se descuenta lo
     que consumen los presupuestos porque no todo lo cotizado se imprime ni todo lo
     impreso sale bien. `Material.status` (ACTIVE/DISCONTINUED) saca a los colores
     descontinuados de la lista de reposición. El **consumo del mes** cuenta los
     rollos comprados (`anterior + comprados − actual`): la hoja solo resta los dos
-    totales y por eso da negativo en un mes con compras. Sin el conteo de alguno de
-    los dos meses devuelve `null`, no un número inventado. Helpers puros en
+    totales y por eso da negativo en un mes con compras. Si alguno de los dos
+    meses no está CERRADO devuelve `null`, no un número inventado. Helpers puros en
     `shared/calc/stock.ts`. Spec:
     `docs/superpowers/specs/2026-09-07-control-de-filamento-design.md`.
   - **Analítica de filamento (2026-09-07, shared 0.7.3)**: `groupPurchases` en
@@ -515,15 +540,75 @@ en el repo web: se sobrescribe al sincronizar.
     y rollos contados): si no cuadra, no escribe. El JSON se regenera del `.xlsx`
     con openpyxl. Resultado del 2026-09-07: 57 fichas, 48 compras (66 rollos,
     $1290), 28 rollos contados de agosto y 9 pendientes de identificar.
-  - ⚠️ **Un conteo PARCIAL no es el stock del mes.** El resumen devuelve
-    `countedMaterials`/`totalMaterials`/`complete`: con 3 fichas contadas de 57,
-    el total del mes es la suma de esas 3 y el consumo sale disparatado
-    ("consumiste 28 rollos" sin haber contado). La hoja del Excel tiene el mismo
-    defecto; acá la pantalla lo avisa en vez de dejarlo pasar como dato firme.
+    **Estado al 2026-09-13: 48 fichas, una por compra, idénticas a la hoja
+    "Inventario"** (material + color + marca y rollos, verificado uno a uno).
+    ⚠️ Hasta el 2026-09-13 el script **no parseaba**: `SyntaxError` por saltos de
+    línea reales dentro de comillas simples en el mensaje de "Falta
+    filamento-excel.json" (desde el commit que lo creó); se arregló. Desde el
+    cierre mensual del stock (shared 0.13.0) además **aborta si hay meses de
+    stock cerrados**, incluso en ensayo (ver "Cierre mensual del stock").
+  - **Reposición POR TIPO + COLOR** (2026-09-13, shared 0.11.0):
+    `restockByColor` en `shared/calc/stock.ts` agrupa las fichas sin importar la
+    marca y devuelve `OUT` / `LOW` / `SUGGEST`. `SUGGEST` = colores comprados MÁS
+    que el promedio de rollos por color (compras hasta el cierre del mes,
+    `purchasedUpTo` en el servicio) y con 1 rollo o menos. **Casillas vacías = no
+    hay** (decisión del dueño, como el Excel): en un mes cerrado, toda ficha sin
+    marcar vale 0; un mes abierto es "sin dato" (`counted` en
+    `GET /filament/stock` es "el mes está cerrado"). Un color con todas sus fichas
+    descontinuadas no cuenta. Tests: `restock-by-color.spec.ts` y el servicio.
+    ⚠️ Las compras importadas del Excel tienen TODAS fecha 2026-08-31 (la hoja no
+    la registraba): hasta que haya compras con fecha real, "lo más comprado" es
+    el histórico completo y no se puede calcular un ritmo por mes.
+  - **Cierre mensual del stock (2026-09-13, shared 0.13.0)** — tabla `StockMonth`
+    (org + mes, `closedAt`, `reopenedAt`; un mes sin fila está abierto).
+    `POST /filament/stock/close` escribe una fila por CADA ficha (lo que no vino,
+    en 0) y cierra, todo en una transacción; `POST /filament/stock/reopen` reabre
+    sin tocar los conteos; `GET /filament/stock/status` dice si está cerrado y
+    desde cuándo se puede cerrar. `PUT /filament/stock` responde **410**.
+    ⚠️ Se cierra desde el último día del mes en **hora de Venezuela**
+    (`canCloseMonth`/`BUSINESS_TIME_ZONE` en shared): el servidor corre en UTC.
+    Resumen, consumo y reposición solo usan meses CERRADOS (`complete` = cerrado);
+    el reporte en Excel muestra el último cerrado (`lastClosedMonth`), o "Todavía
+    no hay meses cerrados" si no hay ninguno. `GET /filament/stock`, `/summary` y
+    `/stock/status` validan `month` con `MonthSchema`: un mes mal formado o
+    ausente da 400, no 500. Guardas en las otras puertas: borrar una ficha con
+    conteos en un mes CERRADO → 409 (`"Esta ficha tiene conteos en meses cerrados
+    (agosto de 2026). Descontinuala en vez de borrarla."`); un mes
+    REABIERTO sí deja borrar fichas que solo tengan conteos en él (la guarda mira
+    meses con `closedAt` — "un mes reabierto no es dato final").
+    Carrera borrar-ficha vs cerrar-mes aceptada sin candado (un solo dueño).
+    `import-filamento.mjs` aborta si hay meses cerrados, incluso en ensayo (ver
+    "Importación del Excel" más arriba). Regresión de seguridad: `filament.service.spec.ts`,
+    `filament.controller.spec.ts` (fija por metadata de Nest el guard JWT de
+    clase y la lista EXACTA de rutas de escritura — `POST stock/close`,
+    `POST stock/reopen`, `PUT stock` en 410 —: agregar otra ruta de escritura ahí
+    rompe el test a propósito), `materials.service.spec.ts`. Spec:
+    `docs/superpowers/specs/2026-09-13-cierre-mensual-stock-design.md`.
+  - **Activo / Descontinuado** (2026-09-13, shared 0.14.0) —
+    `PATCH /materials/:id/status` con `MaterialStatusUpdateSchema`. Va APARTE del
+    `PATCH /materials/:id`: `MaterialSchema` no tiene `status`, así que guardar el
+    formulario nunca cambia el estado (fijado en `materials.controller.spec.ts`).
+    Una ficha descontinuada no se ofrece al cotizar ni entra en la reposición, y
+    conserva compras y conteos: es la salida para una ficha con conteos en meses
+    cerrados que no se puede borrar. **Se reactiva con CUALQUIER gasto que enlace
+    la ficha con `quantity > 0`** (hoy la web solo lo dispara desde Gastos → tipo
+    Filamento): en `ExpensesService` (`refreshRollPrice` y `createWithDefinition`)
+    el mismo paso que fija `rollPrice` escribe `status: 'ACTIVE'`. ⚠️
+    `refreshRollPrice` usa `updateMany` con `organizationId`: antes hacía `update`
+    por id y un gasto con el `materialId` de otra organización le cambiaba el
+    precio a esa ficha.
+    Regresión de seguridad: `materials.controller.spec.ts` (guard, ruta y pipes
+    reales), `materials.service.spec.ts` (`setStatus` con ficha ajena),
+    `expenses.service.spec.ts` (`updateMany` con organización y `referenceField`).
+    Spec: `docs/superpowers/specs/2026-09-13-estado-material-design.md`.
   - Las fichas **"Sin especificar"** (las que creó la importación para los rollos
     sin marca) nacen `DISCONTINUED`: son un marcador temporal, y sin eso, al
     identificar el rollo quedaban en cero y pedían reposición de un color que no
-    existe.
+    existe. **Ya no queda ninguna** (2026-09-13): el dueño identificó los 9
+    rollos, sus conteos pasaron a las fichas reales y las 9 se borraron (sin
+    compras y con conteos en cero; respaldo con `pg_dump` antes). ⚠️ `Material`
+    borra sus `StockCount` en CASCADA: antes de borrar una ficha, comprobar que
+    sus conteos estén en cero o se pierden rollos contados.
   - **El precio del rollo lo fija el SERVIDOR**: una compra de filamento con
     cantidad actualiza `Material.rollPrice = monto ÷ rollos` (`refreshRollPrice` en
     `expenses.service.ts`). Antes dependía de una casilla del formulario; si se
@@ -568,12 +653,21 @@ en el repo web: se sobrescribe al sincronizar.
 **2. Solo cuando lo local está probado, subir y migrar a producción.**
 - Producción = **PostgreSQL en Railway**: host `crossover.proxy.rlwy.net`, puerto
   `48405`, base `railway`, usuario `postgres`.
+- ⚠️ **El `Dockerfile` ya corre `prisma migrate deploy` al arrancar el contenedor**
+  (su `CMD`: `pnpm --filter @calc3d/api exec prisma migrate deploy && node
+  apps/api/dist/src/main.js`). Es decir: **DESPLEGAR la API en Railway ya aplica
+  las migraciones pendientes por sí solo**, sin paso manual. Por eso el backup
+  (`pg_dump`) y el OK explícito del dueño van **ANTES del push/deploy**, no antes
+  de un `migrate deploy` manual — para cuando alguien fuera a correrlo a mano, el
+  deploy ya lo disparó solo y el backup llegaría tarde.
 - **La contraseña NO se escribe en este archivo ni en nada versionado.** La URL
   completa vive como `DATABASE_URL_PROD` en `apps/api/.env.production.local`
   (lo cubre el `.gitignore` con `.env.*`; ese archivo NO se carga solo).
 - Las migraciones se **generan y commitean en local** (`prisma migrate dev` contra
-  la base local); en producción solo se **aplican** las ya versionadas — desde la
-  raíz de este repo, cargando la URL a mano en la sesión de PowerShell:
+  la base local); el deploy las aplica solo (ver ⚠️ arriba). El comando manual de
+  abajo es para los casos **fuera** de un deploy normal — verificar
+  `migrate status` contra prod, o aplicar una migración sin publicar una imagen
+  nueva — cargando la URL a mano en la sesión de PowerShell:
   ```powershell
   $env:DATABASE_URL = ((Get-Content .\apps\api\.env.production.local `
     | Where-Object { $_ -match '^DATABASE_URL_PROD=' }) -replace '^DATABASE_URL_PROD=','').Trim('"')
@@ -628,6 +722,17 @@ en la base de producción se consulta y se espera OK explícito, aunque parezca 
   `LOW_MARGIN_THRESHOLD = 0.6` exportado de shared. No re-implementarlo en la UI.
 - **Mayoreo por DESCUENTO** sobre el precio final (`discountPct`), no por markup:
   el descuento se aplica y **después** se redondea. (Deroga la regla anterior.)
+- **Sugerir y leer tramos** (`calc/wholesale.ts`, shared 0.10.0): `tierRanges`
+  ordena los tramos, deriva `maxQty` (null = "o más") y marca `FROM_ONE` /
+  `DUPLICATE_QTY` / `NO_BETTER`. `suggestTiers(input)` busca el mayor descuento
+  entero que el piso de margen permite y lo reparte en tres escalones (una,
+  dos y cinco tandas; con una pieza por tanda, desde 5 u).
+  ⚠️ **No tiene fórmula de margen propia: le pregunta a `calculateQuote`**
+  (búsqueda binaria + confirmación final). `price.final` y `costPerUnit` salen
+  redondeados a 4 dp y el motor calcula a precisión completa: una cuenta
+  paralela con esos valores podía proponer, justo en el límite, un tramo que la
+  misma pantalla pinta de rojo. Tests: `wholesale.spec.ts`, incluido pasar lo
+  sugerido por el motor con tres redondeos.
 - **`parallelPrinters`** solo divide `production.deliveryHours`. NUNCA el costo:
   dos impresoras 5 h gastan 10 horas-máquina de desgaste igual.
 - **`order` es la fuente ÚNICA del precio que se COBRA**: si el pedido alcanza un

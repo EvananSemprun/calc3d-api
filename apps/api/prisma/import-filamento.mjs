@@ -41,20 +41,27 @@ async function main() {
   const fuente = join(AQUI, 'filamento-excel.json');
   if (!existsSync(fuente)) {
     throw new Error(
-      'Falta filamento-excel.json. NO se versiona (son datos del negocio y el repo es público).
-' +
-        'Se regenera del .xlsx con openpyxl: leer la hoja "Inventario" (filas 4-111:
-' +
-        'fecha, tipo, color, marca, cantidad, precio lista, pagado Bs, tasa, proveedor, nota)
-' +
-        'y "Stock mensual" (filas 5-49: tipo, color, estado y las columnas F/G/H de agosto).
-' +
+      'Falta filamento-excel.json. NO se versiona (son datos del negocio y el repo es público).\n' +
+        'Se regenera del .xlsx con openpyxl: leer la hoja "Inventario" (filas 4-111:\n' +
+        'fecha, tipo, color, marca, cantidad, precio lista, pagado Bs, tasa, proveedor, nota)\n' +
+        'y "Stock mensual" (filas 5-49: tipo, color, estado y las columnas F/G/H de agosto).\n' +
         'El costo real es "pagado Bs ÷ tasa" si se pagó en bolívares, si no el precio de lista.',
     );
   }
   const datos = JSON.parse(readFileSync(fuente, 'utf8'));
   const org = await prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
   if (!org) throw new Error('No hay ninguna organización en la base');
+
+  // Este import BORRA y recrea todos los conteos. Con meses cerrados, eso
+  // pisaría registros que el dueño dio por finales: es de carga inicial y no
+  // corresponde correrlo (tampoco en ensayo, para que el aviso se vea antes).
+  const cerrados = await prisma.stockMonth.count({ where: { organizationId: org.id, closedAt: { not: null } } });
+  if (cerrados > 0) {
+    throw new Error(
+      `Hay ${cerrados} mes(es) de stock CERRADOS y este import borra todos los conteos. ` +
+        'No se escribió nada. Si de verdad hay que reimportar, reabrí esos meses primero.',
+    );
+  }
 
   // ---- 1. Fichas de material: una por tipo + color + marca ----
   const fichas = new Map();

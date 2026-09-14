@@ -50,6 +50,7 @@ model Organization {
   settings        Settings?
   materials       Material[]
   stockCounts     StockCount[]
+  stockMonths     StockMonth[]
   printers        Printer[]
   components      Component[]
   clients         Client[]
@@ -237,6 +238,23 @@ model StockCount {
 
   @@unique([materialId, month])
   @@index([organizationId, month])
+}
+
+/// Cierre del conteo físico de un mes. Un mes SIN fila está abierto (nunca se
+/// cerró). Cerrar es la única forma de escribir conteos; corregir exige reabrir.
+model StockMonth {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  /// Mes, como el primer día a medianoche UTC (igual que StockCount.month).
+  month      DateTime
+  /// null = abierto.
+  closedAt   DateTime?
+  /// Última reapertura. Se conserva al volver a cerrar: es el rastro de la corrección.
+  reopenedAt DateTime?
+
+  @@unique([organizationId, month])
 }
 
 model Printer {

@@ -16,6 +16,7 @@ import {
 import {
   PrinterReadingUpsertSchema,
   PrinterSchema,
+  businessDateKey,
   equipmentRecovery,
   hoursThisMonth,
   latestReading,
@@ -132,7 +133,7 @@ export class PrintersService {
    * se anote, devuelven `null` o cero trabajos medidos: **no se rellena con
    * supuestos**, que es justo lo que estos números vienen a reemplazar.
    */
-  async usage(organizationId: string) {
+  async usage(organizationId: string, now = new Date()) {
     const [printers, pedidos] = await Promise.all([
       this.prisma.printer.findMany({
         where: { organizationId },
@@ -161,7 +162,9 @@ export class PrintersService {
       reprints: o.reprints,
       pieces: piezas(o.lines),
     });
-    const mes = monthKey(new Date());
+    // El mes en curso en hora de Venezuela: el servidor corre en UTC y desde las
+    // 20:00 del último día del mes `monthKey(new Date())` ya daba el siguiente.
+    const mes = businessDateKey(now).slice(0, 7);
 
     const rows = printers.map((p) => {
       const suyos = pedidos.filter((o) => o.printerId === p.id).map(aTrabajo);

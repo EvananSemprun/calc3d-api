@@ -1,4 +1,7 @@
 import {
+  businessDateKey,
+  canCloseMonth,
+  monthCloseDay,
   monthConsumption,
   monthKey,
   monthStart,
@@ -135,5 +138,52 @@ describe('mes del conteo', () => {
   it('previousMonth retrocede un mes, incluso cruzando el año', () => {
     expect(previousMonth('2026-09')).toBe('2026-08');
     expect(previousMonth('2026-01')).toBe('2025-12');
+  });
+});
+
+/**
+ * Cierre de mes: se decide en la hora del NEGOCIO (Venezuela, UTC−4), no en la
+ * del servidor. Comparando en UTC, desde las 20:00 del 30/08 la app creería que
+ * ya es 31 y dejaría cerrar agosto un día antes.
+ */
+describe('cierre de mes en la zona del negocio', () => {
+  it('la fecha del negocio es la de Caracas, no la de UTC', () => {
+    expect(businessDateKey(new Date('2026-09-01T00:30:00Z'))).toBe('2026-08-31');
+  });
+
+  it('el último día de agosto es el 31', () => {
+    expect(monthCloseDay('2026-08')).toBe('2026-08-31');
+  });
+
+  it('febrero de un año bisiesto cierra el 29', () => {
+    expect(monthCloseDay('2028-02')).toBe('2028-02-29');
+  });
+
+  it('el 30/08 a las 23:59 en Caracas todavía no se puede cerrar agosto', () => {
+    expect(canCloseMonth('2026-08', new Date('2026-08-31T03:59:00Z'))).toBe(false);
+  });
+
+  it('desde las 00:00 del 31/08 en Caracas sí', () => {
+    expect(canCloseMonth('2026-08', new Date('2026-08-31T04:00:00Z'))).toBe(true);
+  });
+
+  it('si se pasó el día, se puede cerrar igual después', () => {
+    expect(canCloseMonth('2026-08', new Date('2026-09-05T12:00:00Z'))).toBe(true);
+  });
+
+  it('un mes futuro no se puede cerrar', () => {
+    expect(canCloseMonth('2026-10', new Date('2026-09-13T12:00:00Z'))).toBe(false);
+  });
+
+  it('respeta la zona que se le pase', () => {
+    expect(businessDateKey(new Date('2026-09-01T00:30:00Z'), 'UTC')).toBe('2026-09-01');
+  });
+
+  it('diciembre cierra el 31, sin saltar de año', () => {
+    expect(monthCloseDay('2026-12')).toBe('2026-12-31');
+  });
+
+  it('febrero de un año no bisiesto cierra el 28', () => {
+    expect(monthCloseDay('2026-02')).toBe('2026-02-28');
   });
 });

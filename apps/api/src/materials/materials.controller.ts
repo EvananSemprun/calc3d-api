@@ -1,5 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { MaterialSchema, type MaterialDto } from '@calc3d/shared';
+import {
+  MaterialSchema,
+  MaterialStatusUpdateSchema,
+  type MaterialDto,
+  type MaterialStatusUpdateDto,
+} from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -27,6 +32,16 @@ export class MaterialsController {
     @Body(new ZodValidationPipe(MaterialSchema.partial())) dto: Partial<MaterialDto>,
   ) {
     return this.service.update(user.organizationId, id, dto);
+  }
+
+  /** Descontinuar o reactivar. Aparte del PATCH de la ficha: guardar el formulario no cambia el estado. */
+  @Patch(':id/status')
+  setStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(MaterialStatusUpdateSchema)) dto: MaterialStatusUpdateDto,
+  ) {
+    return this.service.setStatus(user.organizationId, id, dto);
   }
 
   @Delete(':id')
