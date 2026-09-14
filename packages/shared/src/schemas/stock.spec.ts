@@ -1,4 +1,9 @@
-import { MaterialStatusUpdateSchema, StockMonthCloseSchema, StockMonthReopenSchema } from './stock';
+import {
+  MaterialCorrectionSchema,
+  MaterialStatusUpdateSchema,
+  StockMonthCloseSchema,
+  StockMonthReopenSchema,
+} from './stock';
 
 describe('StockMonthCloseSchema', () => {
   it('acepta el mes con sus conteos', () => {
@@ -79,5 +84,34 @@ describe('MaterialStatusUpdateSchema', () => {
 
   it('descarta cualquier otro campo', () => {
     expect(MaterialStatusUpdateSchema.parse({ status: 'ACTIVE', rollPrice: 0 })).toEqual({ status: 'ACTIVE' });
+  });
+});
+
+/**
+ * Corregir una ficha (2026-09-14): solo nombre y color, para tipeos. El precio
+ * sale de la compra; marca, tipo y gramos quedan como nacieron.
+ */
+describe('MaterialCorrectionSchema', () => {
+  it('solo deja nombre y color: el precio y el resto se descartan', () => {
+    const r = MaterialCorrectionSchema.parse({
+      name: ' PLA Negro ',
+      color: ' Negro ',
+      rollPrice: 1,
+      rollGrams: 250,
+      brand: 'Otra',
+      type: 'PETG',
+      status: 'DISCONTINUED',
+      organizationId: 'org-B',
+    });
+
+    expect(r).toEqual({ name: 'PLA Negro', color: 'Negro' });
+  });
+
+  it('un nombre en blanco no vale', () => {
+    expect(MaterialCorrectionSchema.safeParse({ name: '   ' }).success).toBe(false);
+  });
+
+  it('un color vacío queda sin color', () => {
+    expect(MaterialCorrectionSchema.parse({ color: '' })).toEqual({ color: null });
   });
 });

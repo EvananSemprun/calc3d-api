@@ -16,6 +16,23 @@ export type MaterialStatus = z.infer<typeof MaterialStatusSchema>;
 export const MaterialStatusUpdateSchema = z.object({ status: MaterialStatusSchema });
 export type MaterialStatusUpdateDto = z.infer<typeof MaterialStatusUpdateSchema>;
 
+/**
+ * Corregir una ficha (`PATCH /materials/:id`, 2026-09-14). Solo nombre y color:
+ * es para arreglar tipeos. El precio del rollo sale SIEMPRE de la compra y
+ * marca, tipo y gramos quedan como nacieron (decisión del dueño). Lo que no está
+ * acá se descarta, como en el resto de los schemas.
+ */
+export const MaterialCorrectionSchema = z.object({
+  name: z.string().trim().min(1, 'El nombre es obligatorio').optional(),
+  color: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .transform((v) => (v === '' ? null : v)),
+});
+export type MaterialCorrectionDto = z.infer<typeof MaterialCorrectionSchema>;
+
 /** Mes del conteo, como `AAAA-MM`. */
 export const MonthSchema = z
   .string()
@@ -91,6 +108,8 @@ export interface StockCountRow extends StockCountParts {
    * abierto o reabierto.
    */
   counted: boolean;
+  /** La ficha no tiene compras ni conteos: es la única que se puede borrar. */
+  canDelete: boolean;
 }
 
 /** Una compra de filamento, con lo que costó de verdad. */

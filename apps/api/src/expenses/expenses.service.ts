@@ -108,6 +108,12 @@ export class ExpensesService {
 
   async createWithDefinition(organizationId: string, dto: ExpenseWithDefinitionDto) {
     const { expense, link } = dto;
+    // Filamento: el precio del rollo sale SOLO de la compra (monto ÷ rollos). Sin
+    // rollos no hay precio que calcular, y aceptarla dejaba entrar uno a mano.
+    const rollos = expense.quantity ?? 0;
+    if (link.kind === 'material' && rollos <= 0) {
+      throw new BadRequestException('Indicá cuántos rollos compraste');
+    }
     const schemas = {
       material: MaterialSchema,
       printer: PrinterSchema,
@@ -120,17 +126,24 @@ export class ExpensesService {
       let linkId = link.id ?? undefined;
 
       if (link.mode === 'new') {
-        const data = schemas[link.kind].parse(link.data ?? {});
+        // Filamento: lo que venga en `data.rollPrice` se pisa con el de la compra.
+        const crudo =
+          link.kind === 'material'
+            ? { ...(link.data ?? {}), rollPrice: purchaseCostPerRoll(expense.amount, rollos) }
+            : (link.data ?? {});
+        const data = schemas[link.kind].parse(crudo);
         const created = await model.create({ data: { ...data, organizationId } });
         linkId = created.id;
       } else {
         if (!linkId) throw new BadRequestException('Falta el item del catálogo');
         const owned = await model.findFirst({ where: { id: linkId, organizationId } });
         if (!owned) throw new NotFoundException('Definición no encontrada');
-        if (link.referenceField != null && link.referenceValue != null) {
+        // El precio de referencia es de impresoras e insumos. En filamento se
+        // ignora (sin 400: un panel viejo lo sigue mandando durante el deploy).
+        if (link.kind !== 'material' && link.referenceField != null && link.referenceValue != null) {
           // `referenceField` viaja en el body: solo puede ser el precio de este tipo
           // de ficha y no negativo. Si no, escribiría cualquier campo numérico
-          // (gramos del rollo, vida útil…) sin las reglas de su schema.
+          // (vida útil, unidades por paquete…) sin las reglas de su schema.
           if (link.referenceField !== PRICE_FIELD[link.kind] || link.referenceValue < 0) {
             throw new BadRequestException('Campo de referencia inválido');
           }
@@ -138,13 +151,12 @@ export class ExpensesService {
         }
       }
 
-      // Una compra de filamento fija el precio del rollo, sin depender de la
-      // casilla de "usar como referencia" que manda el cliente, y reactiva la
-      // ficha si estaba descontinuada. La ficha ya se validó como propia arriba.
-      if (link.kind === 'material' && linkId && expense.quantity && expense.quantity > 0) {
+      // Una compra de filamento fija el precio del rollo y reactiva la ficha si
+      // estaba descontinuada. La ficha ya se validó como propia arriba.
+      if (link.kind === 'material' && linkId) {
         await model.update({
           where: { id: linkId },
-          data: { rollPrice: purchaseCostPerRoll(expense.amount, expense.quantity), status: 'ACTIVE' },
+          data: { rollPrice: purchaseCostPerRoll(expense.amount, rollos), status: 'ACTIVE' },
         });
       }
 

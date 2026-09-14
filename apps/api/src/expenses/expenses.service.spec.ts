@@ -333,18 +333,72 @@ describe('ExpensesService.createWithDefinition', () => {
   });
 
   /**
+   * Regresión de seguridad (2026-09-14): el precio del rollo sale SOLO de la compra
+   * (monto ÷ rollos). Ni el "precio de referencia" ni `data.rollPrice` del body lo
+   * pueden fijar a mano.
+   */
+  it("filamento existente: el precio de referencia del body se ignora", async () => {
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG });
+    tx.expense.create.mockResolvedValue({ id: 'e-mat' });
+
+    await service.createWithDefinition(ORG, {
+      expense: { date: '2026-09-14', amount: 40, category: 'CONSUMABLE', description: 'PLA', isInvestment: false, quantity: 2 },
+      link: { kind: 'material', mode: 'existing', id: 'mat-9', referenceField: 'rollPrice', referenceValue: 999 },
+    } as any);
+
+    expect(tx.material.update).toHaveBeenCalledTimes(1);
+    expect(tx.material.update).toHaveBeenCalledWith({
+      where: { id: 'mat-9' },
+      data: { rollPrice: 20, status: 'ACTIVE' },
+    });
+  });
+
+  it('filamento nuevo: el rollPrice del body se pisa con el de la compra', async () => {
+    tx.material.create.mockResolvedValue({ id: 'mat-1' });
+    tx.expense.create.mockResolvedValue({ id: 'e-new' });
+
+    await service.createWithDefinition(ORG, {
+      expense: { date: '2026-09-14', amount: 40, category: 'CONSUMABLE', description: 'PLA', isInvestment: false, quantity: 2 },
+      link: { kind: 'material', mode: 'new', data: { name: 'PLA Rojo', rollPrice: 999, rollGrams: 1000 } },
+    } as any);
+
+    expect(tx.material.create.mock.calls[0][0].data.rollPrice).toBe(20);
+  });
+
+  it.each(['new', 'existing'])('filamento %s sin rollos → 400 y no escribe nada', async (mode) => {
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG });
+
+    await expect(
+      service.createWithDefinition(ORG, {
+        expense: { date: '2026-09-14', amount: 40, category: 'CONSUMABLE', description: 'PLA', isInvestment: false },
+        link: {
+          kind: 'material',
+          mode,
+          id: mode === 'existing' ? 'mat-9' : null,
+          data: mode === 'new' ? { name: 'PLA Rojo', rollGrams: 1000 } : null,
+          referenceField: 'rollPrice',
+          referenceValue: 40,
+        },
+      } as any),
+    ).rejects.toThrow('Indicá cuántos rollos compraste');
+    expect(tx.material.create).not.toHaveBeenCalled();
+    expect(tx.material.update).not.toHaveBeenCalled();
+    expect(tx.expense.create).not.toHaveBeenCalled();
+  });
+
+  /**
    * Regresión de seguridad: `referenceField` viaja en el body. Solo puede ser el
    * precio de ESE tipo de ficha y con un valor no negativo; si no, cualquier
-   * campo numérico (gramos del rollo, vida útil, unidades por paquete) se
-   * escribiría sin las reglas de su schema.
+   * campo numérico (vida útil, unidades por paquete) se escribiría sin las
+   * reglas de su schema. En filamento el precio de referencia se ignora: lo fija
+   * la compra.
    */
   it.each([
-    ['material', 'rollGrams', 0],
-    ['material', 'status', 1],
-    ['material', 'organizationId', 1],
     ['printer', 'lifetimeHours', 0],
+    ['printer', 'organizationId', 1],
     ['component', 'unitsPerPackage', 0],
-    ['material', 'price', 10], // el precio de OTRO tipo de ficha
+    ['component', 'status', 1],
+    ['printer', 'rollPrice', 10], // el precio de OTRO tipo de ficha
   ])("modo 'existing' kind %s con referenceField '%s' → 400 y no escribe nada", async (kind, field, value) => {
     const delegate = tx[kind as 'material' | 'printer' | 'component'];
     delegate.findFirst.mockResolvedValue({ id: 'x-1', organizationId: ORG });

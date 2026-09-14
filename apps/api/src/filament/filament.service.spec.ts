@@ -14,9 +14,9 @@ import { FilamentService } from './filament.service';
 const ORG = 'org-A';
 
 const MATERIALES = [
-  { id: 'm1', name: 'PLA Creality Amarillo', type: 'PLA', brand: 'Creality', color: 'Amarillo', rollGrams: 1000, rollPrice: '20', status: 'ACTIVE' },
-  { id: 'm2', name: 'PLA Bambu Blanco', type: 'PLA', brand: 'Bambu Lab', color: 'Blanco', rollGrams: 1000, rollPrice: '22', status: 'ACTIVE' },
-  { id: 'm3', name: 'PLA Sunlu Biege', type: 'PLA', brand: 'Sunlu', color: 'Biege', rollGrams: 1000, rollPrice: '20', status: 'DISCONTINUED' },
+  { id: 'm1', name: 'PLA Creality Amarillo', type: 'PLA', brand: 'Creality', color: 'Amarillo', rollGrams: 1000, rollPrice: '20', status: 'ACTIVE', _count: { expenses: 0, stockCounts: 0 } },
+  { id: 'm2', name: 'PLA Bambu Blanco', type: 'PLA', brand: 'Bambu Lab', color: 'Blanco', rollGrams: 1000, rollPrice: '22', status: 'ACTIVE', _count: { expenses: 0, stockCounts: 0 } },
+  { id: 'm3', name: 'PLA Sunlu Biege', type: 'PLA', brand: 'Sunlu', color: 'Biege', rollGrams: 1000, rollPrice: '20', status: 'DISCONTINUED', _count: { expenses: 0, stockCounts: 0 } },
 ];
 
 /** Un mes cerrado, como lo guarda la tabla StockMonth. */
@@ -99,6 +99,26 @@ describe('Conteo de stock', () => {
     expect(m1.counted).toBe(false);
     // Los números guardados se muestran igual, para corregirlos.
     expect(m1.total).toBe(3);
+  });
+
+  it('solo se puede borrar una ficha sin compras ni conteos', async () => {
+    const prisma = makePrisma();
+    prisma.material.findMany.mockResolvedValue([
+      { ...MATERIALES[0], _count: { expenses: 0, stockCounts: 0 } },
+      { ...MATERIALES[1], _count: { expenses: 1, stockCounts: 0 } },
+      { ...MATERIALES[2], _count: { expenses: 0, stockCounts: 2 } },
+    ]);
+
+    const filas = await service(prisma).stock(ORG, '2026-08');
+
+    expect(Object.fromEntries(filas.map((f) => [f.materialId, f.canDelete]))).toEqual({
+      m1: true,
+      m2: false,
+      m3: false,
+    });
+    expect(prisma.material.findMany.mock.calls[0][0]).toMatchObject({
+      include: { _count: { select: { expenses: true, stockCounts: true } } },
+    });
   });
 });
 

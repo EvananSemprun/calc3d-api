@@ -589,8 +589,8 @@ en el repo web: se sobrescribe al sincronizar.
     `PATCH /materials/:id`: `MaterialSchema` no tiene `status`, así que guardar el
     formulario nunca cambia el estado (fijado en `materials.controller.spec.ts`).
     Una ficha descontinuada no se ofrece al cotizar ni entra en la reposición, y
-    conserva compras y conteos: es la salida para una ficha con conteos en meses
-    cerrados que no se puede borrar. **Se reactiva con CUALQUIER gasto que enlace
+    conserva compras y conteos: es la salida para una ficha con compras o conteos,
+    que no se puede borrar. **Se reactiva con CUALQUIER gasto que enlace
     la ficha con `quantity > 0`** (hoy la web solo lo dispara desde Gastos → tipo
     Filamento): en `ExpensesService` (`refreshRollPrice` y `createWithDefinition`)
     el mismo paso que fija `rollPrice` escribe `status: 'ACTIVE'`. ⚠️
@@ -601,6 +601,21 @@ en el repo web: se sobrescribe al sincronizar.
     reales), `materials.service.spec.ts` (`setStatus` con ficha ajena),
     `expenses.service.spec.ts` (`updateMany` con organización y `referenceField`).
     Spec: `docs/superpowers/specs/2026-09-13-estado-material-design.md`.
+  - **Sin página Materiales** (2026-09-14, shared 0.15.0) — la ficha se maneja
+    desde Stock del mes. **No hay `POST /materials`**: una ficha nace de una compra
+    en Gastos. `PATCH /materials/:id` valida con `MaterialCorrectionSchema` (SOLO
+    `name` y `color`, decisión del dueño; marca, tipo, gramos y precio quedan como
+    nacieron). ⚠️ **El precio del filamento sale SOLO de la compra**: en
+    `createWithDefinition`, `kind: 'material'` exige `quantity ≥ 1` (400 "Indicá
+    cuántos rollos compraste"), ignora `referenceField` (sin 400: un panel viejo lo
+    manda) y pisa `data.rollPrice` con `purchaseCostPerRoll`. `DELETE /materials/:id`
+    da 409 si la ficha tiene CUALQUIER compra o conteo. `GET /materials` trae
+    `outAtLastClose` (`AAAA-MM` si tiene fila de conteo en 0 en el último mes
+    cerrado y no se compró después; NO usa `createdAt`: las fichas se importaron
+    después de sus compras del 31/08) y `GET /filament/stock` trae `canDelete`.
+    Regresión de seguridad: `materials.controller.spec.ts` (pipe real del PATCH,
+    ninguna ruta POST), `materials.service.spec.ts`, `expenses.service.spec.ts`.
+    Spec: `docs/superpowers/specs/2026-09-14-quitar-pagina-materiales-design.md`.
   - Las fichas **"Sin especificar"** (las que creó la importación para los rollos
     sin marca) nacen `DISCONTINUED`: son un marcador temporal, y sin eso, al
     identificar el rollo quedaban en cero y pedían reposición de un color que no

@@ -11,7 +11,7 @@ import { MaterialsController } from './materials.controller';
  * de instanciar uno propio en el test), para que quitar el pipe de la ruta
  * también rompa este test.
  */
-function pipeDe(metodo: 'setStatus' | 'update' | 'create'): ZodValidationPipe<unknown> {
+function pipeDe(metodo: 'setStatus' | 'update'): ZodValidationPipe<unknown> {
   const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, MaterialsController, metodo) as Record<
     string,
     { pipes?: unknown[] }
@@ -22,9 +22,10 @@ function pipeDe(metodo: 'setStatus' | 'update' | 'create'): ZodValidationPipe<un
 }
 
 /**
- * Regresión de seguridad del estado de las fichas: la ruta exige sesión, usa la
- * organización del token, valida el estado y el formulario de la ficha no puede
- * colar un `status` (mass-assignment).
+ * Regresión de seguridad de las fichas de material: la ruta exige sesión, usa la
+ * organización del token, valida el estado, y corregir la ficha no puede colar
+ * precio, estado ni ningún otro campo (mass-assignment). Desde 2026-09-14 no hay
+ * alta suelta: las fichas nacen de una compra en Gastos.
  */
 describe('MaterialsController', () => {
   it('todo el controller exige sesión', () => {
@@ -52,19 +53,43 @@ describe('MaterialsController', () => {
     } satisfies MaterialStatusUpdateDto);
   });
 
-  it('crear o editar la ficha no puede cambiar el estado', () => {
-    const alta = pipeDe('create').transform({
-      name: 'PLA Negro',
-      rollPrice: 20,
-      rollGrams: 1000,
-      status: 'DISCONTINUED',
-    }) as Record<string, unknown>;
-    const edicion = pipeDe('update').transform({
-      rollPrice: 20,
-      status: 'DISCONTINUED',
-    }) as Record<string, unknown>;
+  it('PATCH :id llega a update con la organización del token', async () => {
+    const service = { update: jest.fn().mockResolvedValue({ id: 'm1' }) };
+    const controller = new MaterialsController(service as never);
 
-    expect(alta).not.toHaveProperty('status');
-    expect(edicion).toEqual({ rollPrice: 20 });
+    await controller.update({ organizationId: 'org-A' } as never, 'm1', { name: 'PLA Negro' });
+
+    expect(service.update).toHaveBeenCalledWith('org-A', 'm1', { name: 'PLA Negro' });
+    const handler = MaterialsController.prototype.update;
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.PATCH);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(':id');
+  });
+
+  it('corregir la ficha solo acepta nombre y color: el precio sale de la compra', () => {
+    const dto = pipeDe('update').transform({
+      name: ' PLA Negro ',
+      color: 'Negro',
+      rollPrice: 1,
+      rollGrams: 250,
+      brand: 'Otra',
+      type: 'PETG',
+      status: 'DISCONTINUED',
+      organizationId: 'org-B',
+    });
+
+    expect(dto).toEqual({ name: 'PLA Negro', color: 'Negro' });
+  });
+
+  it('corregir con el nombre en blanco es 400', () => {
+    expect(() => pipeDe('update').transform({ name: '   ' })).toThrow(BadRequestException);
+  });
+
+  it('no hay alta suelta de fichas: ninguna ruta POST', () => {
+    const proto = MaterialsController.prototype as unknown as Record<string, unknown>;
+    const posts = Object.getOwnPropertyNames(proto)
+      .filter((n) => n !== 'constructor')
+      .filter((n) => Reflect.getMetadata(METHOD_METADATA, proto[n] as object) === RequestMethod.POST);
+
+    expect(posts).toEqual([]);
   });
 });

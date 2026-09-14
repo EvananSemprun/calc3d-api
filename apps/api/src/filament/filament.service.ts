@@ -115,7 +115,11 @@ export class FilamentService {
   /** El conteo del mes, con TODOS los materiales (los no contados, en cero). */
   async stock(organizationId: string, month: string): Promise<StockCountRow[]> {
     const [materiales, conteos, cerrado] = await Promise.all([
-      this.prisma.material.findMany({ where: { organizationId }, orderBy: { name: 'asc' } }),
+      this.prisma.material.findMany({
+        where: { organizationId },
+        orderBy: { name: 'asc' },
+        include: { _count: { select: { expenses: true, stockCounts: true } } },
+      }),
       this.countsOf(organizationId, month),
       this.isClosed(organizationId, month),
     ]);
@@ -137,6 +141,7 @@ export class FilamentService {
         // "Contado" = el mes está CERRADO (cierre mensual, 2026-09-13). En un mes
         // cerrado lo que no se marcó es 0; un mes abierto o reabierto no es dato final.
         counted: cerrado,
+        canDelete: m._count.expenses === 0 && m._count.stockCounts === 0,
       };
     });
   }
