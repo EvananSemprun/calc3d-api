@@ -357,6 +357,15 @@ en el repo web: se sobrescribe al sincronizar.
       semanales ($1.323) + $184,96 en pedidos = **$2.233,96**, contra los
       $2.257,46 de la fila 11. Esos $23,50 son el descuadre de la hoja y NO se
       inventaron.
+  - **Encargo = pedido (2026-09-14, shared 0.16.0).** Un encargo se registra
+    SOLO como pedido (cliente, abonos, saldo). `SaleCreateSchema`/`SaleUpdateSchema`
+    rechazan `kind: 'ENCARGO'` (400): una venta ENCARGO además del pedido sumaba el
+    mismo dinero dos veces (ingresos = ventas + abonos). Las 25 ventas ENCARGO
+    que existen (feb–ago) son el historial semanal del Excel, sin detalle: se
+    leen y editan, no se crean. Solo `sincronizar-excel.mjs` las toca, vía Prisma
+    y a propósito. Regresión: `sale.spec.ts` (shared) y `sales.controller.spec.ts`.
+    En el panel "Pedidos" se llama **Encargos** (solo texto: rutas `/orders` y
+    modelo `Order` siguen igual).
   - **Re-sincronización del Excel** (`prisma/sincronizar-excel.mjs`): los
     `import-*.mjs` son de carga INICIAL y fallan si ya hay datos; este compara
     contra la base y escribe **solo la diferencia**, así que se corre cada vez

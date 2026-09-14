@@ -395,14 +395,28 @@ export type ProviderDto = z.infer<typeof ProviderSchema>;
 
 // ----- Finanzas: ventas, gastos, compras de filamento -----
 
-/** COUNTER = mostrador/venta directa, ENCARGO = pedido personalizado. */
+/**
+ * COUNTER = mostrador. ENCARGO = el historial semanal de encargos del Excel (sin
+ * detalle): se LEE y se edita, pero ya no se crea (ver `SaleKindNuevaSchema`).
+ */
 export const SaleKindSchema = z.enum(['COUNTER', 'ENCARGO']);
 export type SaleKindDto = z.infer<typeof SaleKindSchema>;
+
+/**
+ * Encargo = pedido (decisión del dueño, 2026-09-14, shared 0.16.0). Un encargo se
+ * registra SOLO como pedido, con cliente, abonos y saldo. Una venta ENCARGO nueva
+ * sumaría el mismo dinero dos veces a los ingresos (ventas + abonos), así que al
+ * crear o editar una venta el tipo solo puede ser mostrador.
+ * Regresión: `sale.spec.ts` (shared) y `sales.controller.spec.ts` (api).
+ */
+const SaleKindNuevaSchema = SaleKindSchema.refine((k) => k === 'COUNTER', {
+  message: 'Los encargos se registran en Encargos, con su cliente y sus abonos, no como venta.',
+});
 
 export const SaleCreateSchema = z.object({
   date: z.string().min(1, 'La fecha es obligatoria'),
   amount: z.number().min(0, 'El monto no puede ser negativo'),
-  kind: SaleKindSchema.default('COUNTER'),
+  kind: SaleKindNuevaSchema.default('COUNTER'),
   clientId: z.string().optional().nullable(),
   quoteId: z.string().optional().nullable(),
   note: z.string().optional().nullable(),

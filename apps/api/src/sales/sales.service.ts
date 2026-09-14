@@ -1,9 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import {
-  type PriceResult,
-  type SaleCreateDto,
-  type SaleUpdateDto,
-} from '@calc3d/shared';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { type SaleCreateDto, type SaleUpdateDto } from '@calc3d/shared';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -79,27 +75,4 @@ export class SalesService {
     const found = await this.prisma.sale.findFirst({ where: { id, organizationId } });
     if (!found) throw new NotFoundException('Venta no encontrada');
   }
-}
-
-/** Precio de venta total de un presupuesto: el total del pedido que quedó
- *  guardado en el snapshot; si el snapshot no lo trae, el precio final por la
- *  cantidad; y sin ningún precio, el costo del lote. */
-function sellingTotal(totals: Record<string, unknown> | null, quantity: number): number {
-  if (!totals) return 0;
-
-  const order = totals.order as { total?: number } | undefined;
-  if (order?.total) return Number(order.total);
-
-  const price = totals.price as PriceResult | undefined;
-  if (price?.final) return Number(price.final) * quantity;
-
-  // Snapshot anterior a shared 0.7.0: traía `prices[]` y ningún precio final.
-  // Caer al costo registraría una venta a pérdida sin que nadie se entere.
-  if (Array.isArray(totals.prices)) {
-    throw new BadRequestException(
-      'Este presupuesto se guardó con una versión anterior de la calculadora. Ábrelo, guárdalo de nuevo y registra la venta.',
-    );
-  }
-
-  return Number(totals.costBatch ?? 0);
 }
