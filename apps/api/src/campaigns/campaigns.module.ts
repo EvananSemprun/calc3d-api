@@ -101,8 +101,9 @@ export class CampaignsService {
         where: { organizationId, campaignId: { not: null } },
         select: { campaignId: true, amount: true },
       }),
+      // Una cotización (QUOTED) todavía no es venta y una cancelada ya no lo es.
       this.prisma.order.findMany({
-        where: { organizationId, campaignId: { not: null } },
+        where: { organizationId, campaignId: { not: null }, status: { notIn: ['QUOTED', 'CANCELLED'] } },
         select: { campaignId: true, lines: true },
       }),
     ]);
@@ -130,8 +131,13 @@ export class CampaignsService {
     }
     for (const o of orders) {
       const st = at(o.campaignId!);
+      const total = orderTotal((o.lines as unknown as OrderLine[]) ?? []);
       st.orders += 1;
-      st.ordersTotal += orderTotal((o.lines as unknown as OrderLine[]) ?? []);
+      st.ordersTotal += total;
+      // Desde "encargo = pedido" (2026-09-14) lo que trae una campaña llega como
+      // pedido: si "vendido" no lo sumara, toda campaña daría $0 y el Dashboard
+      // avisaría que ninguna rinde (pasó el 2026-10-02).
+      st.revenue += total;
     }
 
     // Redondeo de presentación (2 dp) para dinero.
@@ -278,7 +284,7 @@ export class CampaignsService {
     doc.moveDown(0.3);
     doc.fontSize(10);
     this.row(doc, 'Ventas atribuidas', String(st.sales));
-    this.row(doc, 'Ticket promedio', st.sales > 0 ? fmt(st.revenue / st.sales) : '—');
+    this.row(doc, 'Ticket promedio', st.sales + st.orders > 0 ? fmt(st.revenue / (st.sales + st.orders)) : '—');
     this.row(doc, 'Pedidos atribuidos', `${st.orders} (${fmt(st.ordersTotal)})`);
 
     doc.moveDown(1.5);

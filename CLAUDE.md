@@ -330,6 +330,11 @@ en el repo web: se sobrescribe al sincronizar.
       Desde 2026-10-01 (shared 0.18.0) también `followers` (seguidores ganados,
       columna "Seguidores" de Publicidad; migración `seguidores_de_campana`).
       Contrato fijado en `shared/src/schemas/campaign.spec.ts`.
+    - ⚠️ **"Vendido" de una campaña = ventas + ENCARGOS atribuidos** (sin
+      `QUOTED` ni `CANCELLED`), desde el 2026-10-02. Antes sumaba solo `Sale`, y
+      desde "encargo = pedido" toda campaña daba $0: el Dashboard avisaba que
+      ninguna rendía (Identificadores, ROAS 5,7×, salía "en riesgo"). Regresión:
+      `campaigns/campaigns.service.spec.ts`.
       Son la ÚNICA medida de una campaña que todavía no generó venta atribuida:
       sin ellas el ROAS es 0× y no dice nada. ⚠️ **`serialize()` en
       `campaigns.module.ts` arma la respuesta CAMPO POR CAMPO**: un campo nuevo
