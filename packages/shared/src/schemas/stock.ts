@@ -110,6 +110,17 @@ export interface StockCountRow extends StockCountParts {
   counted: boolean;
   /** La ficha no tiene compras ni conteos: es la única que se puede borrar. */
   canDelete: boolean;
+  /**
+   * No hay: el mes ANTERIOR cerró sin ella (en 0 o fuera de su conteo), no se
+   * compró en este y no tiene rollos anotados. La pantalla la esconde (al cerrar queda en 0, que es la verdad).
+   * Con el mes anterior sin cerrar es siempre false: no hay dato final.
+   */
+  exhausted: boolean;
+  /**
+   * Cómo cerró la ficha el mes ANTERIOR, de referencia para contar. null si ese
+   * mes no está cerrado o la ficha no estaba en su conteo.
+   */
+  previous: StockCountParts | null;
 }
 
 /** Una compra de filamento, con lo que costó de verdad. */

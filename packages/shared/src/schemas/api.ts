@@ -269,6 +269,8 @@ export const CampaignCreateSchema = z.object({
   reach: z.number().int().min(0).optional().nullable(),
   conversations: z.number().int().min(0).optional().nullable(),
   profileVisits: z.number().int().min(0).optional().nullable(),
+  /** Seguidores ganados con la campaña (columna "Seguidores" de Publicidad). */
+  followers: z.number().int().min(0).optional().nullable(),
 });
 export type CampaignCreateDto = z.infer<typeof CampaignCreateSchema>;
 
@@ -437,8 +439,13 @@ export const ExpenseCategorySchema = z.enum([
   'SHIPPING',
   'OTHER',
   'ADVERTISING',
+  'DESIGN',
 ]);
 export type ExpenseCategoryDto = z.infer<typeof ExpenseCategorySchema>;
+
+/** Quién puso la plata: la caja del negocio, Vanan de su bolsillo o el préstamo. */
+export const PaidBySchema = z.enum(['BUSINESS', 'OWNER', 'LOAN']);
+export type PaidByDto = z.infer<typeof PaidBySchema>;
 
 export const ExpenseCreateSchema = z.object({
   date: z.string().min(1, 'La fecha es obligatoria'),
@@ -459,6 +466,8 @@ export const ExpenseCreateSchema = z.object({
   // código con los que se registró (el `amount` SIEMPRE queda en USD base).
   rate: z.number().positive().optional().nullable(),
   currencyCode: z.string().length(3).optional().nullable(),
+  /** Quién lo pagó. Alimenta la caja y lo que el negocio le debe a Vanan. */
+  paidBy: PaidBySchema.default('BUSINESS'),
 });
 export type ExpenseCreateDto = z.infer<typeof ExpenseCreateSchema>;
 
@@ -480,6 +489,7 @@ export const ExpenseWithDefinitionSchema = z.object({
     isInvestment: z.boolean().default(false),
     quantity: z.number().int().positive().nullable().optional(),
     providerId: z.string().nullable().optional(),
+    paidBy: PaidBySchema.default('BUSINESS'),
   }),
   link: z.object({
     kind: ExpenseLinkKindSchema,
@@ -515,8 +525,30 @@ export const LoanPaymentCreateSchema = z.object({
   amount: z.number().positive('El pago tiene que ser mayor que cero'),
   /** Referencia bancaria o lo que sirva para reconciliar después. */
   reference: z.string().optional().nullable(),
+  /** Una cuota la paga la caja o Vanan; "con el préstamo" no tiene sentido acá. */
+  paidBy: z.enum(['BUSINESS', 'OWNER']).default('BUSINESS'),
 });
 export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
+
+// ---------- Caja ----------
+
+/** Plata PURA entre el bolsillo de Vanan y la caja (no es un gasto). */
+export const OwnerMovementCreateSchema = z.object({
+  date: z.string().min(1, 'Falta la fecha'),
+  kind: z.enum(['CONTRIBUTION', 'WITHDRAWAL']),
+  amount: z.number().positive('El monto tiene que ser mayor que cero'),
+  concept: z.string().trim().min(1, 'Falta el concepto'),
+  note: z.string().optional().nullable(),
+});
+export type OwnerMovementCreateDto = z.infer<typeof OwnerMovementCreateSchema>;
+
+/** Conteo de los lunes: lo que dice Binance ese día. Uno por fecha. */
+export const CashCountUpsertSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD'),
+  total: z.number().min(0, 'El total no puede ser negativo'),
+  note: z.string().optional().nullable(),
+});
+export type CashCountUpsertDto = z.infer<typeof CashCountUpsertSchema>;
 
 // ---------- Metas mensuales ----------
 

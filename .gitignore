@@ -35,3 +35,7 @@ coverage/
 # dataset no. Se regenera del .xlsx cuando haga falta.
 apps/api/prisma/filamento-excel.json
 apps/api/prisma/negocio-excel.json
+apps/api/prisma/hojas-excel.json
+# Lleva nombres de clientes escritos a mano (atribución de campañas) y el repo
+# es público: vive solo en la PC del dueño, como los JSON de arriba.
+apps/api/prisma/sincronizar-hojas.mjs

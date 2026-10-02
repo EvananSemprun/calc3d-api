@@ -24,6 +24,7 @@ import { CampaignsModule } from './campaigns/campaigns.module';
 import { ReportsModule } from './reports/reports.module';
 import { LoansModule } from './loans/loans.module';
 import { GoalsModule } from './goals/goals.module';
+import { CashModule } from './cash/cash.module';
 import { StorageModule } from './storage/storage.module';
 import { StoreModule } from './store/store.module';
 import { StoreRequestsModule } from './store-requests/store-requests.module';
@@ -54,6 +55,7 @@ import { StorePublicModule } from './store-public/store-public.module';
     CampaignsModule,
     LoansModule,
     GoalsModule,
+    CashModule,
     ReportsModule,
     StorageModule,
     StoreModule,

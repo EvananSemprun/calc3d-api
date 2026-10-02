@@ -20,14 +20,15 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Stock mensual** | Conteo físico de rollos por mes, estado activo/descontinuado, reposición | Filamento → Stock del mes | ✅ **Migrado** |
 | **Hoja de datos (respaldo)** | Listas de validación (marcas, tipos, colores) | `CatalogOption` | ✅ Equivalente |
 | **Materiales** | Catálogo de costos de 3 insumos que NO son filamento (imanes, papel burbuja, clicks) | Catálogos → Insumos (`Component`) | ✅ **Migrado** |
-| **Inversion** | Dos impresoras: costo y cuánto se repuso con la ganancia acumulada | `Printer` + `Expense` + `GET /printers/recovery` | ✅ **Migrado** |
+| **Inversion** | Impresoras (costo, desde, pagada con, horas) + quién puso la plata + si el negocio ya se pagó solo | `Printer` + `PrinterReading` + `GET /printers/recovery` + Caja | ✅ **Migrado** (2026-09-26) |
 | **Resumen** | Dashboard derivado de las demás hojas | Dashboard | ⚠️ Parcial — ver §3 |
 | **Encargos** | 7 encargos: fecha de pago, cliente, descripción, canal, monto, costo de material | `Order` DELIVERED + su abono | ✅ **Migrado** |
 | **Publicidad** | 7 campañas: fecha, formato, público, objetivo, gasto, alcance, conversaciones, visitas | `Campaign` + su gasto en el ledger | ✅ **Migrado** (se agregaron alcance/conversaciones/visitas al modelo) |
 | **Clientes** | 5 clientes. Solo nombre y tipo son datos; lo demás son fórmulas | `Client` | ✅ **Migrado** |
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
 | **Ventas** | Grilla semanal desde febrero. Los montos están en el texto de cada día; las filas auxiliares que los parseaban **llegaron vacías** (ver §6) | `Sale` | ✅ **Sincronizado** — $2.233,96 (ver §6) |
-| **Deuda** | Préstamo de la impresora P2S y sus pagos | `Loan` + `LoanPayment` | ✅ **Migrado** — saldo $750 |
+| **Deuda** | Préstamo de la impresora P2S y sus pagos, con quién pagó cada cuota | `Loan` + `LoanPayment` (`paidBy`) | ✅ **Migrado** — saldo $750 |
+| **Caja** (nueva, 2026-09) | Conteo de Binance de los lunes, aportes y pagos a Vanan, saldo del negocio | Finanzas → Caja (`OwnerMovement`, `CashCount`, `paidBy`) | ✅ **Migrado** 2026-09-26 — ver §8 |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | `Goal` (lo real se deriva) | ✅ **Migrado** — 5 meses |
 
 ## 2. Lo que la app tiene y el Excel no
@@ -208,3 +209,26 @@ Vacíos que no son de migración: hoy nadie tiene el dato.
 > Los tres se **empiezan a medir ahora**: la app tiene dónde anotarlos, pero el
 > dato no existe hasta que se cargue. Un pedido sin anotar queda fuera de las
 > cuentas, no cuenta como cero.
+
+---
+
+## 8. Re-sincronización del 2026-09-26 (el Excel volvió a editarse a mano)
+
+El dueño volvió a cargar datos en la hoja y agregó conceptos nuevos. Se
+cargaron 1:1 con `prisma/sincronizar-hojas.mjs` (y `sincronizar-excel.mjs` como
+verificador). Diseño: `docs/superpowers/specs/2026-09-26-caja-y-financiamiento-design.md`.
+
+- **Datos**: 4 días de mostrador, 5 encargos (+2 clientes), el saldo del
+  un encargo (saldo cobrado el 14/09), 5 compras de filamento (3 fichas nuevas), 2 de
+  insumos, 4 gastos, la campaña 8 y las métricas de la 7, horas de las dos
+  impresoras (20/09), tasas del 26/09, un retiro de Vanan y un conteo.
+- **Marca Filavent → Filaven** en fichas y opciones.
+- **Atribución**: 5 encargos enlazados a las campañas 6, 7 y 8 (la lista vive en `sincronizar-hojas.mjs`, que no se versiona). Las ventas
+  atribuidas históricas de la hoja (120, 12, 300…) siguen sin enlazar: son de
+  las notas semanales, sin pedido al que atarlas.
+- **Sigue abierto**: la hoja `Clientes` no lista a dos clientes nuevos (la app
+  los tiene porque salen de `Encargos`), y la fila 11 de `Ventas` sigue sin
+  sumar las semanas 34-35.
+- ⚠️ **Otra vez dos fuentes de verdad.** Desde el 07/09 el Excel era una salida
+  de la app. Si se sigue editando a mano, cada cambio exige correr los dos
+  sincronizadores; hay que elegir una.

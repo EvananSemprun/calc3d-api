@@ -327,6 +327,9 @@ en el repo web: se sobrescribe al sincronizar.
     - **Métricas de la plataforma (2026-09-07)**: `Campaign` guarda `reach`,
       `conversations` y `profileVisits` (opcionales, migración
       `metricas_de_campana`) y el detalle deriva el **costo por conversación**.
+      Desde 2026-10-01 (shared 0.18.0) también `followers` (seguidores ganados,
+      columna "Seguidores" de Publicidad; migración `seguidores_de_campana`).
+      Contrato fijado en `shared/src/schemas/campaign.spec.ts`.
       Son la ÚNICA medida de una campaña que todavía no generó venta atribuida:
       sin ellas el ROAS es 0× y no dice nada. ⚠️ **`serialize()` en
       `campaigns.module.ts` arma la respuesta CAMPO POR CAMPO**: un campo nuevo
@@ -380,6 +383,46 @@ en el repo web: se sobrescribe al sincronizar.
       y el libro se guardó sin recalcular, así que `data_only=True` devuelve
       `None`. Hay que parsear el texto del día (`"Martes 3: 10$"`). Un lector
       que confíe en ellas ve un mostrador de $0 y **no falla**.
+  - **Caja y financiamiento (2026-09-26, shared 0.17.0)** (`cash/cash.module.ts`,
+    `shared/calc/cash.ts`): la hoja "Caja" del Excel y el bloque "Quién puso la
+    plata" de "Inversion". Toda la plata vive en UNA cuenta de Binance mezclada
+    con la personal de Vanan, así que la caja del negocio se RECONSTRUYE.
+    - ⚠️ **Quién pagó = `paidBy` (BUSINESS/OWNER/LOAN) en `Expense` y
+      `LoanPayment`.** Una compra que paga Vanan se anota UNA vez, como gasto
+      con `paidBy: OWNER`; el aporte sale solo. La hoja la anotaba dos veces
+      (Gastos + "Aporte de Vanan" en Caja) y eso descuadraba. `OwnerMovement`
+      es SOLO plata pura (retiro/aporte sin compra); `CashCount` es el conteo
+      de los lunes (solo el total de Binance; lo del negocio se deriva A ESA
+      FECHA con `businessCash(ledger, until)`).
+    - Saldo = ventas + abonos − gastos operativos (sin LOAN) − equipos pagados
+      por la caja + aportes (gastos OWNER + movimientos) − retiros − cuotas
+      pagadas por la caja. Los equipos de Vanan o del préstamo NO entran.
+    - `ownerFinancing`: lo que Vanan sacó se descuenta en cascada diseñador →
+      compras → cuotas → equipo; al prestamista se le paga con cuotas. Nueva
+      categoría **`DESIGN`** (el diseñador lo paga Vanan de su sueldo).
+    - `GET /cash`, `POST/DELETE /cash/movements`, `PUT /cash/counts` (upsert por
+      día), `DELETE /cash/counts/:id` (con `deleteMany` + organización: IDOR →
+      404). Tests: `cash.spec.ts` (shared), `cash/cash.service.spec.ts`.
+  - **Mantenimiento por hora DERIVADO (2026-09-26)**: `derivedMaintenance` en
+    `printers.module.ts` = gastos `MAINTENANCE` ÷ horas de la última lectura de
+    TODAS las máquinas (`maintenanceRatePerHour`, como la hoja Costeo). Es una
+    tarifa global porque la mayoría de los repuestos no dicen a qué máquina
+    fueron. `GET /printers`, `/printers/usage` y el recosteo la usan; el campo
+    `maintPerHour` de la ficha queda solo como respaldo si no hay lecturas.
+    `GET /printers/maintenance` la expone. Valor al 26/09: $122 ÷ 2770 h.
+  - **Re-sincronización del 2026-09-26** (`prisma/sincronizar-hojas.mjs`, NO versionado: lleva nombres de clientes +
+    `hojas-excel.json`, ignorado): el Excel volvió a editarse a mano y trajo
+    Caja, "Pagado por" en Deuda, horas de las impresoras y compras nuevas.
+    Este script cubre lo que `sincronizar-excel.mjs` no mira (filamento,
+    insumos, gastos, campañas, equipos, deuda, caja, tasas) y además los
+    encargos/mostrador nuevos; `sincronizar-excel.mjs` queda como VERIFICADOR
+    (tiene que decir "Nada que cargar"). Ensayo por defecto, idempotente,
+    verifica contra el Excel. Quién pagó cada compra y la campaña de cada
+    encargo NO están en celdas: van escritos en `PAGADO_POR_VANAN` y
+    `ATRIBUCION` dentro del script. ⚠️ La marca **Filavent se renombró a
+    Filaven** (fichas y opción). ⚠️ El conteo del 21/09 da −$15,50 del negocio
+    contra los $8 de la hoja: la diferencia es EXACTAMENTE el descuadre de
+    $23,50 de la fila 11 de Ventas.
   - **El estado de la migración del Excel** vive en `docs/excel-vs-app.md` (mapa
     hoja por hoja) y `docs/backlog-migracion.md` (las 10 actividades que faltan,
     con las decisiones que bloquean cada una). Actualizarlos al avanzar.
@@ -432,8 +475,9 @@ en el repo web: se sobrescribe al sincronizar.
       Node no resuelve): se trae el CJS con `createRequire`.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
-    con 11 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
-    Clientes, Publicidad, Deuda, Metas, Producción). **Decisión del dueño: el
+    con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
+    Clientes, Publicidad, Deuda, Caja, Metas, Producción). Desde 2026-09-26
+    Gastos y Deuda llevan "Pagado por" y la hoja Caja reusa `CashService`. **Decisión del dueño: el
     Excel deja de ser un lugar donde cargar datos y pasa a ser una SALIDA de la
     app**, así que no hay dos sistemas que puedan discrepar.
     ⚠️ Las hojas se arman **reusando los servicios de cada pantalla**
@@ -730,6 +774,10 @@ en la base de producción se consulta y se espera OK explícito, aunque parezca 
   tanda) son inputs del `CalcInput`, **no viven en catálogos**.
 - `piecesPerBatch` está en la **raíz** del `CalcInput` (default 1). Los costos por
   tanda escalan `× cantidad/piecesPerBatch`; las tandas = `ceil(cantidad/piecesPerBatch)`.
+  **Las horas-máquina y la entrega usan placas ENTERAS** (`horas × tandas`, como
+  F35/F36 de la hoja desde 2026-10-01, shared 0.18.0): la última impresión corre
+  aunque vaya a medias. **El costo NO**: sigue `× cantidad/piecesPerBatch`, igual
+  que la hoja (costo de la tanda ÷ piezas); cobrar la placa vacía sería sobrecotizar.
 - **Un solo filamento** (`filament`) y **una sola tabla de insumos** (`supplies`,
   con `qty` POR PIEZA y `unitCost` ya resuelto). **No hay prorrateo por paquete.**
 - **Postprocesado** (`labor`): minutos POR PIEZA × valor de la hora.

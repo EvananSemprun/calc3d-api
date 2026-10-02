@@ -321,6 +321,7 @@ export class CampaignsService {
         reach: dto.reach ?? null,
         conversations: dto.conversations ?? null,
         profileVisits: dto.profileVisits ?? null,
+        followers: dto.followers ?? null,
       },
     });
   }
@@ -341,6 +342,7 @@ export class CampaignsService {
         ...(dto.reach !== undefined && { reach: dto.reach ?? null }),
         ...(dto.conversations !== undefined && { conversations: dto.conversations ?? null }),
         ...(dto.profileVisits !== undefined && { profileVisits: dto.profileVisits ?? null }),
+        ...(dto.followers !== undefined && { followers: dto.followers ?? null }),
       },
     });
   }
@@ -374,6 +376,7 @@ function serialize(c: {
   reach: number | null;
   conversations: number | null;
   profileVisits: number | null;
+  followers: number | null;
   createdAt: Date;
 }) {
   return {
@@ -391,6 +394,7 @@ function serialize(c: {
     reach: c.reach,
     conversations: c.conversations,
     profileVisits: c.profileVisits,
+    followers: c.followers,
     createdAt: c.createdAt.toISOString(),
   };
 }

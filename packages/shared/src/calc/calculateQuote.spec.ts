@@ -161,6 +161,21 @@ describe('calculateQuote — tandas y entrega', () => {
     expect(r.production.batches).toBe(5); // ceil(41 / 10)
   });
 
+  it('las horas-máquina y la entrega cuentan placas enteras (F35, F36)', () => {
+    // 41 piezas de a 10 son 5 impresiones: la máquina corre las 5 aunque la
+    // última lleve una sola pieza.
+    const r = calculateQuote({ ...enTandas(), quantity: 41, parallelPrinters: 2 });
+    expect(r.production.machineHours).toBe(30); // 6 h × ROUNDUP(41 / 10)
+    expect(r.production.deliveryHours).toBe(15); // 30 h ÷ 2 impresoras
+  });
+
+  it('el costo NO se redondea a placas enteras: sigue siendo por pieza', () => {
+    // Como la hoja (E48 = costo de la tanda ÷ piezas por tanda): cobrar la
+    // placa vacía de la última tanda sería sobrecotizar.
+    const r = calculateQuote({ ...enTandas(), quantity: 41 });
+    expect(r.breakdown.material).toBe(246); // $60 × 4,1
+  });
+
   it('las impresoras en paralelo dividen la entrega, no el costo', () => {
     const uno = calculateQuote(enTandas());
     const dos = calculateQuote({ ...enTandas(), parallelPrinters: 2 });

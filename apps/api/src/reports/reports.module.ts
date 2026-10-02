@@ -24,6 +24,7 @@ import { FilamentService } from '../filament/filament.service';
 import { GoalsModule, GoalsService } from '../goals/goals.module';
 import { LoansModule, LoansService } from '../loans/loans.module';
 import { PrintersModule, PrintersService } from '../printers/printers.module';
+import { CashModule, CashService } from '../cash/cash.module';
 
 /**
  * REPORTE EN EXCEL — el libro que reemplaza a `bananolab.xlsx`.
@@ -46,6 +47,7 @@ export class ReportsService {
     private goals: GoalsService,
     private loans: LoansService,
     private printers: PrintersService,
+    private cash: CashService,
   ) {}
 
   async workbook(organizationId: string): Promise<ExcelJS.Workbook> {
@@ -66,6 +68,7 @@ export class ReportsService {
       metas,
       recuperacion,
       produccion,
+      caja,
     ] = await Promise.all([
       this.prisma.settings.findFirst({ where: { organizationId } }),
       this.prisma.sale.findMany({
@@ -94,6 +97,7 @@ export class ReportsService {
       this.goals.list(organizationId),
       this.printers.recovery(organizationId),
       this.printers.usage(organizationId),
+      this.cash.summary(organizationId),
     ]);
 
     // "Stock mensual" muestra el ÚLTIMO MES CERRADO: un mes abierto (o reabierto
@@ -119,6 +123,14 @@ export class ReportsService {
     dinero(resumen, 'Gastos operativos', -gastoOperativo);
     dinero(resumen, 'RESULTADO', ingresoVentas + ingresoPedidos - gastoOperativo, true);
     dinero(resumen, 'Inversión en equipos (aparte)', inversion);
+    resumen.addRow([]);
+
+    bloque(resumen, 'Caja y financiamiento');
+    dinero(resumen, 'Saldo en caja', caja.balance.balance, true);
+    dinero(resumen, 'Le debe a Vanan', caja.financing.owedToOwner);
+    dinero(resumen, 'Le debe al prestamista', caja.financing.owedToLender);
+    dinero(resumen, 'TOTAL POR DEVOLVER', caja.financing.totalOwed, true);
+    resumen.addRow(['Detalle en la hoja Caja.']).font = { italic: true, size: 9 };
     resumen.addRow([]);
 
     bloque(resumen, 'Punto de equilibrio (mensual)');
@@ -217,6 +229,7 @@ export class ReportsService {
       { header: 'Cantidad', width: 10 },
       { header: 'Inversión', width: 10 },
       { header: 'Enlazado a', width: 28 },
+      { header: 'Pagado por', width: 14 },
     ]);
     for (const g of gastos) {
       hGastos.addRow([
@@ -227,6 +240,7 @@ export class ReportsService {
         g.quantity ?? '',
         g.isInvestment ? 'Sí' : '',
         g.material?.name ?? g.printer?.name ?? g.component?.name ?? g.campaign?.name ?? '',
+        PAGADO_POR[g.paidBy],
       ]);
     }
     totalizar(hGastos, 4);
@@ -332,6 +346,7 @@ export class ReportsService {
       { header: 'Alcance', width: 12 },
       { header: 'Conversaciones', width: 14 },
       { header: 'Visitas al perfil', width: 14 },
+      { header: 'Seguidores', width: 12 },
       { header: 'Costo por conversación', width: 20 },
     ]);
     for (const c of campanas) {
@@ -346,6 +361,7 @@ export class ReportsService {
         c.reach ?? '',
         c.conversations ?? '',
         c.profileVisits ?? '',
+        c.followers ?? '',
         c.conversations ? gasto / c.conversations : '',
       ]);
     }
@@ -357,12 +373,19 @@ export class ReportsService {
       { header: 'Fecha', width: 12 },
       { header: 'Monto', width: 14 },
       { header: 'Referencia', width: 30 },
+      { header: 'Pagado por', width: 14 },
     ]);
     for (const l of prestamos) {
       const cab = hDeuda.addRow([l.name, '', l.principal, `Cuota ${moneda(l.monthlyPayment)}/mes`]);
       cab.font = { bold: true };
       for (const p of l.payments) {
-        hDeuda.addRow([`   pago`, fecha(new Date(p.date)), p.amount, p.reference ?? '']);
+        hDeuda.addRow([
+          `   pago`,
+          fecha(new Date(p.date)),
+          p.amount,
+          p.reference ?? '',
+          PAGADO_POR[p.paidBy],
+        ]);
       }
       const pagos = l.payments.map((p) => ({ amount: p.amount }));
       hDeuda.addRow([
@@ -374,6 +397,67 @@ export class ReportsService {
       hDeuda.addRow([]);
     }
     formatoDinero(hDeuda, 3);
+
+    // ---------- Caja ----------
+    const hCaja = hoja(wb, 'Caja', [
+      { header: 'Concepto', width: 46 },
+      { header: 'Fecha', width: 12 },
+      { header: 'Monto', width: 14 },
+      { header: '', width: 14 },
+      { header: '', width: 14 },
+      { header: 'Nota', width: 40 },
+    ]);
+    bloque(hCaja, 'De dónde sale el saldo del negocio');
+    const b = caja.balance;
+    for (const [etiqueta, valor] of [
+      ['Ventas cobradas (+)', b.collected],
+      ['Gastos generales (−)', -b.expenses],
+      ['Filamento comprado (−)', -b.filament],
+      ['Equipos pagados por la caja (−)', -b.equipment],
+      ['Aportes de Vanan (+)', b.contributions],
+      ['Pagos a Vanan (−)', -b.withdrawals],
+      ['Cuotas del préstamo pagadas por la caja (−)', -b.loanPayments],
+    ] as const) {
+      hCaja.addRow([etiqueta, '', valor]);
+    }
+    hCaja.addRow(['SALDO DEL NEGOCIO', '', b.balance]).font = { bold: true };
+    hCaja.addRow([]);
+
+    bloque(hCaja, 'Conteo de los lunes');
+    hCaja.addRow(['', 'Lunes', 'En Binance', 'Del negocio', 'Personal']).font = { bold: true };
+    for (const c of caja.counts) {
+      const fila = hCaja.addRow(['', fecha(new Date(c.date)), c.total, c.business, c.personal, c.note ?? '']);
+      if (c.short) fila.getCell(5).font = { bold: true, color: { argb: 'FFC62828' } };
+    }
+    hCaja.addRow([]);
+
+    bloque(hCaja, 'Movimientos entre el bolsillo de Vanan y la caja');
+    for (const m of caja.movements) {
+      hCaja.addRow([
+        m.concept,
+        fecha(new Date(m.date)),
+        m.kind === 'CONTRIBUTION' ? m.amount : -m.amount,
+        m.kind === 'CONTRIBUTION' ? 'Aporte' : 'Pago a Vanan',
+        '',
+        m.note ?? '',
+      ]);
+    }
+    hCaja.addRow([
+      'Las compras que paga Vanan no van acá: son gastos con "Pagado por: Vanan".',
+    ]).font = { italic: true, size: 9 };
+    hCaja.addRow([]);
+
+    bloque(hCaja, 'Quién puso la plata');
+    hCaja.addRow(['Fuente', '', 'Puesto', 'Recuperado', 'Falta']).font = { bold: true };
+    for (const r of caja.financing.rows) {
+      hCaja.addRow([FUENTE[r.key], '', r.put, r.recovered, r.missing]);
+    }
+    hCaja.addRow(['Prestamista - saldo del préstamo', '', caja.financing.owedToLender, 0, caja.financing.owedToLender]);
+    hCaja.addRow(['TOTAL POR DEVOLVER', '', '', '', caja.financing.totalOwed]).font = { bold: true };
+    hCaja.addRow([
+      'Lo que Vanan saca se descuenta en este orden: diseñador, compras, cuotas y de último el equipo.',
+    ]).font = { italic: true, size: 9 };
+    formatoDinero(hCaja, 3, 4, 5);
 
     // ---------- Metas ----------
     const hMetas = hoja(wb, 'Metas', [
@@ -413,6 +497,7 @@ export class ReportsService {
       { header: 'Tasa de fallos', width: 13 },
       { header: 'Repuestos', width: 12 },
       { header: 'Mant. cobrado', width: 14 },
+      { header: 'Mant. por hora', width: 14 },
     ]);
     for (const p of produccion.printers) {
       const fila = hProd.addRow([
@@ -427,6 +512,7 @@ export class ReportsService {
         p.failureRate ?? 'sin datos',
         p.maintenance.spent,
         p.maintenance.charged,
+        p.maintPerHour,
       ]);
       fila.getCell(5).numFmt = '0.0%';
       if (typeof p.failureRate === 'number') fila.getCell(8).numFmt = '0.0%';
@@ -449,6 +535,13 @@ export class ReportsService {
 // ---------- Herramientas de armado ----------
 
 const FORMATO = '"$"#,##0.00';
+const PAGADO_POR = { BUSINESS: 'Negocio', OWNER: 'Vanan', LOAN: 'Préstamo' } as const;
+const FUENTE = {
+  designer: 'Vanan - Diseñador',
+  purchases: 'Vanan - Compras de su bolsillo',
+  loanPayments: 'Vanan - Cuotas del préstamo',
+  equipment: 'Vanan - Equipos',
+} as const;
 const suma = (ns: number[]) => Math.round(ns.reduce((s, n) => s + n, 0) * 100) / 100;
 const moneda = (n: number) => `$${n.toFixed(2)}`;
 const fecha = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '');
@@ -537,7 +630,7 @@ export class ReportsController {
 }
 
 @Module({
-  imports: [FilamentModule, GoalsModule, LoansModule, PrintersModule],
+  imports: [FilamentModule, GoalsModule, LoansModule, PrintersModule, CashModule],
   controllers: [ReportsController],
   providers: [ReportsService],
 })

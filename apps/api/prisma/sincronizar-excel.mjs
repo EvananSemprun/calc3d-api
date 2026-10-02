@@ -40,6 +40,8 @@ const norm = (s) => (s ?? '').trim().toLowerCase();
 const CANAL = {
   WhatsApp: 'WHATSAPP',
   Referido: 'REFERRAL',
+  // Encargo que trae el hermano de Vanan: es un referido.
+  Hermano: 'REFERRAL',
   // Vino por Instagram, pero nada dice que haya sido por un anuncio.
   Instagram: 'ORGANIC',
   // Contacto directo y cliente que vuelve: ninguno es un canal de captación.

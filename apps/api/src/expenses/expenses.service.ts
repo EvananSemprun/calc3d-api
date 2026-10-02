@@ -74,6 +74,7 @@ export class ExpensesService {
         campaignId: dto.campaignId || null,
         rate: dto.rate ?? null,
         currencyCode: dto.currencyCode ?? null,
+        paidBy: dto.paidBy,
       },
       include: this.linkInclude,
     });
@@ -170,6 +171,7 @@ export class ExpensesService {
           isInvestment: expense.isInvestment,
           quantity: expense.quantity ?? null,
           providerId: expense.providerId || null,
+          paidBy: expense.paidBy,
           [linkField]: linkId,
         },
         include: this.linkInclude,
@@ -196,6 +198,7 @@ export class ExpensesService {
         ...(dto.campaignId !== undefined && { campaignId: dto.campaignId || null }),
         ...(dto.rate !== undefined && { rate: dto.rate ?? null }),
         ...(dto.currencyCode !== undefined && { currencyCode: dto.currencyCode ?? null }),
+        ...(dto.paidBy && { paidBy: dto.paidBy }),
       },
       include: this.linkInclude,
     });

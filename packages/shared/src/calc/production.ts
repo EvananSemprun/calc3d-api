@@ -87,7 +87,22 @@ export function maintenanceBalance(
   return { spent: round4(spent), charged, difference: round4(charged - spent) };
 }
 
+/**
+ * MANTENIMIENTO POR HORA, derivado (hoja Costeo, E28:E30): todo lo gastado en
+ * repuestos entre las horas impresas de TODAS las máquinas.
+ *
+ * Es global y no por máquina porque la mayoría de los repuestos no dicen a cuál
+ * fueron. Se deriva y no se escribe a mano: una tarifa fija quedó en cero meses
+ * mientras se compraban boquillas y hot ends que no tocaban ningún precio.
+ * `null` sin horas leídas — no se sabe, y un cero se leería como "gratis".
+ */
+export function maintenanceRatePerHour(spent: number, hours: number): number | null {
+  if (!(hours > 0)) return null;
+  return round6(spent / hours);
+}
+
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
 // ----- Lecturas del contador de la máquina -----
 //

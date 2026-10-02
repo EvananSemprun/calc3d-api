@@ -114,7 +114,8 @@ export class FilamentService {
 
   /** El conteo del mes, con TODOS los materiales (los no contados, en cero). */
   async stock(organizationId: string, month: string): Promise<StockCountRow[]> {
-    const [materiales, conteos, cerrado] = await Promise.all([
+    const anterior = previousMonth(month);
+    const [materiales, conteos, cerrado, previo, previoCerrado, compradas] = await Promise.all([
       this.prisma.material.findMany({
         where: { organizationId },
         orderBy: { name: 'asc' },
@@ -122,11 +123,17 @@ export class FilamentService {
       }),
       this.countsOf(organizationId, month),
       this.isClosed(organizationId, month),
+      this.countsOf(organizationId, anterior),
+      this.isClosed(organizationId, anterior),
+      this.materialsBoughtIn(organizationId, month),
     ]);
     const porMaterial = new Map(conteos.map((c) => [c.materialId, c]));
+    // Solo un mes anterior CERRADO dice que algo se acabó; abierto no es dato final.
+    const anteriorPorMaterial = new Map(previoCerrado ? previo.map((c) => [c.materialId, c]) : []);
 
     return materiales.map((m) => {
       const c = porMaterial.get(m.id);
+      const ant = anteriorPorMaterial.get(m.id);
       const partes = { sealed: c?.sealed ?? 0, inUse: c?.inUse ?? 0, running: c?.running ?? 0 };
       return {
         materialId: m.id,
@@ -142,6 +149,11 @@ export class FilamentService {
         // cerrado lo que no se marcó es 0; un mes abierto o reabierto no es dato final.
         counted: cerrado,
         canDelete: m._count.expenses === 0 && m._count.stockCounts === 0,
+        // No hay: el mes anterior (cerrado) no la tenía —en 0 o ni siquiera en su
+        // conteo—, no se compró en este y no tiene rollos anotados.
+        exhausted:
+          previoCerrado && (!ant || stockTotal(ant) === 0) && !compradas.has(m.id) && stockTotal(partes) === 0,
+        previous: ant ? { sealed: ant.sealed, inUse: ant.inUse, running: ant.running } : null,
       };
     });
   }
@@ -336,6 +348,17 @@ export class FilamentService {
 
   /** Rollos que entraron en el mes: sin ellos, un mes con compras daría un
    *  consumo negativo, que es lo que le pasa a la hoja. */
+  /** Las fichas con al menos una compra (con rollos) dentro del mes. */
+  private async materialsBoughtIn(organizationId: string, month: string): Promise<Set<string>> {
+    const desde = monthStart(month);
+    const hasta = new Date(Date.UTC(desde.getUTCFullYear(), desde.getUTCMonth() + 1, 1));
+    const compras = await this.prisma.expense.findMany({
+      where: { organizationId, materialId: { not: null }, quantity: { gt: 0 }, date: { gte: desde, lt: hasta } },
+      select: { materialId: true },
+    });
+    return new Set(compras.map((c) => c.materialId as string));
+  }
+
   private async purchasedInMonth(organizationId: string, month: string): Promise<number> {
     const desde = monthStart(month);
     const hasta = new Date(Date.UTC(desde.getUTCFullYear(), desde.getUTCMonth() + 1, 1));

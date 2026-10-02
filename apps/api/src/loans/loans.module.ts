@@ -53,7 +53,13 @@ type LoanConPagos = {
   notes: string | null;
   printerId: string | null;
   printer: { id: string; name: string } | null;
-  payments: { id: string; date: Date; amount: unknown; reference: string | null }[];
+  payments: {
+    id: string;
+    date: Date;
+    amount: unknown;
+    reference: string | null;
+    paidBy: 'BUSINESS' | 'OWNER' | 'LOAN';
+  }[];
 };
 
 /** Arma la respuesta campo por campo: nunca se devuelve la fila cruda. */
@@ -65,6 +71,7 @@ function serialize(l: LoanConPagos) {
     date: p.date.toISOString(),
     amount: Number(p.amount),
     reference: p.reference,
+    paidBy: p.paidBy,
   }));
   const balance = loanBalance(principal, payments);
 
@@ -157,6 +164,7 @@ export class LoansService {
         date: new Date(dto.date),
         amount: dto.amount,
         reference: dto.reference ?? null,
+        paidBy: dto.paidBy,
       },
     });
     return this.get(organizationId, id);

@@ -122,6 +122,93 @@ describe('Conteo de stock', () => {
   });
 });
 
+describe('Conteo de stock — fichas que se acabaron el mes anterior', () => {
+  const SEPT = new Date('2026-09-01T00:00:00Z');
+  const AGO = new Date('2026-08-01T00:00:00Z');
+
+  /** Agosto CERRADO con m1 en 0 y m2 con un rollo; septiembre abierto. */
+  function conAgostoCerrado(opts: { agostoCerrado?: boolean } = {}) {
+    const prisma = makePrisma();
+    prisma.stockMonth.findUnique.mockImplementation(async ({ where }: { where: { organizationId_month: { month: Date } } }) =>
+      where.organizationId_month.month.getTime() === AGO.getTime() && opts.agostoCerrado !== false ? CERRADO : null,
+    );
+    prisma.stockCount.findMany.mockImplementation(async ({ where }: { where: { month: Date } }) =>
+      where.month.getTime() === AGO.getTime()
+        ? [
+            { materialId: 'm1', sealed: 0, inUse: 0, running: 0, needsBrandCheck: false },
+            { materialId: 'm2', sealed: 1, inUse: 0, running: 0, needsBrandCheck: false },
+          ]
+        : [],
+    );
+    return prisma;
+  }
+  const agotadas = (filas: { materialId: string; exhausted: boolean }[]) =>
+    filas.filter((f) => f.exhausted).map((f) => f.materialId);
+
+  it('marca la que cerró el mes anterior en 0 y no se compró en el mes', async () => {
+    const filas = await service(conAgostoCerrado()).stock(ORG, '2026-09');
+    // m3 ni siquiera estaba en el conteo de agosto: tampoco hay (decisión del
+    // dueño, 2026-10-01 — solo salen las que había o las que se compraron).
+    expect(agotadas(filas)).toEqual(['m1', 'm3']);
+  });
+
+  it('una ficha nueva comprada en el mes sale aunque no estuviera en el anterior', async () => {
+    const prisma = conAgostoCerrado();
+    prisma.expense.findMany.mockResolvedValue([{ materialId: 'm3', quantity: 1 }]);
+    const filas = await service(prisma).stock(ORG, '2026-09');
+    expect(agotadas(filas)).toEqual(['m1']);
+  });
+
+  it('si se compró durante el mes, vuelve a aparecer', async () => {
+    const prisma = conAgostoCerrado();
+    prisma.expense.findMany.mockResolvedValue([{ materialId: 'm1', quantity: 1 }]);
+
+    const filas = await service(prisma).stock(ORG, '2026-09');
+
+    expect(agotadas(filas)).toEqual(['m3']);
+    // Solo las compras DEL MES, de esta organización y con ficha.
+    expect(prisma.expense.findMany.mock.calls[0][0].where).toEqual({
+      organizationId: ORG,
+      materialId: { not: null },
+      quantity: { gt: 0 },
+      date: { gte: SEPT, lt: new Date('2026-10-01T00:00:00Z') },
+    });
+  });
+
+  it('con el mes anterior sin cerrar no esconde nada (no hay dato final)', async () => {
+    const filas = await service(conAgostoCerrado({ agostoCerrado: false })).stock(ORG, '2026-09');
+    expect(agotadas(filas)).toEqual([]);
+  });
+
+  it('trae cómo cerró cada ficha el mes anterior', async () => {
+    const filas = await service(conAgostoCerrado()).stock(ORG, '2026-09');
+    const por = Object.fromEntries(filas.map((f) => [f.materialId, f.previous]));
+    expect(por).toEqual({
+      m1: { sealed: 0, inUse: 0, running: 0 },
+      m2: { sealed: 1, inUse: 0, running: 0 },
+      m3: null, // no estaba al cierre de agosto
+    });
+  });
+
+  it('sin el mes anterior cerrado no hay referencia', async () => {
+    const filas = await service(conAgostoCerrado({ agostoCerrado: false })).stock(ORG, '2026-09');
+    expect(filas.every((f) => f.previous === null)).toBe(true);
+  });
+
+  it('no esconde una ficha que ya tiene rollos anotados este mes', async () => {
+    const prisma = conAgostoCerrado();
+    const agosto = await prisma.stockCount.findMany({ where: { month: AGO } });
+    prisma.stockCount.findMany.mockImplementation(async ({ where }: { where: { month: Date } }) =>
+      where.month.getTime() === AGO.getTime()
+        ? agosto
+        : [{ materialId: 'm1', sealed: 0, inUse: 1, running: 0, needsBrandCheck: false }],
+    );
+
+    const filas = await service(prisma).stock(ORG, '2026-09');
+    expect(agotadas(filas)).toEqual(['m3']);
+  });
+});
+
 describe('Resumen del mes', () => {
   it('suma los rollos y los que están por acabarse', async () => {
     const prisma = makePrisma();

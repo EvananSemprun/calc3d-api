@@ -1,4 +1,10 @@
-import { failureRate, lifeUsed, maintenanceBalance, productionStats } from './production';
+import {
+  failureRate,
+  lifeUsed,
+  maintenanceBalance,
+  maintenanceRatePerHour,
+  productionStats,
+} from './production';
 
 describe('lifeUsed', () => {
   it('es la fracción de la vida útil ya consumida', () => {
@@ -84,5 +90,16 @@ describe('maintenanceBalance', () => {
     const b = maintenanceBalance(50, 1, 100);
 
     expect(b.difference).toBe(50);
+  });
+});
+
+describe('maintenanceRatePerHour', () => {
+  it('reparte todos los repuestos entre las horas impresas (como el Costeo)', () => {
+    // 122 $ de repuestos entre 2413 + 357 horas.
+    expect(maintenanceRatePerHour(122, 2770)).toBeCloseTo(0.044043, 6);
+  });
+
+  it('sin horas leídas no hay tarifa: null, no cero', () => {
+    expect(maintenanceRatePerHour(122, 0)).toBeNull();
   });
 });

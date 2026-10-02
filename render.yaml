@@ -6,18 +6,19 @@
 # - El servicio se duerme tras ~15 min sin tráfico; la primera request tarda
 #   30-60 s en despertarlo (aceptable para uso de un solo dueño).
 # - La BD NO vive aquí (el Postgres free de Render se borra a los 30 días):
-#   usar Neon (https://neon.com) y pegar su connection string en DATABASE_URL.
+#   está en Railway. En DATABASE_URL va su URL PÚBLICA (Postgres → Variables →
+#   DATABASE_PUBLIC_URL); la interna (*.railway.internal) no se alcanza desde Render.
 services:
   - type: web
     name: calc3d-api
     runtime: docker
     plan: free
-    region: virginia # cerca de Neon us-east-1 (menor latencia API↔BD)
+    region: virginia
     healthCheckPath: /api/health
     autoDeploy: true # cada push a main redeploya
     envVars:
       - key: DATABASE_URL
-        sync: false # pegar la connection string de Neon (pooled)
+        sync: false # DATABASE_PUBLIC_URL del Postgres de Railway
       - key: JWT_SECRET
         generateValue: true # Render genera un secreto aleatorio
       - key: JWT_EXPIRES_IN

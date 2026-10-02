@@ -164,8 +164,11 @@ export function calculateQuote(raw: unknown): CalcResult {
   );
 
   // --- Producción (secciones 10 y el bloque de entrega) ---
+  // Horas-máquina con placas ENTERAS (F36 = horas × ROUNDUP(cantidad/tanda)): la
+  // última impresión corre aunque lleve menos piezas. El COSTO no se redondea
+  // así (usa batchMultiplier): cobrar la placa vacía sería sobrecotizar.
   const machineHours = printer
-    ? D(printer.hours).times(batchMultiplier)
+    ? D(printer.hours).times(batchCount)
     : new Decimal(0);
   const production: ProductionSummary = {
     piecesPerBatch: batchSize,

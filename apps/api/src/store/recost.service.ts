@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { calculateQuote, productStatus, type CalcInput } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { derivedMaintenance, effectiveMaintPerHour } from '../printers/printers.module';
 
 /**
  * RECOSTEO — recalcular una ficha con los precios de HOY.
@@ -28,11 +29,12 @@ export class RecostService {
 
   /** Carga catálogos + settings UNA vez para recostear uno o varios productos. */
   async loadCatalog(organizationId: string): Promise<CatalogContext> {
-    const [materials, printers, components, settings] = await Promise.all([
+    const [materials, printers, components, settings, mant] = await Promise.all([
       this.prisma.material.findMany({ where: { organizationId } }),
       this.prisma.printer.findMany({ where: { organizationId } }),
       this.prisma.component.findMany({ where: { organizationId } }),
       this.prisma.settings.findUnique({ where: { organizationId } }),
+      derivedMaintenance(this.prisma, organizationId),
     ]);
     return {
       materials: new Map(
@@ -45,7 +47,7 @@ export class RecostService {
             price: Number(p.price),
             lifetimeHours: p.lifetimeHours,
             powerKw: Number(p.powerKw),
-            maintPerHour: Number(p.maintPerHour),
+            maintPerHour: effectiveMaintPerHour(p.maintPerHour, mant.ratePerHour),
           },
         ]),
       ),

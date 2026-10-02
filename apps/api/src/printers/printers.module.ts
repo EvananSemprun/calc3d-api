@@ -22,6 +22,7 @@ import {
   latestReading,
   lifeUsed,
   maintenanceBalance,
+  maintenanceRatePerHour,
   monthKey,
   monthStart,
   productionStats,
@@ -34,12 +35,56 @@ import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * MANTENIMIENTO POR HORA derivado (hoja Costeo, E28:E30): todos los gastos de
+ * mantenimiento entre las horas de la última lectura de cada máquina. Es UNA
+ * tarifa para todas, porque la mayoría de los repuestos no dicen a cuál fueron.
+ *
+ * Exportado suelto (y no como método) porque también lo usa el recosteo de la
+ * tienda, que no debe depender del módulo de impresoras.
+ */
+export async function derivedMaintenance(prisma: PrismaService, organizationId: string) {
+  const [gastos, printers] = await Promise.all([
+    prisma.expense.aggregate({
+      where: { organizationId, category: 'MAINTENANCE' },
+      _sum: { amount: true },
+    }),
+    prisma.printer.findMany({
+      where: { organizationId },
+      select: { readings: { select: { hours: true }, orderBy: { month: 'desc' }, take: 1 } },
+    }),
+  ]);
+  const spent = Number(gastos._sum.amount ?? 0);
+  const hours = printers.reduce((s, p) => s + Number(p.readings[0]?.hours ?? 0), 0);
+  return { spent, hours, ratePerHour: maintenanceRatePerHour(spent, hours) };
+}
+
+/**
+ * La tarifa que cobra cada máquina: la derivada si hay lecturas; si todavía no
+ * se leyó ningún contador, la que se escribió a mano en la ficha.
+ */
+export function effectiveMaintPerHour(stored: unknown, derived: number | null) {
+  return derived ?? Number(stored);
+}
+
 @Injectable()
 export class PrintersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list(organizationId: string) {
-    return this.prisma.printer.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' } });
+  async list(organizationId: string) {
+    const [printers, { ratePerHour }] = await Promise.all([
+      this.prisma.printer.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' } }),
+      derivedMaintenance(this.prisma, organizationId),
+    ]);
+    return printers.map((p) => ({
+      ...p,
+      maintPerHour: effectiveMaintPerHour(p.maintPerHour, ratePerHour),
+      maintPerHourDerived: ratePerHour != null,
+    }));
+  }
+
+  maintenance(organizationId: string) {
+    return derivedMaintenance(this.prisma, organizationId);
   }
 
   create(organizationId: string, dto: PrinterDto) {
@@ -134,7 +179,7 @@ export class PrintersService {
    * supuestos**, que es justo lo que estos números vienen a reemplazar.
    */
   async usage(organizationId: string, now = new Date()) {
-    const [printers, pedidos] = await Promise.all([
+    const [printers, pedidos, mant] = await Promise.all([
       this.prisma.printer.findMany({
         where: { organizationId },
         select: {
@@ -154,6 +199,7 @@ export class PrintersService {
         where: { organizationId, status: { not: 'CANCELLED' } },
         select: { printerId: true, reprints: true, lines: true },
       }),
+      derivedMaintenance(this.prisma, organizationId),
     ]);
 
     const piezas = (lines: unknown) =>
@@ -177,12 +223,13 @@ export class PrintersService {
       // se imprime fuera del negocio, y eso gasta vida útil igual.
       const ultima = latestReading(lecturas);
       const horas = ultima?.hours ?? 0;
+      const tarifa = effectiveMaintPerHour(p.maintPerHour, mant.ratePerHour);
 
       return {
         id: p.id,
         name: p.name,
         lifetimeHours: p.lifetimeHours,
-        maintPerHour: Number(p.maintPerHour),
+        maintPerHour: tarifa,
         jobs: suyos.length,
         ...productionStats(suyos),
         hours: horas,
@@ -190,7 +237,7 @@ export class PrintersService {
         hoursThisMonth: hoursThisMonth(lecturas, mes),
         // null (y no 0 %) mientras no haya ninguna lectura: no se sabe.
         lifeUsed: ultima ? lifeUsed(horas, p.lifetimeHours) : null,
-        maintenance: maintenanceBalance(gastado, Number(p.maintPerHour), horas),
+        maintenance: maintenanceBalance(gastado, tarifa, horas),
       };
     });
 
@@ -201,6 +248,8 @@ export class PrintersService {
     return {
       printers: rows,
       month: mes,
+      /** La tarifa global derivada: repuestos ÷ horas de todas las máquinas. */
+      maintenanceRate: mant,
       total: {
         ...total,
         hours: rows.reduce((s, r) => s + r.hours, 0),
@@ -287,6 +336,11 @@ export class PrintersController {
   @Get('recovery')
   recovery(@CurrentUser() user: AuthUser) {
     return this.service.recovery(user.organizationId);
+  }
+
+  @Get('maintenance')
+  maintenance(@CurrentUser() user: AuthUser) {
+    return this.service.maintenance(user.organizationId);
   }
 
   @Get('usage')
