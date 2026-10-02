@@ -706,43 +706,90 @@ en el repo web: se sobrescribe al sincronizar.
   Como no hay registro público, **el seed es la única vía de crear la cuenta**. Con
   `SEED_DEMO=1` además siembra un catálogo de ejemplo (caso del llavero) en su org.
 
+## Producción (desde 2026-10-01): API en Render, base en Railway, panel en Cloudflare
+
+| Pieza | Dónde | URL |
+|---|---|---|
+| API (este repo) | **Render**, plan free, Docker | `https://calc3d-api.onrender.com/api` |
+| Base de datos | **Railway**, PostgreSQL **17** | host `crossover.proxy.rlwy.net`, puerto `48405`, base `railway` |
+| Panel (`calc3d-web`) | **Cloudflare Pages** | `https://calc3d-web.pages.dev` |
+
+- **Render** se configura con `render.yaml` (Blueprint) y redespliega solo en
+  cada push a `main` (`autoDeploy`). Variables: `DATABASE_URL` (la URL **pública**
+  de Railway, `DATABASE_PUBLIC_URL`; la interna `*.railway.internal` no se alcanza
+  desde Render), `JWT_SECRET` (la genera Render), `JWT_EXPIRES_IN`, `TRUST_PROXY=1`,
+  y `WEB_ORIGIN` / `APP_URL` = `https://calc3d-web.pages.dev` **exacto, sin barra
+  final**: si no coincide, el navegador bloquea el login por CORS sin decir por
+  qué. No hacen falta `STORE_*` ni `R2_*` mientras se use solo el panel.
+- ⚠️ **Plan free: la API se duerme a los 15 min sin tráfico** y la primera request
+  tarda ~50 s en despertarla (aceptado por el dueño: solo usa el panel). Si algún
+  día se publica la tienda, eso no sirve para un cliente: ping a `/api/health`
+  cada 10 min (no toca la base) o pasar a un plan pago.
+- **El `Dockerfile` (arreglado el 2026-10-01, verificado en un clon limpio):**
+  - **Node 22**: pnpm 11 (`packageManager`) exige Node ≥ 22.13. Con `node:20`
+    moría en `pnpm install` con *"No such built-in module: node:sqlite"*.
+  - **`COPY . .` ANTES de `pnpm install`**: el `postinstall` de la raíz compila
+    `packages/shared`; con solo los `package.json` fallaba ("tsconfig.json no existe").
+  - `pnpm-lock.yaml` + `--frozen-lockfile` (antes no copiaba el lockfile y cada
+    build resolvía versiones nuevas) y `openssl` (Prisma lo necesita en Alpine).
+  - ⚠️ Probar el build en Windows dentro de una ruta LARGA (p. ej. el scratchpad
+    de `AppData\Local\Temp`) da un falso error de Prisma al arrancar
+    (`ERR_PACKAGE_IMPORT_NOT_DEFINED: #main-entry-point`): es el límite de 260
+    caracteres de Windows, no un bug. En una ruta corta (`C:\algo`) arranca bien,
+    y en el contenedor Linux no existe.
+- **La base de Railway estaba VACÍA hasta el 2026-10-01** (0 tablas): nunca se
+  había migrado. Se cargó con `pg_dump -Fc --no-owner --no-privileges` de la base
+  local + `pg_restore --single-transaction --exit-on-error` (local 18 → Railway 17,
+  compatible). Llevó también `_prisma_migrations`, así que el primer
+  `migrate deploy` de Render no hizo nada.
+- **Usuarios de producción**: queda UNA sola cuenta, `dueno@calc3d.local` (el
+  2026-10-01 se borró la otra cuenta, a pedido del dueño). ⚠️ Venía con
+  la contraseña del seed, que está escrita más abajo en este archivo PÚBLICO: el
+  dueño tiene que haberla cambiado (y conviene pasarle el correo a uno real, o el
+  reset de contraseña no le llega a nadie). Sin `RESEND_API_KEY` en Render, el
+  correo de reset no se envía.
+- ⚠️ **Desde el 2026-10-01 la base que manda es la de PRODUCCIÓN**: el dueño
+  carga datos en el panel publicado. La local quedó como copia de ese día. Los
+  scripts `sincronizar-*.mjs` leen `DATABASE_URL` del `.env` (la LOCAL): correrlos
+  contra prod es tocar producción (backup + OK explícito antes).
+
 ## Base de datos: local para desarrollar, Railway en producción
 
 **1. Desarrollar y probar SIEMPRE contra la base local.**
 - Nada de apuntar a producción "para probar rápido". El `.env` de desarrollo se
   queda con la `DATABASE_URL` local (Postgres 18 en `localhost:5432`, base `calc3d`).
-- **Cuenta de pruebas**: la del `seed` — `dueno@calc3d.local` / `calc3d1234`
-  (defaults de `OWNER_EMAIL`/`OWNER_PASSWORD`). Como no hay registro público, el
-  seed es la única vía de crear cuentas: si hace falta otra para probar algo,
-  créala en la local con el seed o un script. Nunca usar una cuenta real de prod.
+- **Cuenta de pruebas (SOLO local)**: la del `seed` — `dueno@calc3d.local` /
+  `calc3d1234` (defaults de `OWNER_EMAIL`/`OWNER_PASSWORD`). Como no hay registro
+  público, el seed es la única vía de crear cuentas: si hace falta otra para
+  probar algo, créala en la local con el seed o un script. Nunca usar una cuenta
+  real de prod, ni probar esta contraseña contra producción.
 - Antes de dar una feature por buena: `pnpm test:shared` + prueba manual real
   (API en 3001 + web-preview de `calc3d-web` en 5180).
 
 **2. Solo cuando lo local está probado, subir y migrar a producción.**
-- Producción = **PostgreSQL en Railway**: host `crossover.proxy.rlwy.net`, puerto
-  `48405`, base `railway`, usuario `postgres`.
-- ⚠️ **El `Dockerfile` ya corre `prisma migrate deploy` al arrancar el contenedor**
-  (su `CMD`: `pnpm --filter @calc3d/api exec prisma migrate deploy && node
-  apps/api/dist/src/main.js`). Es decir: **DESPLEGAR la API en Railway ya aplica
-  las migraciones pendientes por sí solo**, sin paso manual. Por eso el backup
-  (`pg_dump`) y el OK explícito del dueño van **ANTES del push/deploy**, no antes
-  de un `migrate deploy` manual — para cuando alguien fuera a correrlo a mano, el
-  deploy ya lo disparó solo y el backup llegaría tarde.
-- **La contraseña NO se escribe en este archivo ni en nada versionado.** La URL
-  completa vive como `DATABASE_URL_PROD` en `apps/api/.env.production.local`
-  (lo cubre el `.gitignore` con `.env.*`; ese archivo NO se carga solo).
+- La URL de la base de producción (Railway) **NO se escribe en este archivo ni en
+  nada versionado**: vive como `DATABASE_URL_PROD` en
+  `apps/api/.env.production.local` (lo cubre el `.gitignore` con `.env.*`; ese
+  archivo NO se carga solo).
+- ⚠️ **El `Dockerfile` corre `prisma migrate deploy` al arrancar el contenedor**:
+  cada push a `main` despliega en Render y **aplica solo** las migraciones
+  pendientes contra Railway. Por eso el backup (`pg_dump`) y el OK explícito del
+  dueño van **ANTES del push**, no antes de un `migrate deploy` manual: para
+  cuando alguien fuera a correrlo a mano, el deploy ya lo disparó solo.
 - Las migraciones se **generan y commitean en local** (`prisma migrate dev` contra
-  la base local); el deploy las aplica solo (ver ⚠️ arriba). El comando manual de
-  abajo es para los casos **fuera** de un deploy normal — verificar
-  `migrate status` contra prod, o aplicar una migración sin publicar una imagen
-  nueva — cargando la URL a mano en la sesión de PowerShell:
+  la base local). El comando manual de abajo es para los casos **fuera** de un
+  deploy normal — verificar `migrate status` contra prod, o aplicar una
+  migración sin publicar una imagen nueva — cargando la URL a mano en la sesión
+  de PowerShell:
   ```powershell
   $env:DATABASE_URL = ((Get-Content .\apps\api\.env.production.local `
     | Where-Object { $_ -match '^DATABASE_URL_PROD=' }) -replace '^DATABASE_URL_PROD=','').Trim('"')
-  pnpm --filter @calc3d/api exec prisma migrate deploy
+  pnpm --filter @calc3d/api exec prisma migrate status
   ```
   Esa variable vive solo en esa sesión: cerrá la terminal (o reasigná la URL local)
   al terminar, para no dejarla apuntando a prod sin querer.
+- ⚠️ **PowerShell 5.1 se come las comillas dobles** al pasarle SQL a `psql`
+  (`"Order"` llega como `Order` y falla). Pasar el SQL por archivo con `-f`.
 - **Prohibido contra producción**: `prisma migrate dev`, `migrate reset`,
   `db push --accept-data-loss` y `SEED_DEMO=1 pnpm seed` (el catálogo demo no va a
   prod). El seed normal (dueño + tasas de protección, idempotente) sí, con
@@ -751,7 +798,7 @@ en el repo web: se sobrescribe al sincronizar.
   (`"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"` contra la URL de Railway).
 - Nunca editar una migración ya aplicada en prod: se crea una nueva encima.
 - Después de migrar: `prisma migrate status` contra prod limpio y la API de
-  producción arrancando. Verificarlo, no asumirlo.
+  producción arrancando (`/api/health`). Verificarlo, no asumirlo.
 - Recordar el flujo de migraciones no-interactivo: Prisma no permite `migrate dev`
   con drops sin TTY → generar el SQL con `migrate diff --from-url ... --script`,
   guardarlo como migración y aplicarlo con `migrate deploy`.
