@@ -5,14 +5,14 @@ FROM node:22-alpine AS build
 RUN apk add --no-cache openssl \
  && corepack enable && corepack prepare pnpm@11.6.0 --activate
 WORKDIR /app
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/api/package.json apps/api/
-# Lockfile congelado: el build instala exactamente las versiones probadas en local.
-RUN pnpm install --frozen-lockfile
+# Todo el código ANTES de instalar: el `postinstall` de la raíz compila
+# packages/shared, y con solo los package.json fallaba ("tsconfig.json no
+# existe"). Se pierde el cacheo por capas; en el plan free da igual.
 COPY . .
-RUN pnpm --filter @calc3d/shared build \
- && pnpm --filter @calc3d/api prisma:generate \
+# Lockfile congelado: el build instala exactamente las versiones probadas en
+# local. El postinstall deja compilado shared.
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @calc3d/api prisma:generate \
  && pnpm --filter @calc3d/api build
 
 FROM node:22-alpine
