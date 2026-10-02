@@ -4,7 +4,7 @@
   "private": true,
   "description": "Backend Calc3D (NestJS + Prisma) — repo independiente",
   "packageManager": "pnpm@11.6.0",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22.13" },
   "scripts": {
     "postinstall": "pnpm --filter @calc3d/shared build",
     "build": "pnpm -r build",
