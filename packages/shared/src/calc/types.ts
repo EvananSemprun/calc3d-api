@@ -37,8 +37,15 @@ export interface PriceResult {
   final: number;
   /** true si `final` viene de un precio escrito a mano */
   isManual: boolean;
-  /** margen real sobre el costo con el precio final — B55 */
+  /** recargo real sobre el COSTO con el precio final — B55 */
   marginReal: number;
+  /**
+   * MARGEN SOBRE VENTA: (precio − costo) ÷ precio. NO es `marginReal`, que es
+   * el RECARGO sobre el costo ((precio − costo) ÷ costo). Un recargo del 100 %
+   * es un margen del 50 %: la app llamaba "margen" a las dos cosas y el piso
+   * del semáforo se leía como el doble de protección de la que da (2026-10-02).
+   */
+  marginOnSale: number;
   /** ganancia por pieza (final − costo unitario) — B56 */
   profitPerUnit: number;
   /** diferencia contra el precio sugerido — B57 */
@@ -53,8 +60,10 @@ export interface RoundingOption {
   increment: number;
   /** precio al que llevaría esa regla */
   price: number;
-  /** margen real que dejaría ese precio */
+  /** recargo sobre el costo que dejaría ese precio */
   marginReal: number;
+  /** margen sobre venta que dejaría ese precio (ver `PriceResult.marginOnSale`) */
+  marginOnSale: number;
 }
 
 /** Precio de mayoreo para un tramo. */
@@ -64,7 +73,10 @@ export interface WholesaleTierResult {
   discountPct: number;
   /** precio unitario del tramo, ya redondeado */
   unitPrice: number;
+  /** recargo sobre el costo del precio del tramo */
   marginReal: number;
+  /** margen sobre venta del precio del tramo (ver `PriceResult.marginOnSale`) */
+  marginOnSale: number;
   profitPerUnit: number;
   /** true si es el tramo aplicable a la cantidad del pedido */
   applies: boolean;
@@ -125,8 +137,10 @@ export interface OrderTotals {
   total: number;
   /** ganancia del pedido — B77 */
   profit: number;
-  /** margen real del precio cobrado (para no recalcularlo en cada pantalla) */
+  /** recargo sobre el costo del precio cobrado (para no recalcularlo en cada pantalla) */
   marginReal: number;
+  /** margen sobre venta del precio cobrado (ver `PriceResult.marginOnSale`) */
+  marginOnSale: number;
   /** semáforo del precio COBRADO (puede diferir del de lista) */
   status: PriceStatus;
 }

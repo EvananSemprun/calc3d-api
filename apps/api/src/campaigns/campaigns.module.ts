@@ -73,6 +73,15 @@ interface CampaignStats {
   sales: number;
   orders: number;
   ordersTotal: number;
+  /**
+   * Encargos atribuidos que todavía están COTIZADOS: trabajo que la campaña
+   * trajo pero que aún no se confirmó. ⚠️ El panel lo lee desde que existe la
+   * pantalla; dejó de calcularse al eliminarse los presupuestos (2026-09-07) y
+   * el detalle de campaña reventó en TODAS las campañas hasta el 2026-10-02
+   * (`costPer(invested, undefined)` → DecimalError). Si alguna vez deja de
+   * hacer falta, hay que sacarlo del tipo del front en el mismo cambio.
+   */
+  quotes: number;
 }
 
 const emptyStats = (): CampaignStats => ({
@@ -83,6 +92,7 @@ const emptyStats = (): CampaignStats => ({
   sales: 0,
   orders: 0,
   ordersTotal: 0,
+  quotes: 0,
 });
 
 
@@ -101,10 +111,11 @@ export class CampaignsService {
         where: { organizationId, campaignId: { not: null } },
         select: { campaignId: true, amount: true },
       }),
-      // Una cotización (QUOTED) todavía no es venta y una cancelada ya no lo es.
+      // Una cancelada ya no cuenta para nada. Las COTIZADAS sí se traen, pero
+      // solo para contarlas aparte: todavía no son venta.
       this.prisma.order.findMany({
-        where: { organizationId, campaignId: { not: null }, status: { notIn: ['QUOTED', 'CANCELLED'] } },
-        select: { campaignId: true, lines: true },
+        where: { organizationId, campaignId: { not: null }, status: { not: 'CANCELLED' } },
+        select: { campaignId: true, lines: true, status: true },
       }),
     ]);
 
@@ -131,6 +142,12 @@ export class CampaignsService {
     }
     for (const o of orders) {
       const st = at(o.campaignId!);
+      // Una cotización todavía no es venta: se cuenta como interés generado,
+      // no suma a "vendido" ni al total de encargos.
+      if (o.status === 'QUOTED') {
+        st.quotes += 1;
+        continue;
+      }
       const total = orderTotal((o.lines as unknown as OrderLine[]) ?? []);
       st.orders += 1;
       st.ordersTotal += total;

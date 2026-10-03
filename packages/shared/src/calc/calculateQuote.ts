@@ -38,10 +38,28 @@ const ROUNDING_CHOICES: { mode: RoundingMode; increment: number }[] = [
   { mode: 'NONE', increment: 1 },
 ];
 
-/** Margen real sobre el costo. Sin costo no hay margen que calcular. */
+/**
+ * RECARGO sobre el costo: (precio − costo) ÷ costo. Es lo que la app llamaba
+ * "margen" en los tres lugares (objetivo, real y piso del semáforo), y no lo es:
+ * un recargo del 100 % es un margen del 50 %. El nombre interno se conserva
+ * (`marginReal` viaja en el contrato y lo leen el panel y los PDF); lo que
+ * cambió es cómo se NOMBRA de cara al usuario y que ahora va acompañado de
+ * `marginOnSale`, que sí es margen.
+ */
 function marginOver(price: Decimal, cost: Decimal): number {
   if (cost.lte(0)) return 0;
   return price.div(cost).minus(1).toDecimalPlaces(6).toNumber();
+}
+
+/**
+ * MARGEN sobre la venta: (precio − costo) ÷ precio. Es la cifra que se compara
+ * con cualquier referencia del rubro ("trabajo al 40 % de margen") y la que
+ * contesta "de cada $100 que cobro, ¿cuánto me queda?". Sin precio no hay
+ * margen que calcular.
+ */
+function marginOnSaleOf(price: Decimal, cost: Decimal): number {
+  if (price.lte(0)) return 0;
+  return price.minus(cost).div(price).toDecimalPlaces(6).toNumber();
 }
 
 /**
@@ -149,7 +167,13 @@ export function calculateQuote(raw: unknown): CalcResult {
 
   const roundingOptions: RoundingOption[] = ROUNDING_CHOICES.map(({ mode, increment }) => {
     const p = roundToIncrement(D(price.suggested), mode, increment);
-    return { mode, increment, price: toMoney(p), marginReal: marginOver(p, costPerUnitD) };
+    return {
+      mode,
+      increment,
+      price: toMoney(p),
+      marginReal: marginOver(p, costPerUnitD),
+      marginOnSale: marginOnSaleOf(p, costPerUnitD),
+    };
   });
 
   // --- Mayoreo (sección 11) ---
@@ -162,6 +186,15 @@ export function calculateQuote(raw: unknown): CalcResult {
     input.wholesale.tiers,
     rounding,
   );
+
+  // El pedido se resuelve UNA vez y el mayoreo copia SUS totales. Calcularlos
+  // por separado hacía que la misma pantalla mostrara $73 en el panel y $75 en
+  // la tarjeta de mayoreo (2026-10-02, con precio manual + redondeo).
+  const order = buildOrder(price, wholesale, costPerUnitD, qty, markup, minMarginPct);
+  if (wholesale) {
+    wholesale.orderTotal = order.total;
+    wholesale.orderProfit = order.profit;
+  }
 
   // --- Producción (secciones 10 y el bloque de entrega) ---
   // Horas-máquina con placas ENTERAS (F36 = horas × ROUNDUP(cantidad/tanda)): la
@@ -194,7 +227,7 @@ export function calculateQuote(raw: unknown): CalcResult {
     roundingOptions,
     wholesale,
     production,
-    order: buildOrder(price, wholesale, costPerUnitD, qty, markup, minMarginPct),
+    order,
   };
 }
 
@@ -216,6 +249,7 @@ function buildOrder(
   const fromTier = !!tier && tier.discountPct > 0;
   const unit = fromTier ? D(tier.unitPrice) : D(price.final);
   const marginReal = marginOver(unit, cost);
+  const marginOnSale = marginOnSaleOf(unit, cost);
 
   return {
     units: qty.toNumber(),
@@ -226,6 +260,7 @@ function buildOrder(
     total: toMoney(unit.times(qty)),
     profit: toMoney(unit.minus(cost).times(qty)),
     marginReal,
+    marginOnSale,
     status: statusFor(unit, cost, marginReal, markup, minMargin),
   };
 }
@@ -250,6 +285,7 @@ function buildPrice(
     final: toMoney(final),
     isManual,
     marginReal,
+    marginOnSale: marginOnSaleOf(final, cost),
     profitPerUnit: toMoney(final.minus(cost)),
     diffVsSuggested: toMoney(final.minus(suggested)),
     status: statusFor(final, cost, marginReal, markup, minMargin),
@@ -272,27 +308,40 @@ function buildWholesale(
   if (tiers.length === 0) return null;
   const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
 
-  // tramo aplicable: el de mayor minQty que no supere la cantidad del pedido
-  const appliedSource = [...sorted].reverse().find((t) => quantity >= t.minQty) ?? sorted[0];
+  // Tramo aplicable: el de mayor minQty que no supere la cantidad del pedido.
+  // ⚠️ Si la cantidad no alcanza NINGUNO, no aplica ninguno. Caer al primero
+  // (`?? sorted[0]`) le daba el descuento del tramo de 12 a un pedido de 1 pieza
+  // — regalar margen sin que nadie lo pidiera (2026-10-02).
+  const appliedSource = [...sorted].reverse().find((t) => quantity >= t.minQty) ?? null;
 
   const tierResults: WholesaleTierResult[] = sorted.map((t) => {
-    const raw = finalPrice.times(D(1).minus(t.discountPct));
-    const unitPrice = roundToIncrement(raw, rounding.mode, rounding.increment);
+    // Un tramo de 0 % ES el precio de lista: volver a redondearlo movía un
+    // precio manual que el dueño fijó a mano ($7,30 → $7,50).
+    const unitPrice =
+      t.discountPct > 0
+        ? roundToIncrement(finalPrice.times(D(1).minus(t.discountPct)), rounding.mode, rounding.increment)
+        : finalPrice;
     const marginReal = marginOver(unitPrice, cost);
     return {
       minQty: t.minQty,
       discountPct: t.discountPct,
       unitPrice: toMoney(unitPrice),
       marginReal,
+      marginOnSale: marginOnSaleOf(unitPrice, cost),
       profitPerUnit: toMoney(unitPrice.minus(cost)),
-      applies: t.minQty === appliedSource.minQty,
+      applies: appliedSource != null && t.minQty === appliedSource.minQty,
       status: statusFor(unitPrice, cost, marginReal, markup, minMargin),
     };
   });
 
   const appliedTier = tierResults.find((t) => t.applies) ?? null;
+
+  // `orderTotal`/`orderProfit` los pisa `calculateQuote` con los del pedido:
+  // el precio que se cobra se decide en UN solo lugar (`buildOrder`). Acá van
+  // calculados igual para que el tipo quede completo si alguien usa el helper
+  // suelto, pero la fuente de verdad es el pedido.
   const unit = appliedTier ? D(appliedTier.unitPrice) : finalPrice;
-  const profit = appliedTier ? D(appliedTier.profitPerUnit) : finalPrice.minus(cost);
+  const profit = unit.minus(cost);
 
   return {
     tiers: tierResults,

@@ -37,9 +37,13 @@ function makePrisma(pedidos: { status: string; lines: unknown }[], ventas: { amo
     sale: { findMany: jest.fn().mockResolvedValue(ventas.map((v) => ({ campaignId: 'c1', ...v }))) },
     // Respeta el filtro de estado de la consulta, como lo haría la base.
     order: {
-      findMany: jest.fn(async ({ where }: { where: { status?: { notIn?: string[] } } }) =>
+      findMany: jest.fn(async ({ where }: { where: { status?: { not?: string; notIn?: string[] } } }) =>
         pedidos
-          .filter((p) => !where.status?.notIn?.includes(p.status))
+          .filter((p) => {
+            if (where.status?.notIn?.includes(p.status)) return false;
+            if (where.status?.not != null && where.status.not === p.status) return false;
+            return true;
+          })
           .map((p) => ({ campaignId: 'c1', ...p })),
       ),
     },
@@ -81,5 +85,69 @@ describe('CampaignsService — lo vendido por una campaña', () => {
     expect(s.revenue).toBe(15.46);
     // Stand Modular: $15,46 contra $19,58 — esa sí está en riesgo.
     expect(campaignHealth(s)).toBe('AT_RISK');
+  });
+});
+
+/**
+ * REGRESIÓN (2026-10-02): el detalle de campaña reventaba en TODAS las campañas
+ * con "DecimalError: Invalid argument: undefined". El panel lee `stats.quotes`
+ * desde siempre, pero la API dejó de calcularlo al eliminarse los presupuestos
+ * (2026-09-07) y nadie lo notó: el tipo del front lo declara `number`, así que
+ * TypeScript afirmaba que estaba. El contrato se verifica acá, no en el tipo.
+ */
+describe('CampaignsService — el contrato de stats no pierde campos', () => {
+  const CAMPOS = [
+    'invested',
+    'revenue',
+    'profit',
+    'hasCost',
+    'sales',
+    'orders',
+    'ordersTotal',
+    'quotes',
+  ] as const;
+
+  it('devuelve TODOS los campos que el panel lee', async () => {
+    const s = await stats(makePrisma([{ status: 'DELIVERED', lines: linea(30) }]));
+    for (const campo of CAMPOS) {
+      expect(s).toHaveProperty(campo);
+      expect(s[campo]).toBeDefined();
+    }
+  });
+
+  it('una campaña sin nada devuelve los mismos campos, en cero', async () => {
+    const prisma = makePrisma([]);
+    prisma.expense.findMany = jest.fn().mockResolvedValue([]);
+    const s = await stats(prisma);
+    for (const campo of CAMPOS) expect(s).toHaveProperty(campo);
+    expect(s.quotes).toBe(0);
+    expect(s.profit).toBe(0);
+  });
+
+  it('cuenta las cotizaciones aparte: interés generado, no venta', async () => {
+    const s = await stats(
+      makePrisma([
+        { status: 'QUOTED', lines: linea(100) },
+        { status: 'QUOTED', lines: linea(50) },
+        { status: 'DELIVERED', lines: linea(30) },
+      ]),
+    );
+    expect(s.quotes).toBe(2);
+    // Lo cotizado NO infla lo vendido ni el conteo de encargos.
+    expect(s.orders).toBe(1);
+    expect(s.revenue).toBe(30);
+    expect(s.ordersTotal).toBe(30);
+  });
+
+  it('un encargo cancelado no cuenta ni como cotización', async () => {
+    const s = await stats(
+      makePrisma([
+        { status: 'CANCELLED', lines: linea(999) },
+        { status: 'QUOTED', lines: linea(10) },
+      ]),
+    );
+    expect(s.quotes).toBe(1);
+    expect(s.orders).toBe(0);
+    expect(s.revenue).toBe(0);
   });
 });

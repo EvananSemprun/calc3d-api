@@ -450,3 +450,111 @@ describe('calculateQuote — validaciones', () => {
     expect(() => calculateQuote({ ...base(), parallelPrinters: 0 })).toThrow();
   });
 });
+
+/**
+ * REGRESIÓN (2026-10-02): la pantalla mostraba DOS totales distintos del mismo
+ * pedido. `order.total` es el canónico (`buildOrder` existe justamente para que
+ * panel, cotización y venta no digan cifras distintas), pero la tarjeta de
+ * mayoreo leía `wholesale.orderTotal`, que se calculaba aparte y podía diferir.
+ */
+describe('el pedido tiene UN solo total', () => {
+  it('con precio manual y redondeo, mayoreo no inventa un total distinto', () => {
+    const r = calculateQuote({
+      ...base(),
+      quantity: 10,
+      manualPrice: 7.3,
+      margins: { markup: 1.0, minMarginPct: 0.6, rounding: { mode: 'UP', increment: 0.5 } },
+      // Un tramo de 0 % es el precio de lista: no debería re-redondear el
+      // precio manual que el dueño fijó a mano.
+      wholesale: { tiers: [{ minQty: 1, discountPct: 0 }] },
+    });
+
+    expect(r.price.final).toBe(7.3);
+    expect(r.order.unitPrice).toBe(7.3);
+    expect(r.order.total).toBe(73);
+    expect(r.wholesale!.orderTotal).toBe(r.order.total);
+    expect(r.wholesale!.tiers[0].unitPrice).toBe(7.3);
+  });
+
+  it('con descuento real, los dos totales siguen coincidiendo', () => {
+    const r = calculateQuote({
+      ...base(),
+      quantity: 12,
+      wholesale: { tiers: [{ minQty: 12, discountPct: 0.15 }] },
+    });
+    expect(r.order.fromTier).toBe(true);
+    expect(r.wholesale!.orderTotal).toBe(r.order.total);
+    expect(r.wholesale!.orderProfit).toBe(r.order.profit);
+  });
+
+  /**
+   * ⚠️ Un tramo que NO alcanza no puede aplicarse. `buildWholesale` caía a
+   * `?? sorted[0]` cuando la cantidad no llegaba a ningún tramo, así que un
+   * pedido de 1 unidad se cobraba con el descuento del tramo de 12.
+   */
+  it('un pedido que no alcanza ningún tramo paga precio de lista', () => {
+    const r = calculateQuote({
+      ...base(),
+      quantity: 1,
+      piecesPerBatch: 30,
+      wholesale: { tiers: [{ minQty: 12, discountPct: 0.15 }] },
+    });
+
+    expect(r.wholesale!.appliedTier).toBeNull();
+    expect(r.wholesale!.tiers[0].applies).toBe(false);
+    expect(r.order.fromTier).toBe(false);
+    expect(r.order.discountPct).toBe(0);
+    expect(r.order.unitPrice).toBe(r.price.final);
+    expect(r.wholesale!.orderTotal).toBe(r.order.total);
+  });
+});
+
+/**
+ * MARGEN vs RECARGO (2026-10-02). La app llamaba "margen" a tres cosas que son
+ * RECARGO sobre el costo: el objetivo, el real y el piso del semáforo. Un
+ * recargo del 100 % es un margen del 50 %, así que un "piso de margen del 60 %"
+ * protegía la mitad de lo que parecía. El motor ahora expone las DOS cifras.
+ */
+describe('margen sobre venta además del recargo sobre costo', () => {
+  it('recargo 100 % = margen 50 % sobre venta', () => {
+    const r = calculateQuote({ ...base(), margins: { markup: 1, minMarginPct: 0.6, rounding: { mode: 'NONE', increment: 1 } } });
+    expect(r.price.marginReal).toBeCloseTo(1, 6);
+    expect(r.price.marginOnSale).toBeCloseTo(0.5, 6);
+  });
+
+  it('el piso de 60 % de recargo es apenas 37,5 % de margen', () => {
+    const r = calculateQuote({ ...base(), margins: { markup: 0.6, minMarginPct: 0.6, rounding: { mode: 'NONE', increment: 1 } } });
+    expect(r.price.marginReal).toBeCloseTo(0.6, 6);
+    expect(r.price.marginOnSale).toBeCloseTo(0.375, 6);
+  });
+
+  it('la relación se cumple siempre: margen = recargo / (1 + recargo)', () => {
+    for (const markup of [0.25, 0.6, 1, 1.2, 3]) {
+      const r = calculateQuote({ ...base(), margins: { markup, minMarginPct: 0.6, rounding: { mode: 'NONE', increment: 1 } } });
+      expect(r.price.marginOnSale).toBeCloseTo(markup / (1 + markup), 5);
+    }
+  });
+
+  it('vender por debajo del costo da margen NEGATIVO, no cero', () => {
+    const r = calculateQuote({ ...base(), manualPrice: 1 });
+    expect(r.price.marginOnSale).toBeLessThan(0);
+    expect(r.price.status).toBe('LOSS');
+  });
+
+  it('el pedido, los tramos y el comparador también lo exponen', () => {
+    const r = calculateQuote({
+      ...base(),
+      quantity: 12,
+      wholesale: { tiers: [{ minQty: 12, discountPct: 0.15 }] },
+    });
+    expect(r.order.marginOnSale).toBeCloseTo(
+      r.order.marginReal / (1 + r.order.marginReal),
+      5,
+    );
+    const tramo = r.wholesale!.tiers[0];
+    expect(tramo.marginOnSale).toBeCloseTo(tramo.marginReal / (1 + tramo.marginReal), 5);
+    for (const o of r.roundingOptions) {
+      expect(o.marginOnSale).toBeCloseTo(o.marginReal / (1 + o.marginReal), 5);
+    }
+  });
+});

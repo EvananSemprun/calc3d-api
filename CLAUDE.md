@@ -336,7 +336,32 @@ en el repo web: se sobrescribe al sincronizar.
       ninguna rendía (Identificadores, ROAS 5,7×, salía "en riesgo"). Regresión:
       `campaigns/campaigns.service.spec.ts`.
       Son la ÚNICA medida de una campaña que todavía no generó venta atribuida:
-      sin ellas el ROAS es 0× y no dice nada. ⚠️ **`serialize()` en
+      sin ellas el ROAS es 0× y no dice nada.
+    - ⚠️ **`stats.quotes` volvió a calcularse el 2026-10-02** (= encargos
+      atribuidos en estado `QUOTED`). Había dejado de devolverse al eliminarse
+      los presupuestos (2026-09-07), pero el panel **nunca dejó de leerlo**: el
+      tipo del front lo declara `number`, así que TypeScript afirmaba que estaba
+      y nadie lo notó. `costPer(invested, undefined)` reventaba el detalle de
+      **todas** las campañas con *"DecimalError: Invalid argument: undefined"*
+      (la guarda `count <= 0` no atrapa `undefined`, porque `undefined <= 0` es
+      `false`; con `null` sí habría funcionado). **Un tipo del front NO es un
+      contrato**: la regresión que lo fija es `campaigns.service.spec.ts`
+      ("el contrato de stats no pierde campos"), que recorre la lista de campos
+      que el panel lee.
+    - **Los helpers de `shared/calc/campaign.ts` toleran que falte un dato**
+      (`roas`/`roi`/`costPer` → null, `netAfterAds` → trata el faltante como 0,
+      `campaignHealth`/`campaignRecommendation` no lanzan). Son el borde entre
+      el servidor y la UI: un campo que falta no puede tumbar una pantalla.
+    - **ESTADO DERIVADO (`campaignLifecycle`, shared 0.19.0)**: el `status`
+      guardado se queda viejo porque NADA lo mueve a `FINISHED` cuando pasa
+      `endDate`. El Dashboard pedía "revisá estas campañas antes de seguir
+      invirtiendo" sobre campañas terminadas hacía semanas — una orden
+      imposible. `campaignLifecycle(status, endDate, hoy)` devuelve
+      `RUNNING`/`PAUSED`/`FINISHED`; lo marcado a mano manda sobre la fecha.
+      ⚠️ `hoy` llega como `'AAAA-MM-DD'` calculado por quien llama **en día
+      LOCAL** (el motor es puro y no decide husos). Con una campaña cerrada,
+      `campaignRecommendation` devuelve la acción **`CLOSED`** con un veredicto
+      en pasado ("No rindió: costó $X y dejó $Y"), sin imperativos. ⚠️ **`serialize()` en
       `campaigns.module.ts` arma la respuesta CAMPO POR CAMPO**: un campo nuevo
       que no se agregue ahí existe en la base, pasa los tipos y **nunca llega al
       cliente**. Hay que tocar `serialize()`, `create()` y `update()`.
@@ -864,6 +889,24 @@ en la base de producción se consulta y se espera OK explícito, aunque parezca 
   el de lista, `discountPct` el descuento). El panel, la cotización del cliente y
   `/sales/from-quote` leen ESE campo — si cada uno lo dedujera por su cuenta,
   dirían cifras distintas. `price` sigue siendo el precio de lista.
+  ⚠️ **`wholesale.orderTotal`/`orderProfit` los PISA `calculateQuote`** con los
+  del pedido (2026-10-02, shared 0.19.0). Se calculaban aparte y divergían: con
+  precio manual $7,30 y redondeo "arriba a 0,50", el panel decía **$73** y la
+  tarjeta de mayoreo **$75** en la misma pantalla, porque `buildWholesale`
+  re-redondeaba el precio **aunque el descuento fuera 0 %**. Ahora un tramo de
+  0 % ES el precio de lista y no se vuelve a redondear.
+  ⚠️ **Un tramo que la cantidad NO alcanza no se aplica.** `buildWholesale` caía
+  a `?? sorted[0]`, así que un pedido de 1 pieza se cobraba con el descuento del
+  tramo de 12: regalaba margen sin que nadie lo pidiera. Sin tramo alcanzado,
+  `appliedTier` es **null**.
+- **RECARGO ≠ MARGEN** (2026-10-02, shared 0.19.0). `markup`, `marginReal` y
+  `minMarginPct` son los tres **recargo sobre el COSTO**, no margen sobre venta:
+  un recargo del 100 % es un margen del 50 %, y el piso de 60 % protege en
+  realidad un 37,5 % sobre venta. Los nombres internos se conservan (viajan en
+  el contrato y los leen panel y PDF), pero el motor expone además
+  **`marginOnSale`** = (precio − costo) ÷ precio en `price`, `order`, cada tramo
+  de mayoreo y cada opción del comparador. La UI nombra "recargo" a lo que es
+  recargo y muestra el margen aparte.
 - **El piso de margen es configurable**: `margins.minMarginPct` (default
   `LOW_MARGIN_THRESHOLD` = 0.6) ⇄ `Settings.minMarginPct`. Bajo ese margen el
   estado es `LOW`; la UI lo marca en ROJO y avisa, pero **no bloquea la venta**.
