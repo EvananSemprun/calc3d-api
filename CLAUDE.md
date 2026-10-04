@@ -928,6 +928,33 @@ en la base de producción se consulta y se espera OK explícito, aunque parezca 
 - Default moneda/locale USD/en-US (configurable por organización en Settings).
 - IVA/impuestos: campo `taxPercent` reservado en DB, **sin UI** (fase 2).
 
+### Venta atribuida a una campaña: `Campaign.attributedSales` (2026-10-04, shared 0.20.0)
+
+La hoja `Publicidad` del Excel tiene una columna **"Venta atribuida ($)"**: de lo
+que YA se vendió, cuánto se le rastrea a esa campaña. **No es facturación** — el
+Excel nunca la suma a `Resumen!B3`, que es solo `SUM(Ventas!B11:BA11)`.
+
+- Vive en **`Campaign.attributedSales`** (Decimal, default 0), NO como `Sale` ni
+  como `Order`. Lo vendido de una campaña sale de `campaignRevenue()`:
+  `salesTotal + ordersTotal + attributedSales`.
+- ⚠️ **No la registres como pedido.** Entre el 2026-10-02 y el 2026-10-04 se la
+  guardó como 5 pedidos de un cliente ficticio ("Varios (historico sin
+  detalle)") porque `Campaign` no tenía dónde ponerla. El ingreso de
+  `printers.recovery()` es `Sale + Order`, así que esos pedidos entraron como
+  facturación: la **Reposición de los equipos** decía $431,08 de $1.532 cuando
+  el Excel decía $0 (acumulado real: −$57,42). Los 5 pedidos se borraron y los
+  montos pasaron al campo nuevo.
+- `campaignHealth` / `campaignRecommendation` miran **`revenue`**, no solo
+  `sales`/`orders`: una campaña vieja con atribución declarada no tiene filas de
+  venta y aun así vendió. Sin eso se pintaba "Sin datos" al lado de "ROAS 10,04×".
+- Al comparar la app con el Excel, **fijate hasta qué mes llega cada hoja**: la
+  hoja `Ventas` se corta en **agosto 2026** (desde septiembre se carga por la
+  bandeja de pedidos). Un número menor en el Excel no significa que la app esté
+  inflada.
+- ⚠️ `sincronizar-hojas.mjs` **está en el `.gitignore`** (línea 41): el soporte
+  que se le agregó para traer esa columna al campo correcto **vive solo en la
+  máquina del dueño**, no protege a nadie más.
+
 ## Entorno
 - Windows / PowerShell: usar su sintaxis (`$env:VAR` no `$VAR`, `$null` no
   `/dev/null`, backtick para continuar línea). Rutas con backslash de Windows.

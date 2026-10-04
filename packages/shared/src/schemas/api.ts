@@ -271,6 +271,13 @@ export const CampaignCreateSchema = z.object({
   profileVisits: z.number().int().min(0).optional().nullable(),
   /** Seguidores ganados con la campaña (columna "Seguidores" de Publicidad). */
   followers: z.number().int().min(0).optional().nullable(),
+  /**
+   * Venta atribuida DECLARADA (columna "Venta atribuida ($)" de la hoja
+   * Publicidad): lo vendido que se le rastrea a la campaña pero que no quedó
+   * registrado pedido por pedido. Mide rendimiento publicitario; **no es
+   * facturación** y nunca entra al ingreso del negocio (ver `campaignRevenue`).
+   */
+  attributedSales: z.number().min(0).optional().nullable(),
 });
 export type CampaignCreateDto = z.infer<typeof CampaignCreateSchema>;
 

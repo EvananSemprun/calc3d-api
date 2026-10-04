@@ -18,6 +18,7 @@ import {
   CampaignUpdateSchema,
   campaignHealth,
   campaignRecommendation,
+  campaignRevenue,
   formatMoney,
   netAfterAds,
   orderTotal,
@@ -67,10 +68,17 @@ const HEALTH_ES: Record<string, string> = {
 /** Métricas derivadas de una campaña (todo en USD base). */
 interface CampaignStats {
   invested: number;
+  /**
+   * Lo vendido por la campaña: lo RASTREADO (`salesTotal` + `ordersTotal`) más
+   * la atribución DECLARADA de la campaña, que se suma en `withDeclared` porque
+   * vive en la ficha y no en estas tablas.
+   */
   revenue: number;
   profit: number;
   hasCost: boolean;
   sales: number;
+  /** Ventas de mostrador atribuidas (USD). */
+  salesTotal: number;
   orders: number;
   ordersTotal: number;
   /**
@@ -90,6 +98,7 @@ const emptyStats = (): CampaignStats => ({
   profit: 0,
   hasCost: false,
   sales: 0,
+  salesTotal: 0,
   orders: 0,
   ordersTotal: 0,
   quotes: 0,
@@ -134,7 +143,7 @@ export class CampaignsService {
       const st = at(s.campaignId!);
       const amount = Number(s.amount);
       st.sales += 1;
-      st.revenue += amount;
+      st.salesTotal += amount;
       // ⚠️ La GANANCIA por campaña quedó sin fuente al eliminarse los
       // presupuestos (2026-09-07): era lo único que ataba una venta a su costo.
       // El ROI se apaga y la salud de la campaña se juzga por ROAS, que es lo
@@ -150,21 +159,44 @@ export class CampaignsService {
       }
       const total = orderTotal((o.lines as unknown as OrderLine[]) ?? []);
       st.orders += 1;
-      st.ordersTotal += total;
       // Desde "encargo = pedido" (2026-09-14) lo que trae una campaña llega como
       // pedido: si "vendido" no lo sumara, toda campaña daría $0 y el Dashboard
       // avisaría que ninguna rinde (pasó el 2026-10-02).
-      st.revenue += total;
+      st.ordersTotal += total;
     }
 
     // Redondeo de presentación (2 dp) para dinero.
     for (const s of map.values()) {
       s.invested = round(s.invested);
-      s.revenue = round(s.revenue);
       s.profit = round(s.profit);
+      s.salesTotal = round(s.salesTotal);
       s.ordersTotal = round(s.ordersTotal);
+      // Solo lo rastreado; `withDeclared` le suma la atribución de la ficha.
+      s.revenue = round(s.salesTotal + s.ordersTotal);
     }
     return map;
+  }
+
+  /**
+   * Cierra `revenue` sumándole la venta atribuida DECLARADA de la ficha.
+   *
+   * ⚠️ Lo declarado NO toca `ordersTotal` ni `salesTotal`: no hay un pedido ni
+   * una venta detrás. Si se registrara como pedido entraría al ingreso del
+   * negocio y la reposición de equipos mentiría — es exactamente el bug que
+   * estuvo vivo entre el 2026-10-02 y el 2026-10-04.
+   */
+  private withDeclared(
+    campaign: { attributedSales?: Prisma.Decimal | number | null },
+    s: CampaignStats,
+  ): CampaignStats {
+    return {
+      ...s,
+      revenue: campaignRevenue({
+        salesTotal: s.salesTotal,
+        ordersTotal: s.ordersTotal,
+        attributedSales: Number(campaign.attributedSales ?? 0),
+      }),
+    };
   }
 
   async list(organizationId: string) {
@@ -173,7 +205,10 @@ export class CampaignsService {
       orderBy: { createdAt: 'desc' },
     });
     const stats = await this.statsByCampaign(organizationId);
-    return campaigns.map((c) => ({ ...serialize(c), stats: stats.get(c.id) ?? emptyStats() }));
+    return campaigns.map((c) => ({
+      ...serialize(c),
+      stats: this.withDeclared(c, stats.get(c.id) ?? emptyStats()),
+    }));
   }
 
   async get(organizationId: string, id: string) {
@@ -181,7 +216,11 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaña no encontrada');
     const stats = await this.statsByCampaign(organizationId);
     const period = await this.periodStats(organizationId, campaign.startDate, campaign.endDate);
-    return { ...serialize(campaign), stats: stats.get(id) ?? emptyStats(), period };
+    return {
+      ...serialize(campaign),
+      stats: this.withDeclared(campaign, stats.get(id) ?? emptyStats()),
+      period,
+    };
   }
 
   /**
@@ -345,6 +384,7 @@ export class CampaignsService {
         conversations: dto.conversations ?? null,
         profileVisits: dto.profileVisits ?? null,
         followers: dto.followers ?? null,
+        attributedSales: dto.attributedSales ?? 0,
       },
     });
   }
@@ -366,6 +406,7 @@ export class CampaignsService {
         ...(dto.conversations !== undefined && { conversations: dto.conversations ?? null }),
         ...(dto.profileVisits !== undefined && { profileVisits: dto.profileVisits ?? null }),
         ...(dto.followers !== undefined && { followers: dto.followers ?? null }),
+        ...(dto.attributedSales !== undefined && { attributedSales: dto.attributedSales ?? 0 }),
       },
     });
   }
@@ -400,6 +441,7 @@ function serialize(c: {
   conversations: number | null;
   profileVisits: number | null;
   followers: number | null;
+  attributedSales?: Prisma.Decimal | number | null;
   createdAt: Date;
 }) {
   return {
@@ -418,6 +460,8 @@ function serialize(c: {
     conversations: c.conversations,
     profileVisits: c.profileVisits,
     followers: c.followers,
+    // Venta atribuida DECLARADA: rendimiento publicitario, NO facturación.
+    attributedSales: Number(c.attributedSales ?? 0),
     createdAt: c.createdAt.toISOString(),
   };
 }

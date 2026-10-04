@@ -68,7 +68,11 @@ export function campaignHealth(m: CampaignMetricsInput): CampaignHealth {
   const sales = orZero(m?.sales);
   const orders = orZero(m?.orders);
 
-  if (sales === 0 && orders === 0) return 'NO_DATA';
+  // "Sin datos" es NO HABER VENDIDO, no "no tener filas". Una campaña vieja
+  // cuya venta atribuida es DECLARADA (`campaignRevenue`) no tiene ventas ni
+  // encargos y aun así vendió: sin mirar `revenue` se la pintaba vacía mientras
+  // la misma pantalla mostraba $120 y ROAS 10,04× (2026-10-04).
+  if (sales === 0 && orders === 0 && revenue <= 0) return 'NO_DATA';
   if (invested <= 0) return revenue > 0 ? 'PROFITABLE' : 'NO_DATA';
   if (m?.hasCost) {
     if (profit - invested > 0) return 'PROFITABLE';
@@ -182,7 +186,8 @@ export function campaignRecommendation(
       reason: 'Aún no hay gasto de publicidad registrado; agrégalo para medir el retorno.',
     };
   }
-  if (sales === 0 && orders === 0) {
+  // Mismo criterio que `campaignHealth`: lo declarado también es haber vendido.
+  if (sales === 0 && orders === 0 && revenue <= 0) {
     return {
       action: 'WAIT',
       title: 'Esperar',
@@ -233,4 +238,37 @@ export function campaignRecommendation(
  */
 function money(n: number): string {
   return `$${toMoney(D(orZero(n))).toFixed(2)}`;
+}
+
+/**
+ * Las tres fuentes de "lo vendido" por una campaña. Las dos primeras son
+ * RASTREADAS (hay una fila de venta o de pedido detrás); la tercera es
+ * DECLARADA, el equivalente de la columna "Venta atribuida ($)" de la hoja
+ * "Publicidad" del Excel, para lo vendido que existió pero nunca se registró
+ * pedido por pedido.
+ */
+export interface CampaignRevenueInput {
+  /** Ventas de mostrador atribuidas (USD). */
+  salesTotal: number;
+  /** Pedidos atribuidos, ya sin los cotizados (USD). */
+  ordersTotal: number;
+  /** Atribución declarada a mano, SIN pedido detrás (USD). */
+  attributedSales: number;
+}
+
+/**
+ * Lo vendido por una campaña: lo rastreado MÁS lo declarado.
+ *
+ * ⚠️ Lo declarado mide rendimiento publicitario, **no es facturación**: ya está
+ * contado dentro de las ventas del negocio. Por eso vive en `Campaign` y no como
+ * venta ni pedido — si se registrara como pedido entraría al ingreso y la
+ * reposición de equipos diría que las impresoras se pagaron solas cuando no.
+ * Eso pasó entre el 2026-10-02 y el 2026-10-04; ver `campaign.spec.ts`.
+ */
+export function campaignRevenue(input: CampaignRevenueInput): number {
+  return toMoney(
+    D(orZero(input?.salesTotal))
+      .plus(orZero(input?.ordersTotal))
+      .plus(orZero(input?.attributedSales)),
+  );
 }

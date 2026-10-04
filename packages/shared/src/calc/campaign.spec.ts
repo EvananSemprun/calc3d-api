@@ -7,6 +7,7 @@ import {
   netAfterAds,
   campaignHealth,
   campaignRecommendation,
+  campaignRevenue,
   type CampaignMetricsInput,
 } from './campaign';
 
@@ -254,5 +255,68 @@ describe('recomendación de una campaña cerrada', () => {
 
   it('por defecto se asume vigente (no rompe a quien no pasa el ciclo)', () => {
     expect(campaignRecommendation(enPerdida).action).toBe('REVIEW');
+  });
+});
+
+/**
+ * VENTA ATRIBUIDA DECLARADA — regresión del 2026-10-04.
+ *
+ * La hoja "Publicidad" del Excel trae una columna "Venta atribuida ($)": de lo
+ * que YA se vendió, cuánto se le puede rastrear a esa campaña. No es
+ * facturación nueva. Como `Campaign` no tenía dónde guardarla, el 2026-10-02 se
+ * resolvió creando PEDIDOS falsos ("Varios (historico sin detalle)"), y esos
+ * pedidos entraron al ingreso: la reposición de equipos pasó a decir que las
+ * impresoras se habían devuelto $431,08 cuando el Excel decía que nada.
+ */
+describe('campaignRevenue — venta atribuida declarada', () => {
+  it('suma la atribución declarada a lo rastreado por ventas y pedidos', () => {
+    // "Materializa tu fanatismo": $74,50 en el Excel = pedido real de Amed
+    // ($30) + $44,50 sin desglose individual.
+    expect(campaignRevenue({ salesTotal: 0, ordersTotal: 30, attributedSales: 44.5 })).toBe(74.5);
+  });
+
+  it('una campaña vieja sin pedidos vale exactamente lo declarado', () => {
+    expect(campaignRevenue({ salesTotal: 0, ordersTotal: 0, attributedSales: 120 })).toBe(120);
+  });
+
+  it('una campaña con pedidos reales no necesita declarar nada', () => {
+    expect(campaignRevenue({ salesTotal: 0, ordersTotal: 90.02, attributedSales: 0 })).toBe(90.02);
+  });
+
+  it('trata la atribución ausente o basura como cero, sin romper', () => {
+    expect(
+      campaignRevenue({
+        salesTotal: 10,
+        ordersTotal: 5,
+        attributedSales: undefined as unknown as number,
+      }),
+    ).toBe(15);
+  });
+});
+
+/**
+ * El semáforo miraba SOLO `sales` y `orders`. Una campaña vieja cuya venta
+ * atribuida es DECLARADA no tiene ni ventas ni encargos, así que se pintaba
+ * "Sin datos" y se la recomendaba como "terminó sin retorno medible" mientras
+ * la misma pantalla mostraba $120 vendidos y ROAS 10,04× (visto en el panel el
+ * 2026-10-04, campaña "Sientete todo un campeon").
+ */
+describe('una campaña con venta atribuida declarada NO está "sin datos"', () => {
+  const declarada = { ...base, invested: 11.95, revenue: 120, sales: 0, orders: 0 };
+
+  it('la juzga por su retorno, no la da por vacía', () => {
+    expect(campaignHealth(declarada)).toBe('PROFITABLE');
+  });
+
+  it('sin inversión ni venta sigue siendo "sin datos"', () => {
+    expect(campaignHealth({ ...base, invested: 11.95, revenue: 0 })).toBe('NO_DATA');
+  });
+
+  it('cerrada con venta declarada, el veredicto dice que rindió', () => {
+    expect(campaignRecommendation(declarada, 'FINISHED').title).toBe('Cerrada · rindió');
+  });
+
+  it('vigente con venta declarada no manda a esperar', () => {
+    expect(campaignRecommendation(declarada, 'RUNNING').action).not.toBe('WAIT');
   });
 });

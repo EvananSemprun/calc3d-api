@@ -151,3 +151,44 @@ describe('CampaignsService — el contrato de stats no pierde campos', () => {
     expect(s.revenue).toBe(0);
   });
 });
+
+/**
+ * VENTA ATRIBUIDA DECLARADA (2026-10-04). La hoja "Publicidad" del Excel trae
+ * una columna "Venta atribuida ($)": de lo que YA se vendió, cuánto se le
+ * rastrea a la campaña. Como `Campaign` no tenía dónde guardarla, el 2026-10-02
+ * se la metió como PEDIDOS falsos ("Varios (historico sin detalle)"), y esos
+ * pedidos entraron al ingreso del negocio: la reposición de equipos pasó a
+ * decir que las impresoras habían devuelto $431,08 cuando el Excel decía $0.
+ *
+ * Lo declarado suma a "vendido" (rendimiento) pero NO a `ordersTotal`, que es
+ * lo que representa pedidos de verdad.
+ */
+describe('CampaignsService — venta atribuida declarada', () => {
+  const conAtribucion = (declarada: number, pedidos: { status: string; lines: unknown }[] = []) => {
+    const prisma = makePrisma(pedidos);
+    prisma.campaign.findMany = jest
+      .fn()
+      .mockResolvedValue([{ ...CAMPANA, attributedSales: declarada }]);
+    return prisma;
+  };
+
+  it('una campaña vieja sin pedidos vale lo declarado, sin inventar un pedido', async () => {
+    // "Sientete todo un campeon": $120 en el Excel, abril 2026, sin desglose.
+    const s = await stats(conAtribucion(120));
+    expect(s.revenue).toBe(120);
+    expect(s.orders).toBe(0);
+    expect(s.ordersTotal).toBe(0);
+  });
+
+  it('suma lo declarado a los pedidos reales sin tocar ordersTotal', async () => {
+    // "Materializa tu fanatismo": $74,50 = pedido de Amed ($30) + $44,50 suelto.
+    const s = await stats(conAtribucion(44.5, [{ status: 'DELIVERED', lines: linea(30) }]));
+    expect(s.revenue).toBe(74.5);
+    expect(s.ordersTotal).toBe(30);
+  });
+
+  it('una campaña sin atribución declarada se comporta igual que antes', async () => {
+    const s = await stats(conAtribucion(0, [{ status: 'DELIVERED', lines: linea(90.02) }]));
+    expect(s.revenue).toBe(90.02);
+  });
+});

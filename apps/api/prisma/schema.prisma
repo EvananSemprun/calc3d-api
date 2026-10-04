@@ -635,7 +635,18 @@ model Campaign {
   conversations Int? // conversaciones iniciadas
   profileVisits Int? // visitas al perfil
   followers     Int? // seguidores ganados
-  createdAt     DateTime @default(now())
+
+  /// Venta atribuida DECLARADA (columna "Venta atribuida ($)" de la hoja
+  /// Publicidad del Excel): lo vendido que se le rastrea a la campaña pero que
+  /// nunca se registró pedido por pedido.
+  ///
+  /// ⚠️ NO es facturación: ya está contado dentro de las ventas del negocio.
+  /// Vive acá, y no como Sale ni Order, justamente para que NO entre al ingreso.
+  /// Entre el 2026-10-02 y el 2026-10-04 se la guardó como pedidos falsos
+  /// ("Varios (historico sin detalle)") y la reposición de equipos pasó a decir
+  /// que las impresoras habían devuelto $431,08 cuando el Excel decía $0.
+  attributedSales Decimal  @default(0) @db.Decimal(12, 4)
+  createdAt       DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   expenses Expense[]
