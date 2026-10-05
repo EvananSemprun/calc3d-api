@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { OrdersService } from '../orders/orders.module';
 import { StoreService } from '../store/store.service';
 import { ClientsService } from '../clients/clients.module';
+import { CashService } from '../cash/cash.service';
 
 /**
  * Auditoría multi-tenant: cada lectura por id DEBE filtrar también por
@@ -72,5 +73,95 @@ describe('Aislamiento multi-tenant (scope por organizationId)', () => {
     const service = new ClientsService(prisma as any);
     await expect(service.get(ORG, 'c1')).rejects.toThrow(NotFoundException);
     expect(prisma.client.findFirst).toHaveBeenCalledWith({ where: { id: 'c1', organizationId: ORG } });
+  });
+});
+
+/**
+ * CAJA. Acá no se lee un catálogo: se mueve PLATA (faltantes atribuidos como
+ * deuda, ajustes que se anulan). Un id ajeno alcanzable escribiría deuda en
+ * otra organización, así que el scope se fija contrato por contrato.
+ */
+describe('Aislamiento multi-tenant — Caja', () => {
+  it('CashService.confirm filtra por { id, organizationId }', async () => {
+    const prisma = { cashReconciliation: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const service = new CashService(prisma as never);
+
+    await expect(
+      service.confirm(ORG, 'r1', { attributeShortfall: true } as never, 'u1'),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.cashReconciliation.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'r1', organizationId: ORG } }),
+    );
+  });
+
+  it('CashService.confirm NO confirma una conciliación de otra organización', async () => {
+    // Simula la DB real: si el id no pertenece a la org, findFirst no lo encuentra.
+    const prisma = {
+      cashReconciliation: {
+        findFirst: jest.fn(({ where }: any) =>
+          where.organizationId === OTHER ? { id: 'r1', status: 'DRAFT', account: {} } : null,
+        ),
+      },
+    };
+    const service = new CashService(prisma as never);
+
+    await expect(
+      service.confirm(ORG, 'r1', { attributeShortfall: true } as never, 'u1'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('CashService.voidReconciliation NO anula una conciliación de otra organización', async () => {
+    const prisma = {
+      cashReconciliation: {
+        findFirst: jest.fn(({ where }: any) =>
+          where.organizationId === OTHER
+            ? { id: 'r1', status: 'CONFIRMED', adjustment: null }
+            : null,
+        ),
+      },
+    };
+    const service = new CashService(prisma as never);
+
+    await expect(service.voidReconciliation(ORG, 'r1')).rejects.toThrow(NotFoundException);
+  });
+
+  it('CashService.saveReconciliation NO escribe contra una cuenta de otra organización', async () => {
+    const prisma = { cashAccount: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const service = new CashService(prisma as never);
+
+    await expect(
+      service.saveReconciliation(ORG, {
+        accountId: 'acc-ajena',
+        date: '2026-10-05',
+        totalAmount: 1,
+        personalAmount: 0,
+        currency: 'USD',
+        rate: null,
+        note: null,
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.cashAccount.findFirst).toHaveBeenCalledWith({
+      where: { id: 'acc-ajena', organizationId: ORG },
+    });
+  });
+
+  it('CashService.addMovement NO acepta una contraparte de otra organización', async () => {
+    const prisma = { counterparty: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const service = new CashService(prisma as never);
+
+    await expect(
+      service.addMovement(ORG, {
+        date: '2026-10-05',
+        kind: 'WITHDRAWAL',
+        amount: 10,
+        concept: 'x',
+        counterpartyId: 'cp-ajena',
+        refundable: true,
+        note: null,
+      } as never),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.counterparty.findFirst).toHaveBeenCalledWith({
+      where: { id: 'cp-ajena', organizationId: ORG },
+    });
   });
 });

@@ -4,6 +4,7 @@ import {
   OwnerMovementCreateSchema,
 } from '@calc3d/shared';
 import { CashService } from './cash.service';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
 
 const ORG = 'org-A';
 
@@ -638,5 +639,52 @@ describe('CashService.summary — el aviso de conciliación vieja', () => {
 
     expect(r.reconciliations[0].expectedNow).toBe(190);
     expect(r.reconciliations[0].stale).toBe(true);
+  });
+});
+
+/**
+ * El saldo esperado, la diferencia y el estado los calcula el SERVIDOR. Si
+ * alguno viajara en el cuerpo, cualquiera declararía su caja cuadrada y el
+ * faltante se evaporaría sin dejar rastro.
+ *
+ * Se prueba contra el PIPE REAL (el mismo objeto que monta el controlador), no
+ * contra el schema pelado: así el test caza también a quien cambie el pipe.
+ */
+describe('Mass-assignment en la conciliación (contra el pipe REAL)', () => {
+  const pipe = new ZodValidationPipe(CashReconciliationUpsertSchema);
+
+  it('el pipe descarta todo lo que calcula el servidor', () => {
+    const dto = pipe.transform({
+      accountId: 'acc1',
+      date: '2026-10-05',
+      totalAmount: 220,
+      personalAmount: 120,
+      expectedUsd: 0,
+      differenceUsd: 0,
+      totalUsd: 1,
+      personalUsd: 1,
+      status: 'CONFIRMED',
+      confirmedAt: '2026-01-01',
+      confirmedByUserId: 'otro',
+      organizationId: 'org-B',
+      source: 'MANUAL',
+    }) as unknown as Record<string, unknown>;
+
+    for (const prohibido of [
+      'expectedUsd',
+      'differenceUsd',
+      'totalUsd',
+      'personalUsd',
+      'status',
+      'confirmedAt',
+      'confirmedByUserId',
+      'organizationId',
+      'source',
+    ]) {
+      expect(dto[prohibido]).toBeUndefined();
+    }
+    // Y lo que SÍ es del cliente sobrevive.
+    expect(dto.totalAmount).toBe(220);
+    expect(dto.personalAmount).toBe(120);
   });
 });
