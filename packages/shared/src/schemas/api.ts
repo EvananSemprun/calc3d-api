@@ -625,6 +625,30 @@ export const CashAccountUpsertSchema = z
   });
 export type CashAccountUpsertDto = z.infer<typeof CashAccountUpsertSchema>;
 
+/**
+ * Las nueve líneas de "De dónde sale el saldo", como parámetro de ruta de
+ * `GET /cash/breakdown/:category`.
+ *
+ * ⚠️ Tiene que coincidir EXACTAMENTE con `CashCategory` de `calc/cash.ts`. Son
+ * dos declaraciones del mismo conjunto porque una es tipo (se borra al
+ * compilar) y la otra es validación en tiempo de ejecución, que es lo único
+ * que frena una categoría inventada. El test `cash-category.spec.ts` las ancla
+ * contra `CASH_SIGN`: agregar una línea a la caja y olvidarse de este enum
+ * rompe ese test en vez de devolver un desplegable vacío.
+ */
+export const CashCategorySchema = z.enum([
+  'collected',
+  'expenses',
+  'filament',
+  'equipment',
+  'contributionsRefundable',
+  'contributionsCapital',
+  'debtRepayments',
+  'ownerDraws',
+  'loanPayments',
+]);
+export type CashCategoryDto = z.infer<typeof CashCategorySchema>;
+
 // ---------- Metas mensuales ----------
 
 export const GoalUpsertSchema = z.object({

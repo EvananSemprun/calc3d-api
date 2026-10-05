@@ -428,6 +428,11 @@ model Sale {
 
   exchangeRates Json? // snapshot de tasas al registrar la venta
 
+  /// De dónde salió este registro. `EXCEL_IMPORT` es la insignia "Importado"
+  /// del desplegable de la Caja: sin ella, las ventas que vinieron del Excel se
+  /// verían como si las hubiera cargado el dueño a mano.
+  source RecordSource @default(MANUAL)
+
   // Atribución de publicidad (Fase 1). null = "Sin atribuir".
   originChannel AttributionChannel?
   campaign      Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
@@ -577,7 +582,12 @@ model Payment {
   rate           Decimal? @db.Decimal(18, 6)
   currencyCode   String?
   currencyLabel  String?
-  createdAt      DateTime @default(now())
+
+  /// Mismo criterio que `Sale.source`: el abono importado del Excel lleva su
+  /// insignia en el detalle de "Ventas cobradas".
+  source RecordSource @default(MANUAL)
+
+  createdAt DateTime @default(now())
 
   @@index([orderId])
   @@index([organizationId])
