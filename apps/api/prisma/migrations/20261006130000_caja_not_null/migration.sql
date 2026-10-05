@@ -15,10 +15,12 @@
 -- escribe columnas que siguen siendo nullable y por eso puede correr después,
 -- cuando el dueño quiera.
 
--- 1. Una contraparte OWNER por organización. El nombre sale del de la
---    organización; el dueño lo renombra desde la app.
+-- 1. Una contraparte OWNER por organizacion.
+--    ⚠️ El nombre es un PROVISIONAL: no hay en los datos ninguna fuente
+--    confiable del nombre real de la persona (el de la organizacion es el del
+--    negocio, y el del usuario suele ser un alias). Lo renombra el dueno.
 INSERT INTO "Counterparty" ("id", "organizationId", "name", "kind", "isDefault", "active", "createdAt", "updatedAt")
-SELECT gen_random_uuid()::text, o."id", o."name", 'OWNER', true, true, now(), now()
+SELECT gen_random_uuid()::text, o."id", 'Propietario', 'OWNER', true, true, now(), now()
 FROM "Organization" o
 WHERE NOT EXISTS (
   SELECT 1 FROM "Counterparty" c WHERE c."organizationId" = o."id" AND c."kind" = 'OWNER'

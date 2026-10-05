@@ -27,7 +27,8 @@ async function backfill(tx, org) {
   });
   if (!owner) {
     owner = await tx.counterparty.create({
-      data: { organizationId: org.id, name: org.name, kind: 'OWNER', isDefault: true },
+      // Provisional: no hay fuente confiable del nombre real. Lo renombra el dueno.
+      data: { organizationId: org.id, name: 'Propietario', kind: 'OWNER', isDefault: true },
     });
   }
   for (const loan of await tx.loan.findMany({ where: { organizationId: org.id } })) {
