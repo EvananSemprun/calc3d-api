@@ -10,6 +10,9 @@
  *   node --env-file=.env prisma/backfill-importado.mjs --undo          # ENSAYO de la reversa
  *   node --env-file=.env prisma/backfill-importado.mjs --undo --write  # revierte
  *
+ *   # suma grupos sin marca que el dueño ya confirmó que son del Excel:
+ *   node --env-file=.env prisma/backfill-importado.mjs --incluir=Expense:2026-09-07,LoanPayment:2026-09-07
+ *
  * `--commit` es sinónimo de `--write` (es la bandera que usa `backfill-caja.mjs`;
  * que dos scripts hermanos pidieran banderas distintas hacía que la corrida
  * "real" saliera en ensayo y se leyera como éxito).
@@ -17,11 +20,23 @@
  * ⚠️ CORRERLO SIEMPRE PRIMERO EN ENSAYO. El ensayo abre la transacción, aplica
  * los cambios y la revierte, así que los números que imprime son los reales.
  *
- * ⚠️ El corte se verificó contra la copia LOCAL del 01/10. Producción tiene
- * datos que esa copia no tiene, así que el script imprime el recuento por día
- * de creación y ABORTA si encuentra una fila anterior al corte creada en un día
- * que no sea de la importación: marcar como "Importado" algo que el dueño cargó
- * a mano es una mentira silenciosa sobre el origen de su dinero.
+ * ────────────────────────────────────────────────────────────────────────────
+ * EL CRITERIO ES LA MARCA TEXTUAL, NO LA FECHA.
+ *
+ * ⚠️ Hubo una versión anterior que marcaba por `createdAt < 2026-09-27`, con
+ * una lista de "días de importación" y un guard que abortaba ante un día
+ * inesperado. **Ese criterio era falso y está derogado.** La importación no fue
+ * un evento de uno o dos días: un `sincronizar-excel.mjs` (borrado del árbol el
+ * 2026-10-04, cuando se decidió dejar de sincronizar) estuvo escribiendo a
+ * cuentagotas durante semanas. La prueba: en la copia local hay **2 ventas
+ * creadas el 2026-10-01** cuya nota dice "Mostrador — Lunes (del Excel, hoja
+ * Ventas)". Con cualquier corte por fecha quedaban como cargadas a mano.
+ *
+ * No volver a poner un corte por fecha: la fecha es una aproximación a "esto
+ * salió del libro" y la marca es la cosa misma. Lo único que sobrevive de
+ * aquella versión es agrupar por día **en hora de Caracas** (ver `dia`), que
+ * acá ya no decide nada: solo ordena el informe de revisión.
+ * ────────────────────────────────────────────────────────────────────────────
  */
 import { createRequire } from 'node:module';
 import { PrismaClient, Prisma } from '@prisma/client';
@@ -33,44 +48,51 @@ const { businessDateKey, BUSINESS_TIME_ZONE } = require('@calc3d/shared');
 const WRITE = process.argv.includes('--write') || process.argv.includes('--commit');
 const UNDO = process.argv.includes('--undo');
 
+/** Los grupos sin marca que el dueño ya confirmó, como `Modelo:AAAA-MM-DD`. */
+const INCLUIR = process.argv
+  .filter((a) => a.startsWith('--incluir='))
+  .flatMap((a) => a.slice('--incluir='.length).split(','))
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 /**
- * El día de creación SIEMPRE en la zona del negocio, nunca en UTC.
- *
- * ⚠️ El servidor corre en UTC y Venezuela está en UTC−4: una fila creada el
- * 26/09 a las 21:00 de Caracas tiene `createdAt` 2026-09-27T01:00Z. Agrupando
- * en UTC caía del lado "después del corte", que es justo el lado que el guard
- * NO revisa — la fila se quedaba en MANUAL sin que nadie se enterara. Se reusa
- * `businessDateKey` de shared, que es el helper canónico del repo para esto
- * (`stock.ts`); escribir el offset a mano acá sería el octavo lugar donde se
- * decide la misma cosa por separado.
+ * La huella que dejó la importación en el texto de cada fila. Es precisa: para
+ * que marque algo que cargó el dueño, él tendría que haber tipeado esta frase.
+ */
+const MARCA = '(del excel';
+const tieneMarca = (texto) => (texto ?? '').toLowerCase().includes(MARCA);
+
+/**
+ * El día de creación en la zona del negocio, nunca en UTC. Solo agrupa el
+ * informe, pero agrupar en UTC partiría en dos un lote cargado de noche: el
+ * servidor corre en UTC y Venezuela está en UTC−4. Se reusa `businessDateKey`
+ * de shared, el helper canónico del repo (`stock.ts`).
  */
 const dia = (d) => businessDateKey(d);
 
 /**
- * Todo lo creado ANTES de este día del negocio vino del Excel: el corte es el
- * cambio de día en Caracas, no la medianoche UTC. Las dos corridas de
- * importación fueron el 07/09 (la migración grande) y el 26/09 (compras de
- * filamento y la hoja `Inversion`).
- */
-const CORTE_DIA = '2026-09-27';
-const DIAS_DEL_EXCEL = ['2026-09-07', '2026-09-26'];
-
-/**
- * Las cuatro tablas que llenó la importación.
+ * Las cuatro tablas que llenó la importación, con el campo de texto donde
+ * dejó su marca y el campo del monto.
  *
- * ⚠️ `OwnerMovement` queda EXCLUIDO A PROPÓSITO. El único que existe antes del
- * corte es el cuadre manual del 17/09 ("Dinero de la caja usado por …
- * (regularizacion)", $475,14), que escribió la APP durante la feature de Caja:
- * no es una fila del Excel. Marcarlo "Importado" sería mentir sobre el origen
- * de un movimiento de dinero, que es justamente lo que la insignia existe para
+ * ⚠️ `OwnerMovement` queda EXCLUIDO A PROPÓSITO, y ahora el motivo se apoya en
+ * la marca: el único que existe es el cuadre manual del 17/09 ("Dinero de la
+ * caja usado por … (regularizacion)", $475,14), y su concepto **no lleva la
+ * marca del Excel** porque no salió del libro — lo escribió la APP durante la
+ * feature de Caja. Marcarlo "Importado" sería mentir sobre el origen de un
+ * movimiento de dinero, que es justamente lo que la insignia existe para
  * evitar. Tampoco entra `CashReconciliation`: sus filas heredadas ya quedaron
  * en `MIGRATION` con el backfill de la fase 1.
  */
 const TABLAS = [
-  { modelo: 'Expense', delegado: 'expense', etiqueta: 'Gastos' },
-  { modelo: 'LoanPayment', delegado: 'loanPayment', etiqueta: 'Cuotas del prestamo' },
-  { modelo: 'Sale', delegado: 'sale', etiqueta: 'Ventas' },
-  { modelo: 'Payment', delegado: 'payment', etiqueta: 'Abonos de pedidos' },
+  { modelo: 'Expense', delegado: 'expense', etiqueta: 'Gastos', texto: 'description' },
+  {
+    modelo: 'LoanPayment',
+    delegado: 'loanPayment',
+    etiqueta: 'Cuotas del prestamo',
+    texto: 'reference',
+  },
+  { modelo: 'Sale', delegado: 'sale', etiqueta: 'Ventas', texto: 'note' },
+  { modelo: 'Payment', delegado: 'payment', etiqueta: 'Abonos de pedidos', texto: 'note' },
 ];
 
 const prisma = new PrismaClient();
@@ -82,74 +104,119 @@ class Ensayo extends Error {}
  * ¿El cliente de Prisma generado conoce este campo?
  *
  * `Sale.source` y `Payment.source` los agrega la tarea 2 de esta misma fase. Si
- * todavía no corrió, el script tiene que AVISARLO y seguir con las dos tablas
- * que sí existen, en vez de reventar con un error de Prisma que no explica nada.
+ * todavía no corrió, el script tiene que AVISARLO y seguir con las tablas que
+ * sí existen, en vez de reventar con un error de Prisma que no explica nada.
  */
 const tieneCampo = (modelo, campo) =>
   Prisma.dmmf.datamodel.models
     .find((m) => m.name === modelo)
     ?.fields.some((f) => f.name === campo) ?? false;
 
-/** Cuántas filas hay por día de creación, ordenadas por día. */
+const plata = (n) => `$${n.toFixed(2).padStart(10)}`;
+const sumar = (filas) => filas.reduce((s, f) => s + Number(f.monto), 0);
+
+/** Agrupa por día de creación, ordenado por día. */
 const porDia = (filas) => {
   const mapa = new Map();
-  for (const f of filas) mapa.set(dia(f.createdAt), (mapa.get(dia(f.createdAt)) ?? 0) + 1);
+  for (const f of filas) {
+    const k = dia(f.createdAt);
+    if (!mapa.has(k)) mapa.set(k, []);
+    mapa.get(k).push(f);
+  }
   return [...mapa.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
 };
 
-const imprimirDias = (titulo, filas) => {
-  console.log(`  ${titulo}`);
-  if (filas.length === 0) {
-    console.log('    (ninguna)');
-    return;
-  }
-  for (const [d, n] of porDia(filas)) console.log(`    ${d}   ${String(n).padStart(4)}`);
-  console.log(`    ${'total'.padEnd(10)} ${String(filas.length).padStart(4)}`);
-};
-
-/**
- * El recuento previo de una tabla, con el guard del corte ya aplicado.
- * Devuelve los ids a marcar: la escritura usa ESA lista y no vuelve a evaluar
- * el corte, así que no hay forma de que escriba sobre filas distintas de las
- * que se contaron y se revisaron acá.
- */
-async function revisar(tabla) {
+/** Lee una tabla y parte sus filas en: con marca, sin marca, y las que no se tocan. */
+async function leer(tabla) {
   const filas = await prisma[tabla.delegado].findMany({
-    select: { id: true, createdAt: true, source: true },
+    select: { id: true, createdAt: true, source: true, amount: true, [tabla.texto]: true },
   });
-  const antes = filas.filter((f) => dia(f.createdAt) < CORTE_DIA);
-  const despues = filas.filter((f) => dia(f.createdAt) >= CORTE_DIA);
-
-  console.log(`\n${tabla.etiqueta} (${tabla.modelo})`);
-  imprimirDias('A MARCAR — anteriores al corte:', antes);
-  imprimirDias('QUEDA FUERA — desde el corte:', despues);
+  const normal = filas.map((f) => ({
+    id: f.id,
+    createdAt: f.createdAt,
+    source: f.source,
+    monto: f.amount,
+    texto: f[tabla.texto],
+  }));
 
   // Lo que ya tiene otro origen (MIGRATION / RECONCILIATION) no se pisa: ese
   // dato también dice de dónde salió la fila, y sobreescribirlo seria otra
-  // mentira, nada más que al revés.
-  const conOtroOrigen = antes.filter((f) => f.source !== 'MANUAL' && f.source !== 'EXCEL_IMPORT');
-  if (conOtroOrigen.length > 0) {
-    const origenes = [...new Set(conOtroOrigen.map((f) => f.source))].join(', ');
-    console.log(`  ⚠️ ${conOtroOrigen.length} con otro origen (${origenes}): NO se tocan.`);
-  }
+  // mentira, nada más que al revés. Lo ya marcado se saltea: idempotencia.
+  const tocables = normal.filter((f) => f.source === 'MANUAL');
+  const ajenas = normal.filter((f) => f.source !== 'MANUAL' && f.source !== 'EXCEL_IMPORT');
 
-  const inesperadas = antes.filter((f) => !DIAS_DEL_EXCEL.includes(dia(f.createdAt)));
-  if (inesperadas.length > 0) {
-    const dias = [...new Set(inesperadas.map((f) => dia(f.createdAt)))].join(', ');
-    throw new Error(
-      `${tabla.modelo}: ${inesperadas.length} fila(s) anteriores al corte creadas el ${dias}, ` +
-        `que no es un dia de importacion (${DIAS_DEL_EXCEL.join(', ')}). ` +
-        'Esta base tiene datos que el plan no verificó: marcarlas como importadas seria ' +
-        'mentir sobre su origen. No se escribe nada.',
+  return {
+    tabla,
+    conMarca: tocables.filter((f) => tieneMarca(f.texto)),
+    sinMarca: tocables.filter((f) => !tieneMarca(f.texto)),
+    yaMarcadas: normal.filter((f) => f.source === 'EXCEL_IMPORT').length,
+    ajenas,
+  };
+}
+
+function informeAutomatico(lecturas) {
+  console.log('\n===== 1) CON LA MARCA DEL EXCEL — se marcan solas =====');
+  let total = 0;
+  for (const l of lecturas) {
+    console.log(`\n${l.tabla.etiqueta} (${l.tabla.modelo}) — campo \`${l.tabla.texto}\``);
+    if (l.conMarca.length === 0) {
+      console.log('  (ninguna)');
+    } else {
+      for (const [d, filas] of porDia(l.conMarca)) {
+        console.log(`    ${d}   ${String(filas.length).padStart(4)}   ${plata(sumar(filas))}`);
+      }
+      console.log(
+        `    ${'total'.padEnd(10)}   ${String(l.conMarca.length).padStart(4)}   ${plata(sumar(l.conMarca))}`,
+      );
+    }
+    if (l.yaMarcadas > 0) console.log(`  (${l.yaMarcadas} ya estaban en EXCEL_IMPORT)`);
+    if (l.ajenas.length > 0) {
+      const origenes = [...new Set(l.ajenas.map((f) => f.source))].join(', ');
+      console.log(`  ⚠️ ${l.ajenas.length} con otro origen (${origenes}): NO se tocan.`);
+    }
+    total += l.conMarca.length;
+  }
+  console.log(`\nSubtotal automatico: ${total} fila(s).`);
+}
+
+/** Los grupos `Modelo:dia` sin marca, que NO se marcan salvo que los pidan. */
+function gruposSinMarca(lecturas) {
+  const grupos = new Map();
+  for (const l of lecturas) {
+    for (const [d, filas] of porDia(l.sinMarca)) {
+      grupos.set(`${l.tabla.modelo}:${d}`, { tabla: l.tabla, dia: d, filas });
+    }
+  }
+  return grupos;
+}
+
+function informeRevision(grupos) {
+  console.log('\n===== 2) SIN LA MARCA — para revisar con el dueño =====');
+  if (grupos.size === 0) {
+    console.log('\nNo quedo ninguna fila sin marca. Nada que revisar.');
+    return;
+  }
+  console.log(
+    '\nEstos grupos NO se marcan. El que el dueño confirme que vino del Excel se suma\n' +
+      'pasando su clave en --incluir=<Modelo:AAAA-MM-DD>, separadas por coma.\n',
+  );
+  for (const [clave, g] of grupos) {
+    const elegido = INCLUIR.includes(clave);
+    console.log(
+      `  [${elegido ? 'x' : ' '}] ${clave.padEnd(26)} ${String(g.filas.length).padStart(4)} fila(s)   ` +
+        `${plata(sumar(g.filas))}${elegido ? '   <- incluido por --incluir' : ''}`,
     );
+    for (const f of g.filas.slice(0, 3)) {
+      const t = (f.texto ?? '(sin texto)').replace(/\s+/g, ' ');
+      console.log(`        · ${t.length > 86 ? `${t.slice(0, 86)}…` : t}`);
+    }
+    if (g.filas.length > 3) console.log(`        … y ${g.filas.length - 3} mas`);
   }
-
-  return antes.filter((f) => f.source === 'MANUAL').map((f) => f.id);
 }
 
 async function marcar() {
-  console.log(`Corte: dia de creacion < ${CORTE_DIA} en hora de ${BUSINESS_TIME_ZONE} (NO UTC).`);
-  console.log(`Dias de importacion esperados: ${DIAS_DEL_EXCEL.join(', ')}`);
+  console.log(`Criterio: la marca «${MARCA}…» en el texto de la fila. NO se usa la fecha.`);
+  console.log(`Los dias del informe se calculan en hora de ${BUSINESS_TIME_ZONE}.`);
   console.log('OwnerMovement queda EXCLUIDO (ver el comentario del script).');
 
   const disponibles = [];
@@ -163,11 +230,40 @@ async function marcar() {
       );
   }
 
-  const trabajo = [];
-  for (const tabla of disponibles) trabajo.push({ tabla, ids: await revisar(tabla) });
+  const lecturas = [];
+  for (const tabla of disponibles) lecturas.push(await leer(tabla));
+
+  informeAutomatico(lecturas);
+  const grupos = gruposSinMarca(lecturas);
+  informeRevision(grupos);
+
+  // Un grupo pedido que no existe se ABORTA. Ignorarlo marcaría de menos en
+  // silencio: el dueño creería que confirmó algo que nunca se tocó (un día mal
+  // tipeado, un modelo en minúscula, una clave de otra base).
+  const desconocidos = INCLUIR.filter((c) => !grupos.has(c));
+  if (desconocidos.length > 0) {
+    throw new Error(
+      `--incluir nombra grupo(s) que no existen en esta base: ${desconocidos.join(', ')}. ` +
+        'Revisá la lista de arriba (las claves son sensibles a mayusculas). No se escribe nada.',
+    );
+  }
+
+  // El trabajo final: lo automático + lo confirmado, por tabla y por ids ya
+  // leídos. La escritura no vuelve a evaluar ningún criterio.
+  const trabajo = disponibles.map((tabla) => {
+    const l = lecturas.find((x) => x.tabla === tabla);
+    const extra = [...grupos]
+      .filter(([clave, g]) => INCLUIR.includes(clave) && g.tabla === tabla)
+      .flatMap(([, g]) => g.filas);
+    return { tabla, ids: [...l.conMarca, ...extra].map((f) => f.id) };
+  });
   const total = trabajo.reduce((s, t) => s + t.ids.length, 0);
 
-  console.log(`\nSe marcarian ${total} fila(s) como EXCEL_IMPORT.`);
+  const confirmados = total - lecturas.reduce((s, l) => s + l.conMarca.length, 0);
+  console.log(
+    `\nSe marcarian ${total} fila(s) como EXCEL_IMPORT ` +
+      `(${total - confirmados} por la marca + ${confirmados} confirmadas con --incluir).`,
+  );
   if (total === 0) {
     console.log('Nada que hacer.');
     return;
@@ -176,6 +272,7 @@ async function marcar() {
   await prisma.$transaction(async (tx) => {
     let escritas = 0;
     for (const { tabla, ids } of trabajo) {
+      if (ids.length === 0) continue;
       const r = await tx[tabla.delegado].updateMany({
         where: { id: { in: ids }, source: 'MANUAL' },
         data: { source: 'EXCEL_IMPORT' },
