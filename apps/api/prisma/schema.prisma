@@ -807,10 +807,7 @@ model StoreProduct {
   // ORIGEN DE COSTEO, opcional: enlaza la ficha con el producto interno o la
   // cotización de la que salió. Sirve para la alerta de rentabilidad; NUNCA sale
   // por la API pública. `SetNull` para que borrar el origen no borre la ficha.
-  /**
-   * /**
-   * Costo unitario congelado al publicar (USD). Interno.
-   */
+  /// Costo unitario congelado al publicar (USD). Interno.
   costAtPublish Decimal? @db.Decimal(12, 4)
 
   /// Snapshot del `CalcInput` con el que se costeó la ficha, tal como lo dejó
