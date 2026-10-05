@@ -58,11 +58,11 @@ async function backfill(tx, org) {
     });
   }
 
-  // 5. Contraparte en los movimientos que no la tienen.
-  await tx.ownerMovement.updateMany({
-    where: { organizationId: org.id, counterpartyId: null },
-    data: { counterpartyId: owner.id },
-  });
+  // La contraparte de los movimientos y la cuenta de las conciliaciones las
+  // llena la migración `20261006130000_caja_not_null` en SQL puro, porque tienen
+  // que estar antes del `SET NOT NULL` que esa misma migración aplica. Acá ya
+  // no se pueden ni consultar: el cliente de Prisma rechaza filtrar por null un
+  // campo no-nulo.
 
   // 4. Las conciliaciones heredadas, preservando lo que la pantalla mostraba.
   const ledger = await armarLedger(tx, org.id);
@@ -72,7 +72,10 @@ async function backfill(tx, org) {
   });
   let migradas = 0;
   for (const c of conciliaciones) {
-    if (c.accountId) continue; // ya migrada
+    // La señal de "ya migrada" es el ESTADO, no la cuenta: desde la migración
+    // 20261006130000 todas tienen cuenta, así que mirar `accountId` haría que
+    // nunca se congelara ninguna.
+    if (c.status !== 'DRAFT') continue;
     const esperado = businessCash(ledger, dia(c.date)).balance;
     const total = n(c.totalAmount);
     await tx.cashReconciliation.update({
