@@ -10,6 +10,10 @@
  *   node --env-file=.env prisma/backfill-importado.mjs --undo          # ENSAYO de la reversa
  *   node --env-file=.env prisma/backfill-importado.mjs --undo --write  # revierte
  *
+ * `--commit` es sinónimo de `--write` (es la bandera que usa `backfill-caja.mjs`;
+ * que dos scripts hermanos pidieran banderas distintas hacía que la corrida
+ * "real" saliera en ensayo y se leyera como éxito).
+ *
  * ⚠️ CORRERLO SIEMPRE PRIMERO EN ENSAYO. El ensayo abre la transacción, aplica
  * los cambios y la revierte, así que los números que imprime son los reales.
  *
@@ -19,17 +23,36 @@
  * que no sea de la importación: marcar como "Importado" algo que el dueño cargó
  * a mano es una mentira silenciosa sobre el origen de su dinero.
  */
+import { createRequire } from 'node:module';
 import { PrismaClient, Prisma } from '@prisma/client';
 
-const WRITE = process.argv.includes('--write');
+// Un .mjs no puede importar el build ESM de shared (usa imports sin extensión).
+const require = createRequire(import.meta.url);
+const { businessDateKey, BUSINESS_TIME_ZONE } = require('@calc3d/shared');
+
+const WRITE = process.argv.includes('--write') || process.argv.includes('--commit');
 const UNDO = process.argv.includes('--undo');
 
 /**
- * Todo lo creado ANTES de esta fecha (UTC) vino del Excel. Las dos corridas de
+ * El día de creación SIEMPRE en la zona del negocio, nunca en UTC.
+ *
+ * ⚠️ El servidor corre en UTC y Venezuela está en UTC−4: una fila creada el
+ * 26/09 a las 21:00 de Caracas tiene `createdAt` 2026-09-27T01:00Z. Agrupando
+ * en UTC caía del lado "después del corte", que es justo el lado que el guard
+ * NO revisa — la fila se quedaba en MANUAL sin que nadie se enterara. Se reusa
+ * `businessDateKey` de shared, que es el helper canónico del repo para esto
+ * (`stock.ts`); escribir el offset a mano acá sería el octavo lugar donde se
+ * decide la misma cosa por separado.
+ */
+const dia = (d) => businessDateKey(d);
+
+/**
+ * Todo lo creado ANTES de este día del negocio vino del Excel: el corte es el
+ * cambio de día en Caracas, no la medianoche UTC. Las dos corridas de
  * importación fueron el 07/09 (la migración grande) y el 26/09 (compras de
  * filamento y la hoja `Inversion`).
  */
-const CORTE = new Date('2026-09-27T00:00:00.000Z');
+const CORTE_DIA = '2026-09-27';
 const DIAS_DEL_EXCEL = ['2026-09-07', '2026-09-26'];
 
 /**
@@ -51,7 +74,6 @@ const TABLAS = [
 ];
 
 const prisma = new PrismaClient();
-const dia = (d) => d.toISOString().slice(0, 10); // UTC, el mismo criterio del corte
 
 /** ENSAYO no es un fallo: se usa para revertir la transacción sin ensuciar la salida. */
 class Ensayo extends Error {}
@@ -85,13 +107,18 @@ const imprimirDias = (titulo, filas) => {
   console.log(`    ${'total'.padEnd(10)} ${String(filas.length).padStart(4)}`);
 };
 
-/** El recuento previo de una tabla, con el guard del corte ya aplicado. */
+/**
+ * El recuento previo de una tabla, con el guard del corte ya aplicado.
+ * Devuelve los ids a marcar: la escritura usa ESA lista y no vuelve a evaluar
+ * el corte, así que no hay forma de que escriba sobre filas distintas de las
+ * que se contaron y se revisaron acá.
+ */
 async function revisar(tabla) {
   const filas = await prisma[tabla.delegado].findMany({
     select: { id: true, createdAt: true, source: true },
   });
-  const antes = filas.filter((f) => f.createdAt < CORTE);
-  const despues = filas.filter((f) => f.createdAt >= CORTE);
+  const antes = filas.filter((f) => dia(f.createdAt) < CORTE_DIA);
+  const despues = filas.filter((f) => dia(f.createdAt) >= CORTE_DIA);
 
   console.log(`\n${tabla.etiqueta} (${tabla.modelo})`);
   imprimirDias('A MARCAR — anteriores al corte:', antes);
@@ -117,11 +144,11 @@ async function revisar(tabla) {
     );
   }
 
-  return antes.filter((f) => f.source === 'MANUAL').length;
+  return antes.filter((f) => f.source === 'MANUAL').map((f) => f.id);
 }
 
 async function marcar() {
-  console.log(`Corte: createdAt < ${dia(CORTE)} (UTC)`);
+  console.log(`Corte: dia de creacion < ${CORTE_DIA} en hora de ${BUSINESS_TIME_ZONE} (NO UTC).`);
   console.log(`Dias de importacion esperados: ${DIAS_DEL_EXCEL.join(', ')}`);
   console.log('OwnerMovement queda EXCLUIDO (ver el comentario del script).');
 
@@ -136,8 +163,9 @@ async function marcar() {
       );
   }
 
-  let total = 0;
-  for (const tabla of disponibles) total += await revisar(tabla);
+  const trabajo = [];
+  for (const tabla of disponibles) trabajo.push({ tabla, ids: await revisar(tabla) });
+  const total = trabajo.reduce((s, t) => s + t.ids.length, 0);
 
   console.log(`\nSe marcarian ${total} fila(s) como EXCEL_IMPORT.`);
   if (total === 0) {
@@ -147,9 +175,9 @@ async function marcar() {
 
   await prisma.$transaction(async (tx) => {
     let escritas = 0;
-    for (const tabla of disponibles) {
+    for (const { tabla, ids } of trabajo) {
       const r = await tx[tabla.delegado].updateMany({
-        where: { createdAt: { lt: CORTE }, source: 'MANUAL' },
+        where: { id: { in: ids }, source: 'MANUAL' },
         data: { source: 'EXCEL_IMPORT' },
       });
       console.log(`  ${tabla.etiqueta}: ${r.count}`);

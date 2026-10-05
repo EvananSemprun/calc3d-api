@@ -15,7 +15,10 @@ import { PrismaClient } from '@prisma/client';
 const require = createRequire(import.meta.url);
 const { businessCash, obligationLedger, applyPayment } = require('@calc3d/shared');
 
-const COMMIT = process.argv.includes('--commit');
+// `--write` es sinónimo de `--commit`: es la bandera de `backfill-importado.mjs`,
+// y que dos scripts hermanos pidieran banderas distintas hacía que la corrida
+// "real" saliera en ensayo y se leyera como éxito.
+const COMMIT = process.argv.includes('--commit') || process.argv.includes('--write');
 const prisma = new PrismaClient();
 const dia = (d) => d.toISOString().slice(0, 10);
 const n = (x) => Number(x);
