@@ -1,5 +1,8 @@
 import { NotFoundException } from '@nestjs/common';
-import { CashCountUpsertSchema, OwnerMovementCreateSchema } from '@calc3d/shared';
+import {
+  CashReconciliationUpsertSchema,
+  OwnerMovementCreateSchema,
+} from '@calc3d/shared';
 import { CashService } from './cash.module';
 
 const ORG = 'org-A';
@@ -96,23 +99,62 @@ describe('CashService — borrar algo ajeno (IDOR)', () => {
 });
 
 describe('Contratos de Caja', () => {
-  it('la organización no viaja en el body: el pipe la descarta', () => {
-    const dto = OwnerMovementCreateSchema.parse({
-      date: '2026-09-17',
-      kind: 'WITHDRAWAL',
-      amount: 10,
-      concept: 'x',
+  const base = {
+    accountId: 'acc-1',
+    date: '2026-10-05',
+    totalAmount: 220,
+    personalAmount: 120,
+  };
+
+  it('la organización y los campos CALCULADOS no viajan en el body', () => {
+    const dto = CashReconciliationUpsertSchema.parse({
+      ...base,
       organizationId: 'org-B',
+      expectedUsd: 0,
+      differenceUsd: 9999,
+      totalUsd: 1,
+      status: 'CONFIRMED',
+      confirmedAt: '2026-01-01',
     });
 
-    expect(dto).not.toHaveProperty('organizationId');
+    for (const prohibido of [
+      'organizationId',
+      'expectedUsd',
+      'differenceUsd',
+      'totalUsd',
+      'status',
+      'confirmedAt',
+    ]) {
+      expect(dto).not.toHaveProperty(prohibido);
+    }
   });
 
-  it('no acepta montos negativos ni tipos inventados', () => {
-    const base = { date: '2026-09-17', kind: 'WITHDRAWAL', amount: 10, concept: 'x' };
+  it('una moneda que no es USD exige tasa', () => {
+    expect(
+      CashReconciliationUpsertSchema.safeParse({ ...base, currency: 'VES' }).success,
+    ).toBe(false);
+    expect(
+      CashReconciliationUpsertSchema.safeParse({ ...base, currency: 'VES', rate: 700 }).success,
+    ).toBe(true);
+  });
 
-    expect(OwnerMovementCreateSchema.safeParse({ ...base, amount: -5 }).success).toBe(false);
-    expect(OwnerMovementCreateSchema.safeParse({ ...base, kind: 'GIFT' }).success).toBe(false);
-    expect(CashCountUpsertSchema.safeParse({ date: '2026-09-21', total: -1 }).success).toBe(false);
+  it('rechaza montos negativos y fechas mal formadas', () => {
+    expect(CashReconciliationUpsertSchema.safeParse({ ...base, totalAmount: -1 }).success).toBe(false);
+    expect(CashReconciliationUpsertSchema.safeParse({ ...base, personalAmount: -1 }).success).toBe(false);
+    expect(CashReconciliationUpsertSchema.safeParse({ ...base, date: '05/10/2026' }).success).toBe(false);
+  });
+
+  it('el movimiento no acepta montos negativos ni tipos inventados', () => {
+    const m = { date: '2026-09-17', kind: 'WITHDRAWAL', amount: 10, concept: 'x' };
+
+    expect(OwnerMovementCreateSchema.safeParse({ ...m, amount: -5 }).success).toBe(false);
+    expect(OwnerMovementCreateSchema.safeParse({ ...m, kind: 'GIFT' }).success).toBe(false);
+  });
+
+  it('un aporte puede marcarse como capital; por defecto es reembolsable', () => {
+    const m = { date: '2026-09-17', kind: 'CONTRIBUTION', amount: 500, concept: 'capital inicial' };
+
+    expect(OwnerMovementCreateSchema.parse(m).refundable).toBe(true);
+    expect(OwnerMovementCreateSchema.parse({ ...m, refundable: false }).refundable).toBe(false);
   });
 });

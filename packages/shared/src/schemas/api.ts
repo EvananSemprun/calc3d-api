@@ -539,23 +539,50 @@ export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
 
 // ---------- Caja ----------
 
-/** Plata PURA entre el bolsillo de Vanan y la caja (no es un gasto). */
+const FECHA = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD');
+
+/** Plata PURA entre el bolsillo de la contraparte y la caja (no es un gasto). */
 export const OwnerMovementCreateSchema = z.object({
-  date: z.string().min(1, 'Falta la fecha'),
+  date: FECHA,
   kind: z.enum(['CONTRIBUTION', 'WITHDRAWAL']),
   amount: z.number().positive('El monto tiene que ser mayor que cero'),
   concept: z.string().trim().min(1, 'Falta el concepto'),
+  /** A quién. Si no viene, la contraparte por defecto de la organización. */
+  counterpartyId: z.string().min(1).optional(),
+  /** Un aporte con `false` es CAPITAL: sube la caja y no genera deuda. */
+  refundable: z.boolean().default(true),
   note: z.string().optional().nullable(),
 });
 export type OwnerMovementCreateDto = z.infer<typeof OwnerMovementCreateSchema>;
 
-/** Conteo de los lunes: lo que dice Binance ese día. Uno por fecha. */
-export const CashCountUpsertSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD'),
-  total: z.number().min(0, 'El total no puede ser negativo'),
-  note: z.string().optional().nullable(),
+/**
+ * CONCILIACIÓN. Solo entra lo CONTADO; todo lo derivado (`expectedUsd`,
+ * `differenceUsd`, `totalUsd`, `status`) lo pone el servidor. Si viajara en el
+ * cuerpo, cualquiera declararía su caja cuadrada.
+ */
+export const CashReconciliationUpsertSchema = z
+  .object({
+    accountId: z.string().min(1, 'Falta la cuenta'),
+    date: FECHA,
+    totalAmount: z.number().min(0, 'El total no puede ser negativo'),
+    personalAmount: z.number().min(0, 'Lo personal no puede ser negativo').default(0),
+    currency: z.string().length(3).default('USD'),
+    rate: z.number().positive().optional().nullable(),
+    note: z.string().optional().nullable(),
+  })
+  .refine((v) => v.currency === 'USD' || (v.rate ?? 0) > 0, {
+    message: 'Una cuenta que no es USD necesita la tasa del día',
+    path: ['rate'],
+  });
+export type CashReconciliationUpsertDto = z.infer<typeof CashReconciliationUpsertSchema>;
+
+/** Al confirmar: el dueño puede explicar el descuadre en vez de atribuirlo. */
+export const CashReconciliationConfirmSchema = z.object({
+  explanation: z.string().trim().min(1).optional().nullable(),
+  /** `false` salta el ajuste automático aunque la cuenta lo tenga activado. */
+  attributeShortfall: z.boolean().default(true),
 });
-export type CashCountUpsertDto = z.infer<typeof CashCountUpsertSchema>;
+export type CashReconciliationConfirmDto = z.infer<typeof CashReconciliationConfirmSchema>;
 
 // ---------- Metas mensuales ----------
 
