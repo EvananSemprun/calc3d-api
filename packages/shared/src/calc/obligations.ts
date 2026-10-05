@@ -58,3 +58,46 @@ export function obligationLedger(items: ObligationInput[]): Obligation[] {
     outstanding: toCents(Decimal.max(0, D(o.amount).minus(o.applied))),
   }));
 }
+
+export interface PaymentApplication {
+  source: ObligationSource;
+  sourceId: string;
+  amount: number;
+}
+
+export interface PaymentPlan {
+  applications: PaymentApplication[];
+  /** Lo que sobró después de cancelar todo. Se registra como RETIRO, no como
+   *  deuda negativa ni como gasto operativo. */
+  leftover: number;
+}
+
+/**
+ * Reparte `amount` entre las obligaciones abiertas.
+ *
+ * `obligations` tiene que venir de `obligationLedger` (ya ordenado de la más
+ * antigua a la más reciente); `NEWEST_FIRST` simplemente lo recorre al revés.
+ */
+export function applyPayment(
+  obligations: Obligation[],
+  amount: number,
+  order: ApplicationOrder = 'OLDEST_FIRST',
+): PaymentPlan {
+  let resto = Decimal.max(0, D(amount));
+  const cola = order === 'NEWEST_FIRST' ? [...obligations].reverse() : obligations;
+  const applications: PaymentApplication[] = [];
+
+  for (const deuda of cola) {
+    if (resto.lte(0)) break;
+    if (deuda.outstanding <= 0) continue;
+    const cuota = Decimal.min(resto, deuda.outstanding);
+    applications.push({
+      source: deuda.source,
+      sourceId: deuda.sourceId,
+      amount: toCents(cuota),
+    });
+    resto = resto.minus(cuota);
+  }
+
+  return { applications, leftover: toCents(resto) };
+}
