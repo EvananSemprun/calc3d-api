@@ -28,7 +28,7 @@ Actualizado: 2026-09-07 · Sin montos a propósito: este repo es público.
 | **Gastos** | 19 gastos con categoría propia (Insumos/Repuestos/Empaque/Diseño) | `Expense` | ✅ **Migrado** (16 filas; 3 ya estaban por `Publicidad` y `Materiales`) |
 | **Ventas** | Grilla semanal desde febrero. Los montos están en el texto de cada día; las filas auxiliares que los parseaban **llegaron vacías** (ver §6) | `Sale` | ✅ **Sincronizado** — $2.233,96 (ver §6) |
 | **Deuda** | Préstamo de la impresora P2S y sus pagos, con quién pagó cada cuota | `Loan` + `LoanPayment` (`paidBy`) | ✅ **Migrado** — saldo $750 |
-| **Caja** (nueva, 2026-09) | Conteo de Binance de los lunes, aportes y pagos a Vanan, saldo del negocio | Finanzas → Caja (`OwnerMovement`, `CashCount`, `paidBy`) | ✅ **Migrado** 2026-09-26 — ver §8 |
+| **Caja** (nueva, 2026-09) | Conteo de Binance de los lunes, aportes y pagos a Vanan, saldo del negocio | Finanzas → Caja (`OwnerMovement`, `DebtApplication`, `CashReconciliation`, `paidBy`) | ✅ **Migrado** 2026-09-26 — ver §8. **Rediseñado el 2026-10-05** (fase 1, shared 0.21.0): `CashCount` → `CashReconciliation` con cuatro líneas y estados, la deuda pasó de cascada por categoría a obligaciones fechadas con reparto FIFO. Spec: `superpowers/specs/2026-10-05-caja-saas-design.md` |
 | **Metas** | Metas mensuales de ventas, encargos y clientes nuevos, con % de cumplimiento | `Goal` (lo real se deriva) | ✅ **Migrado** — 5 meses |
 
 ## 2. Lo que la app tiene y el Excel no
