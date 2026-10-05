@@ -121,6 +121,12 @@ export const SettingsUpdateSchema = z.object({
   businessSigner: z.string().optional().nullable(),
   /** Piso de margen (markup, fracción) bajo el cual un producto dispara alerta. */
   productAlertMinMarginPct: z.number().min(0).optional(),
+  /** Cada cuánto conviene conciliar. Es un RECORDATORIO: no bloquea nada. */
+  reconciliationFrequency: z.enum(['NONE', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']).optional(),
+  /** 1 = lunes … 7 = domingo. Solo aplica con WEEKLY/BIWEEKLY. */
+  reconciliationWeekday: z.number().int().min(1).max(7).nullable().optional(),
+  /** Contra qué deuda se aplica primero un pago a la contraparte. */
+  debtApplicationOrder: z.enum(['OLDEST_FIRST', 'NEWEST_FIRST']).optional(),
 });
 export type SettingsUpdateDto = z.infer<typeof SettingsUpdateSchema>;
 
@@ -583,6 +589,41 @@ export const CashReconciliationConfirmSchema = z.object({
   attributeShortfall: z.boolean().default(true),
 });
 export type CashReconciliationConfirmDto = z.infer<typeof CashReconciliationConfirmSchema>;
+
+/** Una contraparte: el dueño, un socio o un prestamista externo. */
+export const CounterpartyUpsertSchema = z.object({
+  name: z.string().trim().min(1, 'Falta el nombre').max(80),
+  kind: z.enum(['OWNER', 'PARTNER', 'EXTERNAL_LENDER']),
+  active: z.boolean().default(true),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+export type CounterpartyUpsertDto = z.infer<typeof CounterpartyUpsertSchema>;
+
+/** Dónde vive la plata. */
+export const CashAccountUpsertSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Falta el nombre').max(80),
+    kind: z.enum(['EXCHANGE', 'BANK', 'CASH', 'WALLET', 'OTHER']),
+    currency: z
+      .string()
+      .length(3, 'Código de moneda de 3 letras (ISO 4217)')
+      .transform((s) => s.toUpperCase()),
+    /** La cuenta mezcla plata del negocio con la personal de alguien. */
+    shared: z.boolean().default(false),
+    sharedWithId: z.string().min(1).optional().nullable(),
+    /** Al confirmar, un faltante se registra como salida hacia `sharedWith`. */
+    autoAttributeShortfall: z.boolean().default(false),
+    active: z.boolean().default(true),
+  })
+  .refine((v) => !v.shared || !!v.sharedWithId, {
+    message: 'Decí con quién se comparte la cuenta',
+    path: ['sharedWithId'],
+  })
+  .refine((v) => !v.autoAttributeShortfall || v.shared, {
+    message: 'La atribución automática solo aplica a una cuenta compartida',
+    path: ['autoAttributeShortfall'],
+  });
+export type CashAccountUpsertDto = z.infer<typeof CashAccountUpsertSchema>;
 
 // ---------- Metas mensuales ----------
 

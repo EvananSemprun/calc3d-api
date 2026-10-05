@@ -1,7 +1,10 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import {
+  CashAccountUpsertSchema,
   CashReconciliationUpsertSchema,
+  CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
+  SettingsUpdateSchema,
 } from '@calc3d/shared';
 import { CashService } from './cash.service';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -779,5 +782,60 @@ describe('CashService.summary — el plan del borrador', () => {
 
     expect(r.reconciliations[0].status).toBe('CONFIRMED');
     expect(r.reconciliations[0].plan).toBeNull();
+  });
+});
+
+
+describe('Contratos de contrapartes y cuentas', () => {
+  it('la contraparte exige nombre y un tipo conocido', () => {
+    expect(CounterpartyUpsertSchema.safeParse({ name: '  ', kind: 'OWNER' }).success).toBe(false);
+    expect(CounterpartyUpsertSchema.safeParse({ name: 'Ana', kind: 'SOCIA' }).success).toBe(false);
+    expect(CounterpartyUpsertSchema.parse({ name: '  Ana  ', kind: 'PARTNER' }).name).toBe('Ana');
+  });
+
+  it('la organización y el id no viajan en el body', () => {
+    const dto = CounterpartyUpsertSchema.parse({
+      name: 'Ana',
+      kind: 'PARTNER',
+      organizationId: 'org-B',
+      id: 'cp-ajena',
+    });
+
+    expect(dto).not.toHaveProperty('organizationId');
+    expect(dto).not.toHaveProperty('id');
+  });
+
+  it('una cuenta compartida exige con quién', () => {
+    const base = { name: 'Binance', kind: 'EXCHANGE', currency: 'USD' };
+
+    expect(CashAccountUpsertSchema.safeParse({ ...base, shared: true }).success).toBe(false);
+    expect(
+      CashAccountUpsertSchema.safeParse({ ...base, shared: true, sharedWithId: 'cp1' }).success,
+    ).toBe(true);
+    expect(CashAccountUpsertSchema.safeParse({ ...base, shared: false }).success).toBe(true);
+  });
+
+  it('la atribución automática no aplica a una cuenta que no se comparte', () => {
+    const base = { name: 'Caja chica', kind: 'CASH', currency: 'USD', shared: false };
+
+    expect(
+      CashAccountUpsertSchema.safeParse({ ...base, autoAttributeShortfall: true }).success,
+    ).toBe(false);
+  });
+
+  it('la moneda es un ISO de 3 letras, en mayúsculas', () => {
+    const base = { name: 'Banco', kind: 'BANK', shared: false };
+
+    expect(CashAccountUpsertSchema.safeParse({ ...base, currency: 'BOLIVARES' }).success).toBe(false);
+    expect(CashAccountUpsertSchema.parse({ ...base, currency: 'ves' }).currency).toBe('VES');
+  });
+
+  it('la frecuencia de conciliación y el orden de aplicación son valores cerrados', () => {
+    expect(SettingsUpdateSchema.safeParse({ reconciliationFrequency: 'CUANDO SEA' }).success).toBe(false);
+    expect(SettingsUpdateSchema.safeParse({ reconciliationFrequency: 'WEEKLY' }).success).toBe(true);
+    expect(SettingsUpdateSchema.safeParse({ reconciliationWeekday: 8 }).success).toBe(false);
+    expect(SettingsUpdateSchema.safeParse({ reconciliationWeekday: 1 }).success).toBe(true);
+    expect(SettingsUpdateSchema.safeParse({ debtApplicationOrder: 'RANDOM' }).success).toBe(false);
+    expect(SettingsUpdateSchema.safeParse({ debtApplicationOrder: 'NEWEST_FIRST' }).success).toBe(true);
   });
 });
