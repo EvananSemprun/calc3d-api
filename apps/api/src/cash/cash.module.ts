@@ -10,10 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  CashAccountUpsertSchema,
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
+  type CashAccountUpsertDto,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type CounterpartyUpsertDto,
@@ -22,6 +24,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { CashAccountsService } from './cash-accounts.service';
 import { CashService } from './cash.service';
 import { CounterpartiesService } from './counterparties.service';
 
@@ -118,10 +121,57 @@ export class CounterpartiesController {
   }
 }
 
+/**
+ * Cuentas donde vive la plata: el exchange, el banco, el efectivo.
+ *
+ * ⚠️ Hoy solo se concilia la PRINCIPAL (ver el comentario de
+ * `CashAccountsService`): las demás se registran para la fase de multicuenta.
+ *
+ * ⚠️ Si alguna vez se agrega una ruta LITERAL (tipo `@Get('activas')`), tiene
+ * que ir ANTES de cualquier `:id` o Nest la toma como un id.
+ */
+@UseGuards(JwtAuthGuard)
+@Controller('cash-accounts')
+export class CashAccountsController {
+  constructor(private service: CashAccountsService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser) {
+    return this.service.list(user.organizationId);
+  }
+
+  @Post()
+  create(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(CashAccountUpsertSchema)) dto: CashAccountUpsertDto,
+  ) {
+    return this.service.create(user.organizationId, dto);
+  }
+
+  @Put(':id')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(CashAccountUpsertSchema)) dto: CashAccountUpsertDto,
+  ) {
+    return this.service.update(user.organizationId, id, dto);
+  }
+
+  @Post(':id/default')
+  setDefault(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.setDefault(user.organizationId, id);
+  }
+
+  @Delete(':id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.remove(user.organizationId, id);
+  }
+}
+
 @Module({
-  controllers: [CashController, CounterpartiesController],
-  providers: [CashService, CounterpartiesService],
-  exports: [CashService, CounterpartiesService],
+  controllers: [CashController, CounterpartiesController, CashAccountsController],
+  providers: [CashService, CounterpartiesService, CashAccountsService],
+  exports: [CashService, CounterpartiesService, CashAccountsService],
 })
 export class CashModule {}
 
@@ -129,3 +179,4 @@ export class CashModule {}
 // (p. ej. `reports.module.ts`) sigan funcionando.
 export { CashService } from './cash.service';
 export { CounterpartiesService } from './counterparties.service';
+export { CashAccountsService } from './cash-accounts.service';
