@@ -13,6 +13,8 @@ export * from './calc/filament-analytics';
 export * from './calc/breakeven';
 export * from './calc/loan';
 export * from './calc/cash';
+export * from './calc/obligations';
+export * from './calc/reconcile';
 export * from './calc/goal';
 export * from './calc/equipment';
 export * from './calc/production';
