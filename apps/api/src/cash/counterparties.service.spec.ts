@@ -9,7 +9,11 @@ function makePrisma() {
   const p = {
     counterparty: {
       findMany: jest.fn().mockResolvedValue([]),
-      findFirst: jest.fn().mockResolvedValue({ id: 'cp1', organizationId: ORG, kind: 'PARTNER', name: 'Ana' }),
+      // `active` va siempre: en la base es NOT NULL, y sin el una contraparte
+      // valida se leeria como desactivada.
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'cp1', organizationId: ORG, kind: 'PARTNER', name: 'Ana', active: true }),
       create: jest.fn().mockResolvedValue({ id: 'cp2' }),
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -125,5 +129,66 @@ describe('CounterpartiesService', () => {
       where: { id: 'cp-ajena', organizationId: ORG },
     });
     expect(p.counterparty.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * La caja necesita SIEMPRE una contraparte propietaria activa: es a quien le
+ * atribuye la deuda. `remove` ya lo protegía, pero desactivarla o cambiarle el
+ * tipo esquivaba esa guarda y dejaba el mismo estado roto — la contraparte
+ * existe (así que no hay 404) pero el dueño la ve dada de baja.
+ */
+describe('CounterpartiesService — no quedarse sin propietaria activa', () => {
+  const ACTIVA_OWNER = { id: 'cp1', organizationId: ORG, kind: 'OWNER', name: 'Ana', active: true };
+
+  it('NO se desactiva la única propietaria activa: 409', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest.fn().mockResolvedValue(ACTIVA_OWNER);
+    p.counterparty.count = jest.fn().mockResolvedValue(0); // no hay otra activa
+
+    await expect(
+      service(p).update(ORG, 'cp1', { name: 'Ana', kind: 'OWNER', active: false, notes: null }),
+    ).rejects.toThrow(ConflictException);
+    expect(p.counterparty.update).not.toHaveBeenCalled();
+  });
+
+  it('NO se le cambia el tipo a la única propietaria activa: 409', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest.fn().mockResolvedValue(ACTIVA_OWNER);
+    p.counterparty.count = jest.fn().mockResolvedValue(0);
+
+    await expect(
+      service(p).update(ORG, 'cp1', { name: 'Ana', kind: 'PARTNER', active: true, notes: null }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('con OTRA propietaria activa sí se puede desactivar', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest.fn().mockResolvedValue(ACTIVA_OWNER);
+    p.counterparty.count = jest.fn().mockResolvedValue(1); // hay otra
+
+    await service(p).update(ORG, 'cp1', { name: 'Ana', kind: 'OWNER', active: false, notes: null });
+
+    expect(p.counterparty.update).toHaveBeenCalled();
+  });
+
+  it('renombrarla, que no cambia nada de eso, no dispara la guarda', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest.fn().mockResolvedValue(ACTIVA_OWNER);
+    p.counterparty.count = jest.fn().mockResolvedValue(0);
+
+    await service(p).update(ORG, 'cp1', { name: 'Ana María', kind: 'OWNER', active: true, notes: null });
+
+    expect(p.counterparty.update).toHaveBeenCalled();
+  });
+
+  it('NO se pone por defecto una contraparte desactivada: 409', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest
+      .fn()
+      .mockResolvedValue({ ...ACTIVA_OWNER, id: 'cp2', active: false });
+
+    await expect(service(p).setDefault(ORG, 'cp2')).rejects.toThrow(ConflictException);
+    expect(p.$transaction).not.toHaveBeenCalled();
   });
 });

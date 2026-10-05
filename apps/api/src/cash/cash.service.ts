@@ -35,9 +35,12 @@ export class CashService {
 
   /** La contraparte por defecto: a quién se le debe si nadie dice otra cosa. */
   private async defaultCounterparty(organizationId: string) {
+    // Una ACTIVA gana sobre la marcada por defecto: atribuirle la deuda a una
+    // que el dueño dio de baja sería peor que elegir otra. El ABM de
+    // contrapartes impide llegar a ese estado; esto lo cubre si ya se llegó.
     const cp = await this.prisma.counterparty.findFirst({
       where: { organizationId, kind: 'OWNER' },
-      orderBy: { isDefault: 'desc' },
+      orderBy: [{ active: 'desc' }, { isDefault: 'desc' }],
     });
     if (!cp) throw new NotFoundException('No hay una contraparte configurada');
     return cp;

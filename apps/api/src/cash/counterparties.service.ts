@@ -47,7 +47,17 @@ export class CounterpartiesService {
   }
 
   async update(organizationId: string, id: string, dto: CounterpartyUpsertDto) {
-    await this.mine(organizationId, id);
+    const cp = await this.mine(organizationId, id);
+
+    // ⚠️ Desactivar esquivaría la guarda de `remove`: la contraparte seguiría
+    // existiendo —así que `summary()` no tira 404— pero el dueño la ve dada de
+    // baja y la caja le sigue atribuyendo la deuda. Mismo motivo, misma guarda.
+    const seDesactiva = cp.active && !dto.active;
+    const dejaDeSerPropietaria = cp.kind === 'OWNER' && dto.kind !== 'OWNER';
+    if (seDesactiva || dejaDeSerPropietaria) {
+      await this.exigirOtraPropietaria(organizationId, cp);
+    }
+
     return this.prisma.counterparty.update({
       where: { id },
       data: {
@@ -59,9 +69,36 @@ export class CounterpartiesService {
     });
   }
 
+  /**
+   * La caja necesita SIEMPRE una contraparte propietaria activa: es a quien le
+   * atribuye la deuda. Sin ella, `CashService.summary()` deja de poder decir a
+   * quién se le debe.
+   */
+  private async exigirOtraPropietaria(
+    organizationId: string,
+    cp: { id: string; kind: string; name: string },
+  ) {
+    if (cp.kind !== 'OWNER' || !(await this.esLaUnicaPropietaria(organizationId, cp.id))) return;
+    throw new ConflictException(
+      `${cp.name} es la única contraparte propietaria activa: la caja la necesita para saber a quién se le debe.`,
+    );
+  }
+
+  private async esLaUnicaPropietaria(organizationId: string, id: string) {
+    const otras = await this.prisma.counterparty.count({
+      where: { organizationId, kind: 'OWNER', active: true, id: { not: id } },
+    });
+    return otras === 0;
+  }
+
   /** Una sola por defecto: desmarcar y marcar van juntas o no van. */
   async setDefault(organizationId: string, id: string) {
-    await this.mine(organizationId, id);
+    const cp = await this.mine(organizationId, id);
+    // Poner por defecto una desactivada deja la caja atribuyéndole la deuda a
+    // alguien que el dueño dio de baja.
+    if (!cp.active) {
+      throw new ConflictException(`${cp.name} está desactivada: activala antes de ponerla por defecto.`);
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.counterparty.updateMany({
         where: { organizationId, isDefault: true },
