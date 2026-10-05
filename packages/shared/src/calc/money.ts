@@ -21,6 +21,13 @@ const MONEY_DP = 4;
 /** Convierte un Decimal a número con precisión monetaria estable (4 dp). */
 export const toMoney = (d: Decimal): number => d.toDecimalPlaces(MONEY_DP).toNumber();
 
+/**
+ * Redondeo al CENTAVO, para la caja: cuenta dinero real que hay en una cuenta,
+ * no costos sub-centavo. `toMoney` (4 dp) es para el motor de costeo.
+ */
+export const toCents = (d: Decimal): number =>
+  d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+
 /** Suma una lista de Decimals. */
 export const sum = (values: Decimal[]): Decimal =>
   values.reduce((acc, v) => acc.plus(v), new Decimal(0));
