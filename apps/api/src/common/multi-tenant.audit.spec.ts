@@ -3,6 +3,8 @@ import { OrdersService } from '../orders/orders.module';
 import { StoreService } from '../store/store.service';
 import { ClientsService } from '../clients/clients.module';
 import { CashService } from '../cash/cash.service';
+import { CounterpartiesService } from '../cash/counterparties.service';
+import { CashAccountsService } from '../cash/cash-accounts.service';
 
 /**
  * Auditoría multi-tenant: cada lectura por id DEBE filtrar también por
@@ -72,7 +74,9 @@ describe('Aislamiento multi-tenant (scope por organizationId)', () => {
     };
     const service = new ClientsService(prisma as any);
     await expect(service.get(ORG, 'c1')).rejects.toThrow(NotFoundException);
-    expect(prisma.client.findFirst).toHaveBeenCalledWith({ where: { id: 'c1', organizationId: ORG } });
+    expect(prisma.client.findFirst).toHaveBeenCalledWith({
+      where: { id: 'c1', organizationId: ORG },
+    });
   });
 });
 
@@ -163,5 +167,126 @@ describe('Aislamiento multi-tenant — Caja', () => {
     expect(prisma.counterparty.findFirst).toHaveBeenCalledWith({
       where: { id: 'cp-ajena', organizationId: ORG },
     });
+  });
+});
+
+describe('Aislamiento multi-tenant — contrapartes y cuentas', () => {
+  it('CounterpartiesService.list filtra por organizationId', async () => {
+    const prisma = { counterparty: { findMany: jest.fn().mockResolvedValue([]) } };
+
+    await new CounterpartiesService(prisma as never).list(ORG);
+
+    expect(prisma.counterparty.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: ORG } }),
+    );
+  });
+
+  it('CounterpartiesService.remove NO borra una de otra organización', async () => {
+    // Simula la DB real: `cp1` es de OTHER y findFirst filtra por las claves que
+    // lleguen en el `where`. Si el servicio omite `organizationId`, la encuentra
+    // y sigue hasta el delete (el test se cae).
+    const ajena = {
+      id: 'cp1',
+      organizationId: OTHER,
+      kind: 'PARTNER',
+      name: 'Ana',
+      active: true,
+      isDefault: false,
+    };
+    const prisma = {
+      counterparty: {
+        findFirst: jest.fn(({ where }: never) => {
+          const w = where as { id: string; organizationId?: string };
+          return w.id === ajena.id && (w.organizationId === undefined || w.organizationId === OTHER)
+            ? ajena
+            : null;
+        }),
+        delete: jest.fn(),
+      },
+      ownerMovement: { count: jest.fn().mockResolvedValue(0) },
+      cashAccount: { count: jest.fn().mockResolvedValue(0) },
+      $transaction: jest.fn(),
+    };
+
+    await expect(new CounterpartiesService(prisma as never).remove(ORG, 'cp1')).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(prisma.counterparty.delete).not.toHaveBeenCalled();
+  });
+
+  it('CounterpartiesService.setDefault NO marca una de otra organización', async () => {
+    const ajena = { id: 'cp1', organizationId: OTHER, name: 'Ana', active: true };
+    const prisma = {
+      counterparty: {
+        findFirst: jest.fn(({ where }: never) => {
+          const w = where as { id: string; organizationId?: string };
+          return w.id === ajena.id && (w.organizationId === undefined || w.organizationId === OTHER)
+            ? ajena
+            : null;
+        }),
+        updateMany: jest.fn(),
+        update: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      $transaction: jest.fn(),
+    };
+
+    await expect(new CounterpartiesService(prisma as never).setDefault(ORG, 'cp1')).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('CashAccountsService.update NO toca una cuenta de otra organización', async () => {
+    const prisma = {
+      cashAccount: {
+        // La cuenta es de OTHER; findFirst filtra por las claves que lleguen.
+        findFirst: jest.fn(({ where }: never) => {
+          const w = where as { id: string; organizationId?: string };
+          return w.id === 'acc1' && (w.organizationId === undefined || w.organizationId === OTHER)
+            ? { id: 'acc1', organizationId: OTHER }
+            : null;
+        }),
+        update: jest.fn(),
+      },
+    };
+
+    await expect(
+      new CashAccountsService(prisma as never).update(ORG, 'acc1', {
+        name: 'x',
+        kind: 'BANK',
+        currency: 'USD',
+        shared: false,
+        sharedWithId: null,
+        autoAttributeShortfall: false,
+        active: true,
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.cashAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ una cuenta NO se puede atar a la contraparte de OTRA organización', async () => {
+    // El IDOR de peor consecuencia: `confirm()` le atribuiría un faltante de
+    // plata a la contraparte de otro negocio.
+    const prisma = {
+      cashAccount: { findFirst: jest.fn().mockResolvedValue({ id: 'acc1' }), update: jest.fn() },
+      counterparty: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+
+    await expect(
+      new CashAccountsService(prisma as never).update(ORG, 'acc1', {
+        name: 'x',
+        kind: 'EXCHANGE',
+        currency: 'USD',
+        shared: true,
+        sharedWithId: 'cp-de-otra-org',
+        autoAttributeShortfall: true,
+        active: true,
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.counterparty.findFirst).toHaveBeenCalledWith({
+      where: { id: 'cp-de-otra-org', organizationId: ORG },
+    });
+    expect(prisma.cashAccount.update).not.toHaveBeenCalled();
   });
 });
