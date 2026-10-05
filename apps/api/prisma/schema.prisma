@@ -1076,8 +1076,8 @@ model OwnerMovement {
   concept        String
   note           String?
 
-  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
-  counterpartyId String?
+  counterparty   Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String
   /// Un CONTRIBUTION con `refundable = false` es un aporte de capital.
   refundable     Boolean       @default(true)
   source         RecordSource  @default(MANUAL)
@@ -1157,8 +1157,8 @@ model CashReconciliation {
   id             String               @id @default(cuid())
   organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
-  account        CashAccount?         @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  accountId      String?
+  account        CashAccount          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  accountId      String
   date           DateTime
   status         ReconciliationStatus @default(DRAFT)
 
@@ -1167,7 +1167,7 @@ model CashReconciliation {
   /// Componente personal DECLARADO. No se deriva: el dinero personal del dueño
   /// entra y sale por fuera del negocio y el sistema no lo ve.
   personalAmount Decimal  @default(0) @db.Decimal(12, 4)
-  currency       String?
+  currency       String
   /// Mismo patrón que `Expense.rate` + `Expense.currencyCode`.
   rate           Decimal? @db.Decimal(18, 8)
 
