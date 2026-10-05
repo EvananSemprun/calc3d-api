@@ -66,6 +66,43 @@ enum OwnerMovementKind {
   WITHDRAWAL
 }
 
+/// Qué es una contraparte respecto del negocio. Un socio y el dueño se tratan
+/// igual (ponen plata y se les debe); un prestamista externo no participa.
+enum CounterpartyKind {
+  OWNER
+  PARTNER
+  EXTERNAL_LENDER
+}
+
+enum CashAccountKind {
+  EXCHANGE
+  BANK
+  CASH
+  WALLET
+  OTHER
+}
+
+enum ReconciliationStatus {
+  DRAFT
+  CONFIRMED
+  VOID
+}
+
+/// De dónde salió un registro. `EXCEL_IMPORT` es la etiqueta "Importado";
+/// `RECONCILIATION` marca los ajustes que generó una conciliación.
+enum RecordSource {
+  MANUAL
+  EXCEL_IMPORT
+  RECONCILIATION
+  MIGRATION
+}
+
+/// Contra qué deuda se aplica primero un pago a la contraparte.
+enum DebtApplicationOrder {
+  OLDEST_FIRST
+  NEWEST_FIRST
+}
+
 model Organization {
   id        String   @id @default(cuid())
   name      String
@@ -84,7 +121,6 @@ model Organization {
   expenses        Expense[]
   exchangeRates   ExchangeRate[]
   ownerMovements  OwnerMovement[]
-  cashCounts      CashCount[]
   orders          Order[]
   catalogOptions  CatalogOption[]
   storeProducts   StoreProduct[]
@@ -95,6 +131,11 @@ model Organization {
   loanPayments    LoanPayment[]
   goals           Goal[]
   printerReadings PrinterReading[]
+
+  counterparties   Counterparty[]
+  cashAccounts     CashAccount[]
+  reconciliations  CashReconciliation[]
+  debtApplications DebtApplication[]
 }
 
 model User {
@@ -106,6 +147,8 @@ model User {
   memberships   Membership[]
   refreshTokens RefreshToken[]
   authTokens    AuthToken[]
+
+  confirmedReconciliations CashReconciliation[]
 }
 
 // Propósito de un token de un solo uso enviado por correo.
@@ -214,6 +257,13 @@ model Settings {
   // Piso de margen (markup, fracción) bajo el cual un producto del catálogo
   // dispara alerta de rentabilidad al recostear con precios/tasa de hoy.
   productAlertMinMarginPct Float @default(0.15)
+
+  /// Frecuencia SUGERIDA de conciliación. Es un recordatorio y una etiqueta:
+  /// NO bloquea conciliar cualquier día.
+  reconciliationFrequency String               @default("WEEKLY") // NONE | WEEKLY | BIWEEKLY | MONTHLY
+  /// 1 = lunes … 7 = domingo. Solo aplica con WEEKLY/BIWEEKLY.
+  reconciliationWeekday   Int?                 @default(1)
+  debtApplicationOrder    DebtApplicationOrder @default(OLDEST_FIRST)
 }
 
 /// Si el color se sigue comprando o se decidió no reponerlo más. Un
@@ -427,6 +477,13 @@ model Expense {
 
   /// Quién lo pagó. Alimenta la caja del negocio y lo que se le debe a Vanan.
   paidBy PaidBy @default(BUSINESS)
+
+  /// Si lo pagó la contraparte: ¿se le devuelve, o fue aporte de capital?
+  /// Default `true` para no alterar el histórico. Solo se lee con `paidBy = OWNER`.
+  refundable Boolean      @default(true)
+  source     RecordSource @default(MANUAL)
+
+  debtApplications DebtApplication[]
 
   createdAt DateTime @default(now())
 
@@ -647,7 +704,7 @@ model Campaign {
   /// que las impresoras habían devuelto $431,08 cuando el Excel decía $0.
   attributedSales Decimal  @default(0) @db.Decimal(12, 4)
   createdAt       DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt       DateTime @updatedAt
 
   expenses Expense[]
   orders   Order[]
@@ -948,6 +1005,11 @@ model LoanPayment {
   /// cambia). Si fue la caja, no genera deuda con nadie.
   paidBy    PaidBy   @default(BUSINESS)
 
+  refundable Boolean      @default(true)
+  source     RecordSource @default(MANUAL)
+
+  debtApplications DebtApplication[]
+
   createdAt DateTime @default(now())
 
   @@index([organizationId])
@@ -1017,24 +1079,157 @@ model OwnerMovement {
   concept        String
   note           String?
 
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String?
+  /// Un CONTRIBUTION con `refundable = false` es un aporte de capital.
+  refundable     Boolean       @default(true)
+  source         RecordSource  @default(MANUAL)
+
+  /// ⚠️ LA IDEMPOTENCIA: una conciliación genera UN solo ajuste.
+  cashReconciliation   CashReconciliation? @relation(fields: [cashReconciliationId], references: [id], onDelete: Cascade)
+  cashReconciliationId String?             @unique
+
+  /// Las deudas que este pago canceló.
+  applications    DebtApplication[] @relation("PaymentApplied")
+  /// Si este movimiento ES una obligación (aporte reembolsable), lo que se le pagó.
+  appliedPayments DebtApplication[] @relation("ObligationApplied")
+
   createdAt DateTime @default(now())
 
   @@index([organizationId, date])
 }
 
-/// CONTEO DE LOS LUNES: lo que dice Binance ese día. Solo se guarda el total;
-/// cuánto de eso es del negocio se DERIVA de los movimientos hasta esa fecha, y
-/// la diferencia es la plata personal. Si da negativa, se usó plata del negocio
-/// sin anotarla — el error grave que este conteo existe para cazar.
-model CashCount {
+/// CONTRAPARTE: el dueño, un socio o un prestamista externo. Existe para que
+/// "Le debe a Vanan" sea "Le debe a <nombre>" y para que un negocio con dos
+/// socios pueda llevar la deuda de cada uno por separado.
+model Counterparty {
+  id             String           @id @default(cuid())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  kind           CounterpartyKind
+  /// La contraparte por defecto de la organización. Una sola (índice parcial
+  /// creado a mano en la migración: Prisma no declara índices parciales).
+  isDefault      Boolean          @default(false)
+  active         Boolean          @default(true)
+  notes          String?
+
+  movements OwnerMovement[]
+  accounts  CashAccount[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+/// CUENTA donde vive la plata. El modo "compartida" y la atribución automática
+/// de faltantes son POR CUENTA: una caja de efectivo del negocio no se concilia
+/// igual que un exchange mezclado con la plata personal del dueño.
+model CashAccount {
+  id                     String          @id @default(cuid())
+  organization           Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId         String
+  name                   String
+  kind                   CashAccountKind @default(EXCHANGE)
+  /// ISO 4217. Si no es USD, la conciliación exige tasa.
+  currency               String          @default("USD")
+  /// Mezcla plata del negocio con la personal de `sharedWith`.
+  shared                 Boolean         @default(false)
+  sharedWith             Counterparty?   @relation(fields: [sharedWithId], references: [id], onDelete: SetNull)
+  sharedWithId           String?
+  /// Al confirmar, un faltante se registra como salida hacia `sharedWith`.
+  /// APAGADA por defecto: convierte un desconocido en una deuda saldada.
+  autoAttributeShortfall Boolean         @default(false)
+  active                 Boolean         @default(true)
+  isDefault              Boolean         @default(false)
+
+  reconciliations CashReconciliation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+/// CONCILIACIÓN DE CAJA (antes `CashCount`, "el conteo de los lunes").
+///
+/// Es un DOCUMENTO, no una vista: al confirmar congela los importes para que
+/// una venta cargada tarde con fecha vieja no mueva el historial.
+model CashReconciliation {
+  id             String               @id @default(cuid())
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  account        CashAccount?         @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  accountId      String?
+  date           DateTime
+  status         ReconciliationStatus @default(DRAFT)
+
+  /// Lo contado, en la moneda de la cuenta.
+  totalAmount    Decimal  @db.Decimal(12, 4)
+  /// Componente personal DECLARADO. No se deriva: el dinero personal del dueño
+  /// entra y sale por fuera del negocio y el sistema no lo ve.
+  personalAmount Decimal  @default(0) @db.Decimal(12, 4)
+  currency       String?
+  /// Mismo patrón que `Expense.rate` + `Expense.currencyCode`.
+  rate           Decimal? @db.Decimal(18, 8)
+
+  /// Congelados al confirmar.
+  totalUsd      Decimal? @db.Decimal(12, 4)
+  personalUsd   Decimal? @db.Decimal(12, 4)
+  expectedUsd   Decimal? @db.Decimal(12, 4)
+  /// `businessActualUsd − expectedUsd`. Negativo = falta plata del negocio.
+  differenceUsd Decimal? @db.Decimal(12, 4)
+
+  /// Otra explicación del descuadre, cuando no se atribuye a la contraparte.
+  explanation String?
+  note        String?
+  source      RecordSource @default(MANUAL)
+
+  confirmedAt       DateTime?
+  confirmedByUser   User?     @relation(fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+  confirmedByUserId String?
+  voidedAt          DateTime?
+
+  /// El ajuste que generó, si generó alguno.
+  adjustment OwnerMovement?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, date])
+  @@index([accountId])
+}
+
+/// Qué parte de un pago a la contraparte cancela qué obligación concreta.
+///
+/// Es lo ÚNICO que se guarda del reparto: el saldo de cada obligación se DERIVA
+/// restándole sus aplicaciones, igual que el saldo de un préstamo.
+model DebtApplication {
   id             String       @id @default(cuid())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
-  date           DateTime
-  total          Decimal      @db.Decimal(12, 4)
-  note           String?
+
+  /// ⚠️ DOS relaciones a `OwnerMovement` desde este modelo: las dos llevan
+  /// nombre o Prisma no compila.
+  payment   OwnerMovement @relation("PaymentApplied", fields: [paymentId], references: [id], onDelete: Cascade)
+  paymentId String
+
+  /// La obligación cancelada: EXACTAMENTE UNA (CHECK en la migración).
+  expense              Expense?       @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  expenseId            String?
+  loanPayment          LoanPayment?   @relation(fields: [loanPaymentId], references: [id], onDelete: Cascade)
+  loanPaymentId        String?
+  obligationMovement   OwnerMovement? @relation("ObligationApplied", fields: [obligationMovementId], references: [id], onDelete: Cascade)
+  obligationMovementId String?
+
+  amount Decimal @db.Decimal(12, 4)
 
   createdAt DateTime @default(now())
 
-  @@unique([organizationId, date])
+  @@index([organizationId])
+  @@index([paymentId])
+  @@index([expenseId])
+  @@index([loanPaymentId])
+  @@index([obligationMovementId])
 }
