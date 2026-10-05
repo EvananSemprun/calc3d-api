@@ -40,7 +40,8 @@ enum ExpenseCategory {
   OTHER
   ADVERTISING
   // Diseño (el diseñador de las imágenes y piezas). Va aparte de OTHER porque
-  // lo paga Vanan de su sueldo y es la primera línea que el negocio le devuelve.
+  // lo paga el propietario de su sueldo y es la primera línea que el negocio
+  // le devuelve.
   DESIGN
 }
 
@@ -48,7 +49,8 @@ enum ExpenseCategory {
 /// cuenta de Binance mezcla la plata del negocio con la personal; sin este dato
 /// la caja del negocio no se puede reconstruir.
 ///  - BUSINESS: salió de la caja del negocio.
-///  - OWNER: lo pagó Vanan de su bolsillo → es un aporte que el negocio le debe.
+///  - OWNER: lo pagó el propietario de su bolsillo → es un aporte que el
+///    negocio le debe.
 ///  - LOAN: se pagó con el préstamo (la P2S). No toca la caja: lo que se debe es
 ///    el saldo del préstamo.
 enum PaidBy {
@@ -57,10 +59,11 @@ enum PaidBy {
   LOAN
 }
 
-/// Movimiento de plata PURA entre el bolsillo de Vanan y la caja, que no es un
-/// gasto: sacar plata del negocio para él o meter plata suya sin comprar nada.
-/// Las compras que Vanan paga NO van acá: van como gasto con `paidBy = OWNER`,
-/// o se cargarían dos veces (que es lo que descuadraba la hoja Caja).
+/// Movimiento de plata PURA entre el bolsillo del propietario y la caja, que
+/// no es un gasto: sacar plata del negocio para él o meter plata suya sin
+/// comprar nada. Las compras que el propietario paga NO van acá: van como
+/// gasto con `paidBy = OWNER`, o se cargarían dos veces (que es lo que
+/// descuadraba la hoja Caja).
 enum OwnerMovementKind {
   CONTRIBUTION
   WITHDRAWAL
@@ -480,7 +483,8 @@ model Expense {
   rate         Decimal?  @db.Decimal(18, 6)
   currencyCode String?
 
-  /// Quién lo pagó. Alimenta la caja del negocio y lo que se le debe a Vanan.
+  /// Quién lo pagó. Alimenta la caja del negocio y lo que se le debe a la
+  /// contraparte.
   paidBy PaidBy @default(BUSINESS)
 
   /// Si lo pagó la contraparte: ¿se le devuelve, o fue aporte de capital?
@@ -1007,9 +1011,10 @@ model LoanPayment {
   /// La referencia del pago (transferencia, "cena", lo que sea): es lo que
   /// permite reconciliar con el banco después.
   reference String?
-  /// Quién puso la plata de la cuota. Si fue Vanan, el negocio se la debe a él
-  /// (baja la deuda con el prestamista y sube la deuda con Vanan: el total no
-  /// cambia). Si fue la caja, no genera deuda con nadie.
+  /// Quién puso la plata de la cuota. Si fue el propietario, el negocio se la
+  /// debe a él (baja la deuda con el prestamista y sube la deuda con el
+  /// propietario: el total no cambia). Si fue la caja, no genera deuda con
+  /// nadie.
   paidBy    PaidBy   @default(BUSINESS)
 
   refundable Boolean      @default(true)
@@ -1074,8 +1079,9 @@ model PrinterReading {
   @@index([organizationId])
 }
 
-/// Movimiento entre el bolsillo de Vanan y la caja del negocio que NO es un
-/// gasto (ver `OwnerMovementKind`). Ej.: la regularización del 17/09/2026.
+/// Movimiento entre el bolsillo del propietario y la caja del negocio que NO
+/// es un gasto (ver `OwnerMovementKind`). Ej.: la regularización del
+/// 17/09/2026.
 model OwnerMovement {
   id             String            @id @default(cuid())
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1107,8 +1113,9 @@ model OwnerMovement {
 }
 
 /// CONTRAPARTE: el dueño, un socio o un prestamista externo. Existe para que
-/// "Le debe a Vanan" sea "Le debe a <nombre>" y para que un negocio con dos
-/// socios pueda llevar la deuda de cada uno por separado.
+/// la deuda no cuelgue de un nombre fijo sino de "Le debe a <nombre>", y para
+/// que un negocio con dos socios pueda llevar la deuda de cada uno por
+/// separado.
 model Counterparty {
   id             String           @id @default(cuid())
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)

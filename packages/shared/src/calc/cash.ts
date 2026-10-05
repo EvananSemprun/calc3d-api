@@ -1,23 +1,23 @@
 /**
  * CAJA Y FINANCIAMIENTO — las hojas "Caja" e "Inversion" del Excel (2026-09).
  *
- * Toda la plata vive en UNA cuenta de Binance, mezclada con la personal de
- * Vanan. Por eso la caja del negocio no se puede leer de ningún lado: se
+ * Toda la plata vive en UNA cuenta de Binance, mezclada con la personal del
+ * propietario. Por eso la caja del negocio no se puede leer de ningún lado: se
  * RECONSTRUYE con lo cobrado, lo gastado y quién pagó cada cosa.
  *
- * La regla que evita la doble carga de la hoja: una compra que paga Vanan se
- * anota UNA vez, como gasto con `paidBy = OWNER`. De ahí salen solos el gasto y
- * el aporte. Solo la plata pura (sacar para él, meter sin comprar nada) es un
- * movimiento aparte.
+ * La regla que evita la doble carga de la hoja: una compra que paga el
+ * propietario se anota UNA vez, como gasto con `paidBy = OWNER`. De ahí salen
+ * solos el gasto y el aporte. Solo la plata pura (sacar para él, meter sin
+ * comprar nada) es un movimiento aparte.
  *
  * Lo que mete la contraparte se separa en reembolsable (el negocio se lo debe)
  * y capital (a fondo perdido): suben la caja igual, pero solo el primero es
  * deuda. Y un retiro se parte en devolución de deuda (`applied`) y retiro puro.
  *
  * ⚠️ Caja NO es ganancia: una cuota del préstamo o un rollo sin usar sacan plata
- * de la caja sin ser pérdida, y un aporte de Vanan la sube sin ser venta. La
- * ganancia acumulada vive en `equipmentRecovery`, y el financiamiento de abajo
- * es el mismo dinero visto desde "quién lo puso" — no se suman.
+ * de la caja sin ser pérdida, y un aporte del propietario la sube sin ser
+ * venta. La ganancia acumulada vive en `equipmentRecovery`, y el financiamiento
+ * de abajo es el mismo dinero visto desde "quién lo puso" — no se suman.
  *
  * ⚠️ El orden es CLASIFICAR y DESPUÉS SUMAR: `cashEntries` decide a qué línea
  * va cada asiento y `businessCash` solo los suma. Antes la clasificación vivía

@@ -27,7 +27,7 @@ describe('businessCash', () => {
     expect(c.balance).toBe(85);
   });
 
-  it('una compra que pagó Vanan se ve como gasto Y como aporte: no mueve la caja', () => {
+  it('una compra que pagó el propietario se ve como gasto Y como aporte: no mueve la caja', () => {
     // Igual que la hoja: el gasto resta en "Gastos" y suma en "Aportes".
     const l = vacio();
     l.sales = [{ date: '2026-09-01', amount: 50 }];
@@ -51,7 +51,7 @@ describe('businessCash', () => {
     expect(businessCash(l).balance).toBe(0);
   });
 
-  it('un equipo que pagó Vanan no entra en la caja (vive en el financiamiento)', () => {
+  it('un equipo que pagó el propietario no entra en la caja (vive en el financiamiento)', () => {
     const l = vacio();
     l.expenses = [
       { date: '2026-01-02', amount: 615, paidBy: 'OWNER', isInvestment: true, isFilament: false, refundable: true },

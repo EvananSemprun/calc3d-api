@@ -5,8 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 /**
  * CONTRAPARTES: el dueño, los socios y los prestamistas externos.
  *
- * Existe para que "Le debe a Vanan" sea "Le debe a <nombre>" y para que un
- * negocio con dos socios lleve la deuda de cada uno por separado.
+ * Existe para que la deuda no cuelgue de un nombre fijo sino de
+ * "Le debe a <nombre>", y para que un negocio con dos socios lleve la deuda de
+ * cada uno por separado.
  *
  * ⚠️ Borrar una contraparte con historial destruiría deuda, así que las guardas
  * de `remove` no son cosméticas. La salida para una que ya no participa es

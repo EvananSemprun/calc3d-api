@@ -51,7 +51,7 @@ function makePrisma() {
     loanPayment: { ...vacio },
     loan: { ...vacio },
     counterparty: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'cp1', name: 'Vanan', kind: 'OWNER' }),
+      findFirst: jest.fn().mockResolvedValue({ id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER' }),
     },
     cashAccount: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -181,7 +181,7 @@ describe('CashService.summary', () => {
   it('expone la contraparte y las cuentas para que la UI no tenga nombres fijos', async () => {
     const r = await service(makePrisma()).summary(ORG);
 
-    expect(r.counterparty).toMatchObject({ id: 'cp1', name: 'Vanan' });
+    expect(r.counterparty).toMatchObject({ id: 'cp1', name: 'Dueño de prueba' });
     expect(r.accounts[0]).toMatchObject({ id: 'acc1', shared: true, autoAttributeShortfall: false });
     expect(r.applicationOrder).toBe('OLDEST_FIRST');
   });
@@ -241,7 +241,7 @@ describe('CashService.addMovement', () => {
     const p = makePrisma();
     // La contraparte pedida no pertenece a esta organización.
     p.counterparty.findFirst = jest.fn(({ where }: never) =>
-      (where as { id?: string }).id === 'cp-ajena' ? null : { id: 'cp1', name: 'Vanan', kind: 'OWNER' },
+      (where as { id?: string }).id === 'cp-ajena' ? null : { id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER' },
     );
 
     await expect(
