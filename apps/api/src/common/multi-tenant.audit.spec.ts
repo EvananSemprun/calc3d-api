@@ -149,6 +149,60 @@ describe('Aislamiento multi-tenant — Caja', () => {
     });
   });
 
+  /**
+   * `GET /cash/breakdown/:category` es la superficie más expuesta de la Caja:
+   * no devuelve un total sino PLATA fila por fila, con la etiqueta de cada
+   * registro. Un escape de scope acá no se nota como un número raro — entrega
+   * el detalle del negocio ajeno, con sus conceptos y sus clientes.
+   *
+   * ⚠️ El mock modela la BASE: `findMany` devuelve lo que el `where` deje
+   * pasar, así que si el servicio omite `organizationId` las filas de OTHER
+   * SALEN y el test se cae. Un mock que devolviera `[]` ante cualquier `where`
+   * inesperado pasaría con y sin la protección (el error de la fase 2).
+   */
+  it('CashService.breakdown NO devuelve asientos de otra organización', async () => {
+    const ajena = {
+      id: 'v-ajena',
+      organizationId: OTHER,
+      date: new Date('2026-09-01'),
+      amount: '999',
+      kind: 'COUNTER',
+      note: 'Venta del otro negocio',
+      source: 'MANUAL',
+    };
+    const filtra = (filas: Record<string, unknown>[]) => ({
+      findMany: jest.fn(({ where }: { where?: Record<string, unknown> }) =>
+        Promise.resolve(
+          filas.filter((f) =>
+            Object.entries(where ?? {}).every(([k, v]) =>
+              v !== null && typeof v === 'object' ? true : f[k] === v,
+            ),
+          ),
+        ),
+      ),
+    });
+    const prisma = {
+      sale: filtra([ajena]),
+      payment: filtra([]),
+      expense: filtra([]),
+      loanPayment: filtra([]),
+      loan: filtra([]),
+      ownerMovement: filtra([]),
+      debtApplication: filtra([]),
+      cashAccount: filtra([]),
+      cashReconciliation: filtra([]),
+      settings: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+
+    const r = await new CashService(prisma as never).breakdown(ORG, 'collected');
+
+    expect(r.entries).toEqual([]);
+    expect(r.total).toBe(0);
+    // Y la fila ERA alcanzable: pedida como OTHER, el mismo mock la devuelve.
+    const suya = await new CashService(prisma as never).breakdown(OTHER, 'collected');
+    expect(suya.total).toBe(999);
+  });
+
   it('CashService.addMovement NO acepta una contraparte de otra organización', async () => {
     const prisma = { counterparty: { findFirst: jest.fn().mockResolvedValue(null) } };
     const service = new CashService(prisma as never);

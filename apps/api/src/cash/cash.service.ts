@@ -2,17 +2,20 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import {
   applyPayment,
   businessCash,
+  cashEntries,
   loanBalance,
   obligationLedger,
   ownerFinancing,
   reconcile,
   type ApplicationOrder,
+  type CashCategory,
   type CashLedger,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type ObligationInput,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
+import type { RecordSource } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -28,6 +31,23 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 const dia = (d: Date) => d.toISOString().slice(0, 10);
 const n = (x: unknown) => Number(x);
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */
+interface EtiquetaAsiento {
+  label: string;
+  source: RecordSource;
+}
+
+/**
+ * Cuando el asiento no trae id —o su origen no está en el mapa— la plata se
+ * muestra igual, sin etiqueta. El número es lo importante: esconder la fila
+ * haría que el detalle sumara menos que su propio total.
+ */
+const SIN_DETALLE: EtiquetaAsiento = { label: 'Sin detalle', source: 'MANUAL' };
+
+/** Un texto vacío o en blanco no es una etiqueta: hay que caer al respaldo. */
+const texto = (s: string | null | undefined) => (s?.trim() ? s.trim() : null);
 
 @Injectable()
 export class CashService {
@@ -51,8 +71,16 @@ export class CashService {
     const where = { organizationId };
     const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings] =
       await Promise.all([
-        this.prisma.sale.findMany({ where, select: { date: true, amount: true } }),
-        this.prisma.payment.findMany({ where, select: { date: true, amount: true } }),
+        // El desplegable necesita además el id (para el join con la etiqueta),
+        // el texto de cada fila y su origen (la insignia "Importado").
+        this.prisma.sale.findMany({
+          where,
+          select: { id: true, date: true, amount: true, kind: true, note: true, source: true },
+        }),
+        this.prisma.payment.findMany({
+          where,
+          select: { id: true, date: true, amount: true, note: true, source: true },
+        }),
         this.prisma.expense.findMany({ where }),
         this.prisma.loanPayment.findMany({ where }),
         this.prisma.ownerMovement.findMany({ where, orderBy: { date: 'asc' } }),
@@ -80,9 +108,12 @@ export class CashService {
     }
 
     const ledger: CashLedger = {
-      sales: ventas.map((v) => ({ date: dia(v.date), amount: n(v.amount) })),
-      orderPayments: abonos.map((p) => ({ date: dia(p.date), amount: n(p.amount) })),
+      // El `id` viaja en los cinco arrays: el motor no lo mira, solo lo
+      // arrastra hasta `cashEntries` para que acá se le pueda pegar la etiqueta.
+      sales: ventas.map((v) => ({ id: v.id, date: dia(v.date), amount: n(v.amount) })),
+      orderPayments: abonos.map((p) => ({ id: p.id, date: dia(p.date), amount: n(p.amount) })),
       expenses: gastos.map((g) => ({
+        id: g.id,
         date: dia(g.date),
         amount: n(g.amount),
         paidBy: g.paidBy,
@@ -91,12 +122,14 @@ export class CashService {
         refundable: g.refundable,
       })),
       loanPayments: cuotas.map((c) => ({
+        id: c.id,
         date: dia(c.date),
         amount: n(c.amount),
         paidBy: c.paidBy,
         refundable: c.refundable,
       })),
       movements: movimientos.map((m) => ({
+        id: m.id,
         date: dia(m.date),
         amount: n(m.amount),
         kind: m.kind,
@@ -106,7 +139,7 @@ export class CashService {
     };
 
     return {
-      ledger, gastos, cuotas, movimientos, prestamos, cuentas, conciliaciones,
+      ledger, ventas, abonos, gastos, cuotas, movimientos, prestamos, cuentas, conciliaciones,
       porObligacion, porPago,
       order: (settings?.debtApplicationOrder ?? 'OLDEST_FIRST') as ApplicationOrder,
     };
@@ -162,6 +195,76 @@ export class CashService {
         })),
     ];
     return obligationLedger(items);
+  }
+
+  /**
+   * El join `id → texto` de los cinco orígenes del ledger.
+   *
+   * Vive acá y no en `shared` a propósito: el motor es puro y no conoce los
+   * nombres de columna de Prisma (`description`, `concept`, `reference`).
+   * Meterle etiquetas lo ataría al esquema de la base.
+   *
+   * ⚠️ Los ids son cuid de tablas distintas, así que no chocan entre sí. Un
+   * mismo id SÍ puede aparecer en dos asientos —un retiro se parte en
+   * devolución y retiro, un gasto de la contraparte es gasto y aporte—, y eso
+   * es correcto: las dos mitades llevan la misma etiqueta porque son el mismo
+   * registro visto por sus dos caras.
+   */
+  private etiquetas(d: Awaited<ReturnType<CashService['datos']>>) {
+    const m = new Map<string, EtiquetaAsiento>();
+
+    for (const v of d.ventas) {
+      m.set(v.id, {
+        label: texto(v.note) ?? (v.kind === 'ENCARGO' ? 'Venta por encargo' : 'Venta de mostrador'),
+        source: v.source,
+      });
+    }
+    for (const p of d.abonos) m.set(p.id, { label: texto(p.note) ?? 'Abono de pedido', source: p.source });
+    for (const g of d.gastos) m.set(g.id, { label: texto(g.description) ?? 'Gasto sin descripción', source: g.source });
+    for (const c of d.cuotas) m.set(c.id, { label: texto(c.reference) ?? 'Cuota del préstamo', source: c.source });
+    for (const mv of d.movimientos) m.set(mv.id, { label: texto(mv.concept) ?? 'Movimiento', source: mv.source });
+
+    return m;
+  }
+
+  /**
+   * El detalle de UNA línea de "De dónde sale el saldo".
+   *
+   * ⚠️ NO reclasifica: le pide los asientos a `cashEntries`, el MISMO que usa
+   * `businessCash`. Si acá hubiera filtros propios (`isInvestment`, `paidBy`,
+   * `isFilament`…) habría dos clasificaciones que tendrían que coincidir para
+   * siempre, y el día que una cambiara la pantalla mostraría un detalle que
+   * suma distinto que la línea de arriba. Una pantalla de dinero que se
+   * contradice a sí misma es peor que no tener desplegable.
+   */
+  async breakdown(organizationId: string, category: CashCategory) {
+    const d = await this.datos(organizationId);
+    const etiquetas = this.etiquetas(d);
+
+    const entries = cashEntries(d.ledger)
+      .filter((e) => e.category === category)
+      // Más nuevo primero: es el orden en el que el dueño busca una fila.
+      .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
+      .map((e) => ({
+        date: e.date,
+        amount: e.amount,
+        ...((e.id && etiquetas.get(e.id)) || SIN_DETALLE),
+      }));
+
+    return {
+      category,
+      /**
+       * ⚠️ El total se RECALCULA sobre los asientos que se devuelven; no se
+       * copia de `businessCash`. Si alguna vez divergieran, la diferencia se
+       * ve en pantalla en vez de quedar tapada por un número prestado.
+       *
+       * Se redondea igual que la línea del resumen (`round2` por categoría),
+       * o el ruido de coma flotante haría que dos cifras iguales se vieran
+       * distintas.
+       */
+      total: round2(entries.reduce((sum, e) => sum + e.amount, 0)),
+      entries,
+    };
   }
 
   /** Convierte a USD con la tasa congelada. Sin tasa, ya está en USD. */

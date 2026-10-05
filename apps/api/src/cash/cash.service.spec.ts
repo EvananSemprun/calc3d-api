@@ -1,15 +1,23 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import 'reflect-metadata';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import {
+  CASH_SIGN,
   CashAccountUpsertSchema,
+  CashCategorySchema,
   CashReconciliationUpsertSchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   SettingsUpdateSchema,
 } from '@calc3d/shared';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CashController } from './cash.module';
 import { CashService } from './cash.service';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 
 const ORG = 'org-A';
+/** La organización de al lado: nada suyo puede salir por el desplegable. */
+const OTHER_ORG = 'org-B';
 
 function makePrisma() {
   const vacio = { findMany: jest.fn().mockResolvedValue([]) };
@@ -837,5 +845,318 @@ describe('Contratos de contrapartes y cuentas', () => {
     expect(SettingsUpdateSchema.safeParse({ reconciliationWeekday: 1 }).success).toBe(true);
     expect(SettingsUpdateSchema.safeParse({ debtApplicationOrder: 'RANDOM' }).success).toBe(false);
     expect(SettingsUpdateSchema.safeParse({ debtApplicationOrder: 'NEWEST_FIRST' }).success).toBe(true);
+  });
+});
+
+// ===========================================================================
+// GET /cash/breakdown/:category — el detalle de UNA línea del saldo.
+// ===========================================================================
+
+/**
+ * Un Prisma de mentira que se comporta como la BASE DE VERDAD.
+ *
+ * Cada tabla es una lista de filas y `findMany({ where })` devuelve las que
+ * coinciden con TODAS las claves del `where` que llegue. La parte que importa:
+ * si el servicio NO manda `organizationId`, el `where` no lo filtra y las filas
+ * de la otra organización **SALEN**, igual que en Postgres.
+ *
+ * ⚠️ Es el error exacto que arruinó los tests de la fase 2. Aquel mock devolvía
+ * la fila solo cuando `organizationId === OTHER`: al quitarle el scope al
+ * servicio devolvía `undefined`, el servicio tiraba 404 igual, y el test pasaba
+ * CON y SIN la protección. Un test de aislamiento que no distingue "filtrado"
+ * de "no encontrado" no prueba nada. Por eso acá un `where` inesperado NO
+ * devuelve vacío: devuelve de más, que es el lado peligroso.
+ */
+function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
+  const coincide = (fila: Record<string, unknown>, where: Record<string, unknown> = {}) =>
+    Object.entries(where ?? {}).every(([k, v]) => {
+      if (v === null || typeof v !== 'object') return fila[k] === v;
+      const op = v as Record<string, unknown>;
+      if ('not' in op) return fila[k] !== op.not;
+      if ('in' in op) return (op.in as unknown[]).includes(fila[k]);
+      // Un operador que este mock no modela NO filtra: preferimos devolver de
+      // más y que el test se caiga, antes que esconder filas por accidente.
+      return true;
+    });
+
+  const delegado = (nombre: string) => ({
+    findMany: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
+      Promise.resolve((tablas[nombre] ?? []).filter((f) => coincide(f, where))),
+    ),
+    findFirst: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
+      Promise.resolve((tablas[nombre] ?? []).find((f) => coincide(f, where)) ?? null),
+    ),
+    findUnique: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
+      Promise.resolve((tablas[nombre] ?? []).find((f) => coincide(f, where)) ?? null),
+    ),
+  });
+
+  return {
+    sale: delegado('sale'),
+    payment: delegado('payment'),
+    expense: delegado('expense'),
+    loanPayment: delegado('loanPayment'),
+    loan: delegado('loan'),
+    ownerMovement: delegado('ownerMovement'),
+    debtApplication: delegado('debtApplication'),
+    cashAccount: delegado('cashAccount'),
+    cashReconciliation: delegado('cashReconciliation'),
+    counterparty: delegado('counterparty'),
+    settings: delegado('settings'),
+  };
+}
+
+type Tablas = Record<string, Record<string, unknown>[]>;
+
+/** Un negocio con las NUEVE líneas del saldo pobladas. */
+function tablasCompletas(org = ORG): Tablas {
+  return {
+    counterparty: [
+      { id: 'cp1', organizationId: org, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: org, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [
+      {
+        id: 'acc1', organizationId: org, name: 'Binance', currency: 'USD',
+        shared: true, sharedWithId: 'cp1', autoAttributeShortfall: false, isDefault: true,
+      },
+    ],
+    cashReconciliation: [],
+    loan: [],
+    sale: [
+      // Sin `note`: la etiqueta sale del tipo de venta. Importada del Excel.
+      { id: 'v1', organizationId: org, date: new Date('2026-09-01'), amount: '100', kind: 'COUNTER', note: null, source: 'EXCEL_IMPORT' },
+      { id: 'v2', organizationId: org, date: new Date('2026-09-05'), amount: '50', kind: 'ENCARGO', note: 'Llaveros del evento', source: 'MANUAL' },
+    ],
+    payment: [
+      { id: 'ab1', organizationId: org, date: new Date('2026-09-03'), amount: '30', note: null, source: 'MANUAL' },
+    ],
+    expense: [
+      { id: 'g1', organizationId: org, date: new Date('2026-09-02'), amount: '10', paidBy: 'BUSINESS', isInvestment: false, category: 'UTILITIES', materialId: null, refundable: false, description: 'Luz de agosto', source: 'MANUAL' },
+      { id: 'g2', organizationId: org, date: new Date('2026-09-04'), amount: '25', paidBy: 'BUSINESS', isInvestment: false, category: 'MATERIAL', materialId: 'm1', refundable: false, description: 'Rollo PLA negro', source: 'EXCEL_IMPORT' },
+      { id: 'g3', organizationId: org, date: new Date('2026-09-06'), amount: '600', paidBy: 'BUSINESS', isInvestment: true, category: 'EQUIPMENT', materialId: null, refundable: true, description: 'Impresora nueva', source: 'MANUAL' },
+      // Lo pagó la contraparte: es gasto Y aporte a la vez (dos asientos).
+      { id: 'g4', organizationId: org, date: new Date('2026-09-08'), amount: '40', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta y espátulas', source: 'MANUAL' },
+    ],
+    loanPayment: [
+      { id: 'c1', organizationId: org, date: new Date('2026-09-09'), amount: '15', paidBy: 'BUSINESS', refundable: false, reference: 'REF-0091', source: 'MANUAL' },
+    ],
+    ownerMovement: [
+      { id: 'mv1', organizationId: org, date: new Date('2026-09-10'), kind: 'CONTRIBUTION', amount: '200', concept: 'Capital inicial', note: null, counterpartyId: 'cp1', refundable: false, source: 'MANUAL', cashReconciliationId: null },
+      { id: 'mv2', organizationId: org, date: new Date('2026-09-12'), kind: 'WITHDRAWAL', amount: '70', concept: 'Retiro de septiembre', note: null, counterpartyId: 'cp1', refundable: true, source: 'MANUAL', cashReconciliationId: null },
+    ],
+    // De los 70 del retiro, 20 cancelaron la deuda del gasto g4.
+    debtApplication: [
+      { id: 'da1', organizationId: org, paymentId: 'mv2', expenseId: 'g4', loanPaymentId: null, obligationMovementId: null, amount: '20' },
+    ],
+  };
+}
+
+const servicioFalso = (t: Tablas) => new CashService(baseFalsa(t) as never);
+
+/**
+ * AISLAMIENTO. El desplegable expone PLATA fila por fila, con su etiqueta: es
+ * la superficie donde un escape de scope no se nota como un total raro sino
+ * que entrega el detalle del negocio ajeno, con sus conceptos.
+ */
+describe('CashService.breakdown — una organización ajena (IDOR)', () => {
+  /** ORG está vacía; OTHER_ORG tiene una venta de 999. */
+  const tablas = (): Tablas => ({
+    counterparty: [
+      { id: 'cp-A', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [], cashReconciliation: [], loan: [],
+    expense: [], loanPayment: [], ownerMovement: [], debtApplication: [], payment: [],
+    sale: [
+      {
+        id: 'v-ajena', organizationId: OTHER_ORG, date: new Date('2026-09-01'),
+        amount: '999', kind: 'COUNTER', note: 'Venta del otro negocio', source: 'MANUAL',
+      },
+    ],
+  });
+
+  it('no devuelve ni un asiento de la otra organización', async () => {
+    const r = await servicioFalso(tablas()).breakdown(ORG, 'collected');
+
+    expect(r.entries).toEqual([]);
+    expect(r.total).toBe(0);
+  });
+
+  /**
+   * ⚠️ ESTE test es el que vuelve honesto al de arriba.
+   *
+   * Prueba que la fila ES ALCANZABLE en este mock: si el `where` la incluye,
+   * sale. Sin esto, el `[]` de arriba podría significar "el mock no tiene nada
+   * que devolver" en vez de "el scope la filtró", y pasaría igual con la
+   * protección quitada — que es exactamente como se perdió la fase 2.
+   */
+  it('el mock modela la base: pedida COMO la otra organización, la venta SÍ aparece', async () => {
+    const r = await servicioFalso(tablas()).breakdown(OTHER_ORG, 'collected');
+
+    expect(r.total).toBe(999);
+    expect(r.entries[0]).toMatchObject({ label: 'Venta del otro negocio' });
+  });
+
+  it('todas las lecturas del desglose van con el organizationId', async () => {
+    const p = baseFalsa(tablas());
+    await new CashService(p as never).breakdown(ORG, 'collected');
+
+    for (const m of [p.sale, p.payment, p.expense, p.loanPayment, p.ownerMovement, p.debtApplication]) {
+      expect(m.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+      );
+    }
+  });
+});
+
+/**
+ * Una categoría inventada tiene que morir en el PIPE, antes de llegar al
+ * servicio. Se prueba contra el pipe REAL y, aparte, se fija por metadata de
+ * Nest que la ruta lo tenga puesto: el pipe suelto no detecta a quien lo saque
+ * del `@Param`.
+ */
+describe('GET /cash/breakdown/:category — la categoría es un valor cerrado', () => {
+  const pipe = new ZodValidationPipe(CashCategorySchema);
+
+  it('una categoría inventada es 400, no 500 ni un desplegable vacío', () => {
+    for (const basura of ['../../etc', 'balance', '', 'COLLECTED', 'collected; drop']) {
+      expect(() => pipe.transform(basura)).toThrow(BadRequestException);
+    }
+  });
+
+  it('las nueve categorías de verdad pasan', () => {
+    for (const k of Object.keys(CASH_SIGN)) expect(pipe.transform(k)).toBe(k);
+  });
+
+  it('la ruta valida el :category con ZodValidationPipe (metadata real de Nest)', () => {
+    const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'breakdown') as
+      | Record<string, { index: number; data?: string; pipes: unknown[] }>
+      | undefined;
+    const arg = Object.values(meta ?? {}).find((a) => a?.data === 'category');
+
+    if (!arg) throw new Error("falta @Param('category', ...) en breakdown");
+    expect(arg.pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+  });
+
+  it('el desglose exige sesión (guard a nivel de clase)', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, CashController)).toContain(JwtAuthGuard);
+  });
+});
+
+describe('CashService.breakdown', () => {
+  /**
+   * ⚠️ Este test NO verifica la clasificación. Los dos lados salen del MISMO
+   * `cashEntries`, así que un filtro mal escrito movería el detalle y la línea
+   * a la vez y el test seguiría verde — es el error que se cometió en la tarea
+   * 1 al escribir un invariante creyendo que protegía el motor.
+   *
+   * Lo que sí verifica es la CAPA DE LA API: que el `.filter` por categoría, el
+   * `.map` y el join `id → etiqueta` no pierdan ni dupliquen asientos. Un gasto
+   * de la contraparte emite dos asientos con el MISMO id en categorías
+   * distintas, y un retiro emite dos con el mismo id: un join por id mal hecho
+   * (un `find` que se queda con el primero, un `Map` que pisa claves entre
+   * tablas) rompe acá y en ningún otro lado.
+   */
+  it('el total de cada desplegable es igual a la línea de summary(), en las nueve', async () => {
+    const t = tablasCompletas();
+    const resumen = await servicioFalso(t).summary(ORG);
+
+    for (const k of Object.keys(CASH_SIGN) as (keyof typeof CASH_SIGN)[]) {
+      const d = await servicioFalso(t).breakdown(ORG, k);
+      expect({ [k]: d.total }).toEqual({ [k]: resumen.balance[k] });
+      // Y ninguna de las nueve viene vacía: el fixture las puebla a todas, así
+      // que un desplegable sin filas sería un asiento perdido, no un cero real.
+      expect(d.entries.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('un retiro parcialmente aplicado sale partido, con la misma etiqueta en las dos mitades', async () => {
+    const t = tablasCompletas();
+    const devoluciones = await servicioFalso(t).breakdown(ORG, 'debtRepayments');
+    const retiros = await servicioFalso(t).breakdown(ORG, 'ownerDraws');
+
+    expect(devoluciones.total).toBe(20);
+    expect(retiros.total).toBe(50);
+    // Las dos mitades suman el retiro entero: son el mismo movimiento visto
+    // por sus dos caras, no dos retiros.
+    expect(devoluciones.total + retiros.total).toBe(70);
+    expect(devoluciones.entries[0].label).toBe('Retiro de septiembre');
+    expect(retiros.entries[0].label).toBe('Retiro de septiembre');
+  });
+
+  it('un retiro totalmente aplicado no inventa un retiro de cero', async () => {
+    const t = tablasCompletas();
+    t.debtApplication = [
+      { id: 'da1', organizationId: ORG, paymentId: 'mv2', expenseId: 'g4', loanPaymentId: null, obligationMovementId: null, amount: '70' },
+    ];
+
+    const retiros = await servicioFalso(t).breakdown(ORG, 'ownerDraws');
+
+    expect(retiros.entries).toEqual([]);
+    expect(retiros.total).toBe(0);
+  });
+
+  it('la etiqueta sale del origen de cada asiento, con su insignia', async () => {
+    const t = tablasCompletas();
+
+    const cobrado = await servicioFalso(t).breakdown(ORG, 'collected');
+    expect(cobrado.entries).toEqual([
+      // Más nuevo primero.
+      { date: '2026-09-05', amount: 50, label: 'Llaveros del evento', source: 'MANUAL' },
+      { date: '2026-09-03', amount: 30, label: 'Abono de pedido', source: 'MANUAL' },
+      { date: '2026-09-01', amount: 100, label: 'Venta de mostrador', source: 'EXCEL_IMPORT' },
+    ]);
+
+    const filamento = await servicioFalso(t).breakdown(ORG, 'filament');
+    expect(filamento.entries).toEqual([
+      { date: '2026-09-04', amount: 25, label: 'Rollo PLA negro', source: 'EXCEL_IMPORT' },
+    ]);
+
+    const cuotas = await servicioFalso(t).breakdown(ORG, 'loanPayments');
+    expect(cuotas.entries[0].label).toBe('REF-0091');
+
+    const capital = await servicioFalso(t).breakdown(ORG, 'contributionsCapital');
+    expect(capital.entries[0].label).toBe('Capital inicial');
+  });
+
+  it('una venta por encargo sin nota dice que es por encargo', async () => {
+    const t = tablasCompletas();
+    t.sale = [
+      { id: 'v2', organizationId: ORG, date: new Date('2026-09-05'), amount: '50', kind: 'ENCARGO', note: null, source: 'MANUAL' },
+    ];
+    t.payment = [];
+
+    const r = await servicioFalso(t).breakdown(ORG, 'collected');
+
+    expect(r.entries[0].label).toBe('Venta por encargo');
+  });
+
+  /**
+   * El `id` del asiento es OPCIONAL en el motor. Si alguna vez un `select` se
+   * angosta y deja de traerlo, el desplegable tiene que seguir mostrando la
+   * plata —sin etiqueta— en vez de romperse: el número es lo importante.
+   */
+  it('un asiento sin id no rompe el serializador: sale "Sin detalle"', async () => {
+    const t = tablasCompletas();
+    t.sale = [
+      { id: undefined, organizationId: ORG, date: new Date('2026-09-01'), amount: '100', kind: 'COUNTER', note: null, source: 'MANUAL' },
+    ];
+    t.payment = [];
+
+    const r = await servicioFalso(t).breakdown(ORG, 'collected');
+
+    expect(r.entries).toEqual([
+      { date: '2026-09-01', amount: 100, label: 'Sin detalle', source: 'MANUAL' },
+    ]);
+  });
+
+  it('una categoría sin movimientos devuelve la lista vacía y total cero', async () => {
+    const t = tablasCompletas();
+    t.loanPayment = [];
+
+    const r = await servicioFalso(t).breakdown(ORG, 'loanPayments');
+
+    expect(r).toEqual({ category: 'loanPayments', total: 0, entries: [] });
   });
 });

@@ -11,11 +11,13 @@ import {
 } from '@nestjs/common';
 import {
   CashAccountUpsertSchema,
+  CashCategorySchema,
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   type CashAccountUpsertDto,
+  type CashCategoryDto,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type CounterpartyUpsertDto,
@@ -36,6 +38,26 @@ export class CashController {
   @Get()
   summary(@CurrentUser() user: AuthUser) {
     return this.service.summary(user.organizationId);
+  }
+
+  /**
+   * El detalle de una línea del saldo: de dónde sale ese número, fila por fila.
+   *
+   * ⚠️ La categoría se valida con el enum compartido, no se pasa cruda al
+   * servicio: sin el pipe, un `:category` inventado llegaría al `.filter` y
+   * devolvería un desplegable vacío con la línea en rojo arriba — un 200 que
+   * se lee como "no hay movimientos" cuando en realidad la ruta está mal.
+   *
+   * ⚠️ Es la única ruta con parámetro de este controlador. Si alguna vez se
+   * agrega un `@Get(':algo')`, tiene que ir DESPUÉS de esta o Nest se queda
+   * con la suya (el mismo tropiezo de `GET /printers/recovery`).
+   */
+  @Get('breakdown/:category')
+  breakdown(
+    @CurrentUser() user: AuthUser,
+    @Param('category', new ZodValidationPipe(CashCategorySchema)) category: CashCategoryDto,
+  ) {
+    return this.service.breakdown(user.organizationId, category);
   }
 
   @Post('movements')
