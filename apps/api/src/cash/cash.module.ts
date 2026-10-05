@@ -10,9 +10,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
-  CashCountUpsertSchema,
+  CashReconciliationConfirmSchema,
+  CashReconciliationUpsertSchema,
   OwnerMovementCreateSchema,
-  type CashCountUpsertDto,
+  type CashReconciliationConfirmDto,
+  type CashReconciliationUpsertDto,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -43,17 +45,26 @@ export class CashController {
     return this.service.removeMovement(user.organizationId, id);
   }
 
-  @Put('counts')
-  saveCount(
+  @Put('reconciliations')
+  saveReconciliation(
     @CurrentUser() user: AuthUser,
-    @Body(new ZodValidationPipe(CashCountUpsertSchema)) dto: CashCountUpsertDto,
+    @Body(new ZodValidationPipe(CashReconciliationUpsertSchema)) dto: CashReconciliationUpsertDto,
   ) {
-    return this.service.saveCount(user.organizationId, dto);
+    return this.service.saveReconciliation(user.organizationId, dto);
   }
 
-  @Delete('counts/:id')
-  removeCount(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.service.removeCount(user.organizationId, id);
+  @Post('reconciliations/:id/confirm')
+  confirm(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(CashReconciliationConfirmSchema)) dto: CashReconciliationConfirmDto,
+  ) {
+    return this.service.confirm(user.organizationId, id, dto, user.userId);
+  }
+
+  @Post('reconciliations/:id/void')
+  voidReconciliation(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.voidReconciliation(user.organizationId, id);
   }
 }
 
