@@ -58,8 +58,21 @@ const INCLUIR = process.argv
 /**
  * La huella que dejó la importación en el texto de cada fila. Es precisa: para
  * que marque algo que cargó el dueño, él tendría que haber tipeado esta frase.
+ *
+ * ⚠️ VA SIN EL PARÉNTESIS DE APERTURA, A PROPÓSITO. Los importadores dejaron
+ * DOS redacciones distintas y las dos son del libro:
+ *   · `"… (del Excel)"` / `"… (del Excel, hoja Ventas)"` / `"… (del Excel,
+ *     fecha real no registrada)"`  → 20 gastos, 122 ventas, 21 abonos
+ *   · `"… — histórica del Excel, fecha real no registrada"`, sin paréntesis
+ *     → 48 gastos
+ * Exigir `'(del excel'` dejaba esas 48 afuera aunque el propio dato dice que
+ * son históricas del libro. Verificado el 2026-10-05 contra la copia local:
+ * no existe una TERCERA redacción (cero filas que mencionen "excel", "hoja" o
+ * "histórica" de otra forma en las cuatro tablas), así que no hace falta una
+ * lista de variantes. **No le agregues el paréntesis "para que sea más
+ * preciso": lo vuelve a romper.**
  */
-const MARCA = '(del excel';
+const MARCA = 'del excel';
 const tieneMarca = (texto) => (texto ?? '').toLowerCase().includes(MARCA);
 
 /**
@@ -215,7 +228,7 @@ function informeRevision(grupos) {
 }
 
 async function marcar() {
-  console.log(`Criterio: la marca «${MARCA}…» en el texto de la fila. NO se usa la fecha.`);
+  console.log(`Criterio: la marca «${MARCA}» en el texto de la fila. NO se usa la fecha.`);
   console.log(`Los dias del informe se calculan en hora de ${BUSINESS_TIME_ZONE}.`);
   console.log('OwnerMovement queda EXCLUIDO (ver el comentario del script).');
 
