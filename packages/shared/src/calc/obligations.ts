@@ -101,3 +101,75 @@ export function applyPayment(
 
   return { applications, leftover: toCents(resto) };
 }
+
+export type OwnerFinancingKey = 'designer' | 'purchases' | 'loanPayments' | 'equipment';
+
+/** Un aporte de plata pura va a la misma fila que las compras, como la hoja. */
+const FILA: Record<ObligationCategory, OwnerFinancingKey> = {
+  DESIGN: 'designer',
+  PURCHASE: 'purchases',
+  CONTRIBUTION: 'purchases',
+  LOAN_PAYMENT: 'loanPayments',
+  EQUIPMENT: 'equipment',
+};
+
+/** El orden es fijo: lo leen la pantalla y la hoja Caja del reporte. */
+const ORDEN: OwnerFinancingKey[] = ['designer', 'purchases', 'loanPayments', 'equipment'];
+
+export interface OwnerFinancingRow {
+  key: OwnerFinancingKey;
+  put: number;
+  recovered: number;
+  missing: number;
+}
+
+export interface OwnerFinancingInput {
+  obligations: Obligation[];
+  /** Todo lo que se le pagó o retiró a la contraparte. */
+  paymentsTotal: number;
+  /** Saldo pendiente de los préstamos abiertos con terceros. */
+  lenderBalance: number;
+}
+
+/**
+ * QUIÉN PUSO LA PLATA.
+ *
+ * ⚠️ Ya NO hay cascada por categoría: las filas son una AGRUPACIÓN de las
+ * obligaciones, y lo recuperado de cada una es lo que el FIFO le aplicó. El
+ * total que se debe no cambia respecto de la cascada; el reparto por fila sí.
+ */
+export function ownerFinancing(input: OwnerFinancingInput) {
+  const acum = new Map<OwnerFinancingKey, { put: Decimal; recovered: Decimal }>(
+    ORDEN.map((k) => [k, { put: D(0), recovered: D(0) }]),
+  );
+
+  for (const deuda of input.obligations) {
+    const fila = acum.get(FILA[deuda.category]);
+    if (!fila) continue;
+    fila.put = fila.put.plus(deuda.amount);
+    fila.recovered = fila.recovered.plus(deuda.applied);
+  }
+
+  const rows: OwnerFinancingRow[] = ORDEN.map((key) => {
+    const { put, recovered } = acum.get(key)!;
+    return {
+      key,
+      put: toCents(put),
+      recovered: toCents(recovered),
+      missing: toCents(Decimal.max(0, put.minus(recovered))),
+    };
+  });
+
+  const aplicadoTotal = input.obligations.reduce((s, x) => s.plus(x.applied), D(0));
+  const owedToOwner = toCents(rows.reduce((s, r) => s.plus(r.missing), D(0)));
+  const owedToLender = toCents(Decimal.max(0, D(input.lenderBalance)));
+
+  return {
+    rows,
+    owedToOwner,
+    owedToLender,
+    totalOwed: toCents(D(owedToOwner).plus(owedToLender)),
+    /** Pagos por encima de todo lo que la contraparte puso: no se esconden. */
+    overWithdrawn: toCents(Decimal.max(0, D(input.paymentsTotal).minus(aplicadoTotal))),
+  };
+}
