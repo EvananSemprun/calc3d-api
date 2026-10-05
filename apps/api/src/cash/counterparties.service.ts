@@ -137,7 +137,21 @@ export class CounterpartiesService {
       }
     }
 
-    await this.prisma.counterparty.delete({ where: { id } });
+    // Mismo cuidado que en las cuentas: borrar la que estaba por defecto sin
+    // traspasar el título deja a la organización sin ninguna. Borrar primero y
+    // promover después, o el índice único parcial rechaza el instante con dos.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.counterparty.delete({ where: { id } });
+      if (!cp.isDefault) return;
+      const siguiente = await tx.counterparty.findFirst({
+        where: { organizationId },
+        orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
+      });
+      if (siguiente) {
+        await tx.counterparty.update({ where: { id: siguiente.id }, data: { isDefault: true } });
+      }
+    });
+
     return this.list(organizationId);
   }
 }

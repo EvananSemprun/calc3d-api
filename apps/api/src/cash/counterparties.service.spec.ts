@@ -192,3 +192,28 @@ describe('CounterpartiesService — no quedarse sin propietaria activa', () => {
     expect(p.$transaction).not.toHaveBeenCalled();
   });
 });
+
+describe('CounterpartiesService — borrar la de por defecto traspasa el título', () => {
+  it('al borrar la que estaba por defecto, otra queda por defecto', async () => {
+    const p = makePrisma();
+    p.counterparty.findFirst = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'cp1',
+        organizationId: ORG,
+        kind: 'PARTNER',
+        name: 'Ana',
+        active: true,
+        isDefault: true,
+      })
+      .mockResolvedValueOnce({ id: 'cp2' });
+
+    await service(p).remove(ORG, 'cp1');
+
+    expect(p.counterparty.delete).toHaveBeenCalledWith({ where: { id: 'cp1' } });
+    expect(p.counterparty.update).toHaveBeenCalledWith({
+      where: { id: 'cp2' },
+      data: { isDefault: true },
+    });
+  });
+});

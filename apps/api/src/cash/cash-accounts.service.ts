@@ -99,7 +99,22 @@ export class CashAccountsService {
       throw new ConflictException('Es la única cuenta: la conciliación la necesita.');
     }
 
-    await this.prisma.cashAccount.delete({ where: { id } });
+    // ⚠️ Borrar la principal sin traspasar el título dejaría la organización
+    // con CERO principales, y la conciliación solo opera sobre esa. Se borra
+    // primero y se promueve después: al revés habría dos por un instante y el
+    // índice único parcial lo rechazaría.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.cashAccount.delete({ where: { id } });
+      if (!acc.isDefault) return;
+      const siguiente = await tx.cashAccount.findFirst({
+        where: { organizationId },
+        orderBy: [{ active: 'desc' }, { createdAt: 'asc' }],
+      });
+      if (siguiente) {
+        await tx.cashAccount.update({ where: { id: siguiente.id }, data: { isDefault: true } });
+      }
+    });
+
     return this.list(organizationId);
   }
 }

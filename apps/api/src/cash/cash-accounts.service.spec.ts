@@ -155,3 +155,33 @@ describe('CashAccountsService', () => {
     expect(p.cashAccount.update).not.toHaveBeenCalled();
   });
 });
+
+describe('CashAccountsService — borrar la principal traspasa el título', () => {
+  it('al borrar la principal, otra queda como principal', async () => {
+    const p = makePrisma();
+    p.cashAccount.findFirst = jest
+      .fn()
+      .mockResolvedValueOnce({ id: 'acc1', organizationId: ORG, name: 'Binance', isDefault: true })
+      .mockResolvedValueOnce({ id: 'acc2' }); // la que se promueve, ya dentro de la transacción
+
+    await service(p).remove(ORG, 'acc1');
+
+    expect(p.cashAccount.delete).toHaveBeenCalledWith({ where: { id: 'acc1' } });
+    expect(p.cashAccount.update).toHaveBeenCalledWith({
+      where: { id: 'acc2' },
+      data: { isDefault: true },
+    });
+  });
+
+  it('borrar una que NO era principal no toca a nadie más', async () => {
+    const p = makePrisma();
+    p.cashAccount.findFirst = jest
+      .fn()
+      .mockResolvedValue({ id: 'acc2', organizationId: ORG, name: 'Banco', isDefault: false });
+
+    await service(p).remove(ORG, 'acc2');
+
+    expect(p.cashAccount.delete).toHaveBeenCalled();
+    expect(p.cashAccount.update).not.toHaveBeenCalled();
+  });
+});
