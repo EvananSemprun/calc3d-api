@@ -167,6 +167,43 @@ export class CashService {
     return tasa > 0 ? Math.round((monto / tasa) * 100) / 100 : monto;
   }
 
+  /**
+   * Qué va a pasar si se confirma este borrador: contra qué deudas se aplica
+   * el faltante y cuánto queda como retiro.
+   *
+   * Tiene que usar EXACTAMENTE las mismas entradas que `confirm()` —la
+   * contraparte de la CUENTA y las obligaciones filtradas HASTA la fecha de la
+   * conciliación—, o la pantalla prometería un reparto distinto del que
+   * ocurre. Devuelve `null` cuando no habría ajuste.
+   */
+  private planDe(
+    d: Awaited<ReturnType<CashService['datos']>>,
+    c: { accountId: string; date: Date; status: string },
+    r: { kind: string; differenceUsd: number },
+  ) {
+    if (c.status !== 'DRAFT' || r.kind !== 'SHORT') return null;
+    const cuenta = d.cuentas.find((a) => a.id === c.accountId);
+    if (!cuenta?.shared || !cuenta.autoAttributeShortfall || !cuenta.sharedWithId) return null;
+
+    const fecha = dia(c.date);
+    const deudas = this.obligaciones(d, cuenta.sharedWithId, fecha);
+    const plan = applyPayment(deudas, Math.abs(r.differenceUsd), d.order);
+    const porId = new Map(deudas.map((o) => [o.sourceId, o]));
+
+    return {
+      applications: plan.applications.map((a) => ({
+        sourceId: a.sourceId,
+        source: a.source,
+        amount: a.amount,
+        date: porId.get(a.sourceId)?.date ?? fecha,
+        category: porId.get(a.sourceId)?.category ?? null,
+      })),
+      /** Lo que sobra después de cancelar todo: se registra como retiro. */
+      leftover: plan.leftover,
+      order: d.order,
+    };
+  }
+
   async summary(organizationId: string) {
     const cp = await this.defaultCounterparty(organizationId);
     const d = await this.datos(organizationId);
@@ -232,6 +269,7 @@ export class CashService {
         const expectedUsd = congelado ? n(c.expectedUsd) : esperadoHoy;
         const totalUsd = congelado ? n(c.totalUsd) : this.aUsd(n(c.totalAmount), c.rate);
         const personalUsd = congelado ? n(c.personalUsd) : this.aUsd(n(c.personalAmount), c.rate);
+        const resultado = reconcile({ expectedUsd, totalUsd, personalUsd });
 
         return {
           id: c.id,
@@ -245,7 +283,20 @@ export class CashService {
           expectedUsd,
           totalUsd,
           personalUsd,
-          ...reconcile({ expectedUsd, totalUsd, personalUsd }),
+          ...resultado,
+          /**
+           * EL REPARTO QUE SE VA A HACER si se confirma, calculado por el
+           * MISMO camino que `confirm()`.
+           *
+           * ⚠️ No lo puede previsualizar el front con `obligations`: esa lista
+           * sale sin filtro de fecha y con la contraparte por defecto de la
+           * organización, mientras que `confirm()` filtra hasta la fecha de la
+           * conciliación y usa la contraparte de la CUENTA. Conciliar con
+           * retraso —el caso normal— le mostraría al dueño deudas posteriores
+           * que el servidor va a ignorar, y firmaría un reparto que no es el
+           * que ocurre. Esta pantalla existe justamente para que eso no pase.
+           */
+          plan: this.planDe(d, c, resultado),
           /** Lo que daría hoy, sin contar el ajuste propio de esta conciliación. */
           expectedNow: Math.round((esperadoHoy + ajuste) * 100) / 100,
           /** De verdad entraron movimientos con fecha anterior después de conciliar. */

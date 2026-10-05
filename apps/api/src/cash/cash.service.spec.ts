@@ -688,3 +688,96 @@ describe('Mass-assignment en la conciliación (contra el pipe REAL)', () => {
     expect(dto.personalAmount).toBe(120);
   });
 });
+
+/**
+ * El reparto que la pantalla muestra ANTES de confirmar tiene que ser el que
+ * el servidor va a hacer. Lo calcula el servidor por el mismo camino que
+ * `confirm()`: el front no puede deducirlo de `obligations`, que viene sin
+ * filtro de fecha y con la contraparte por defecto de la organización.
+ */
+describe('CashService.summary — el plan del borrador', () => {
+  /** Borrador del 22/09, con la atribución automática encendida. */
+  function prismaConBorradorCorto() {
+    const p = makePrisma();
+    p.cashAccount.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'acc1',
+        name: 'Binance',
+        currency: 'USD',
+        shared: true,
+        sharedWithId: 'cp1',
+        autoAttributeShortfall: true,
+        isDefault: true,
+      },
+    ]);
+    p.cashReconciliation.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'r3',
+        accountId: 'acc1',
+        date: new Date('2026-09-22T00:00:00Z'),
+        status: 'DRAFT',
+        totalAmount: '100',
+        personalAmount: '50',
+        currency: 'USD',
+        rate: null,
+        totalUsd: null,
+        personalUsd: null,
+        expectedUsd: null,
+        differenceUsd: null,
+        explanation: null,
+        note: null,
+        source: 'MANUAL',
+        confirmedAt: null,
+        voidedAt: null,
+        adjustment: null,
+      },
+    ]);
+    return p;
+  }
+
+  it('el plan NO incluye deudas posteriores a la fecha de la conciliación', async () => {
+    const r = await service(prismaConBorradorCorto()).summary(ORG);
+    const c = r.reconciliations[0];
+
+    // Esperado 70, real 100−50 = 50 → faltan 20.
+    expect(c.kind).toBe('SHORT');
+    expect(c.differenceUsd).toBe(-20);
+
+    // El gasto g1 es del 23/09, POSTERIOR al conteo del 22/09: el servidor lo
+    // va a ignorar al confirmar, así que el plan tampoco puede ofrecerlo.
+    expect(c.plan?.applications).toEqual([
+      expect.objectContaining({ sourceId: 'g2', amount: 20 }),
+    ]);
+    expect(c.plan?.leftover).toBe(0);
+
+    // Y sin embargo SÍ está en la lista general de obligaciones: si el front
+    // previsualizara con esa lista, mostraría un reparto que no va a ocurrir.
+    expect(r.obligations.map((o) => o.sourceId)).toContain('g1');
+  });
+
+  it('sin atribución automática no hay plan que mostrar', async () => {
+    const p = prismaConBorradorCorto();
+    p.cashAccount.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'acc1',
+        name: 'Binance',
+        currency: 'USD',
+        shared: true,
+        sharedWithId: 'cp1',
+        autoAttributeShortfall: false,
+        isDefault: true,
+      },
+    ]);
+
+    const r = await service(p).summary(ORG);
+
+    expect(r.reconciliations[0].plan).toBeNull();
+  });
+
+  it('una conciliación ya confirmada no tiene plan pendiente', async () => {
+    const r = await service(makePrisma()).summary(ORG);
+
+    expect(r.reconciliations[0].status).toBe('CONFIRMED');
+    expect(r.reconciliations[0].plan).toBeNull();
+  });
+});
