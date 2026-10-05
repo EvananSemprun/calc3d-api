@@ -559,3 +559,84 @@ describe('CashService.saveReconciliation', () => {
     ).rejects.toThrow(ConflictException);
   });
 });
+
+/**
+ * El aviso de "esta conciliación quedó vieja" tiene que significar algo.
+ *
+ * `expectedUsd` se congela ANTES de crear el ajuste, y el ajuste se fecha ese
+ * mismo día: al recalcular, el esperado de esa fecha ya viene con el faltante
+ * descontado y difiere del congelado en exactamente el monto del ajuste. Sin
+ * compensarlo, `stale` se encendía en TODA conciliación ajustada.
+ */
+describe('CashService.summary — el aviso de conciliación vieja', () => {
+  /** Faltante de 50: esperado 150, real 100, ajuste de 50 fechado ese día. */
+  function prismaConAjuste() {
+    const p = makePrisma();
+    p.sale.findMany = jest.fn().mockResolvedValue([
+      { date: new Date('2026-09-01'), amount: '100' },
+      { date: new Date('2026-09-02'), amount: '50' },
+    ]);
+    p.ownerMovement.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'ajuste1',
+        date: new Date('2026-09-21'),
+        kind: 'WITHDRAWAL',
+        amount: '50',
+        concept: 'Faltante de la conciliación del 2026-09-21',
+        note: null,
+        counterpartyId: 'cp1',
+        refundable: true,
+        source: 'RECONCILIATION',
+        cashReconciliationId: 'r1',
+      },
+    ]);
+    p.debtApplication.findMany = jest.fn().mockResolvedValue([]);
+    p.cashReconciliation.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'r1',
+        accountId: 'acc1',
+        date: new Date('2026-09-21T00:00:00Z'),
+        status: 'CONFIRMED',
+        totalAmount: '220',
+        personalAmount: '120',
+        currency: 'USD',
+        rate: null,
+        totalUsd: '220',
+        personalUsd: '120',
+        expectedUsd: '150',
+        differenceUsd: '-50',
+        explanation: null,
+        note: null,
+        source: 'MANUAL',
+        confirmedAt: new Date('2026-09-21'),
+        voidedAt: null,
+        adjustment: { id: 'ajuste1', amount: '50', concept: 'Faltante' },
+      },
+    ]);
+    return p;
+  }
+
+  it('el ajuste propio de la conciliación NO la marca como vieja', async () => {
+    const r = await service(prismaConAjuste()).summary(ORG);
+
+    // Ledger a esa fecha: 150 cobrado − 50 del ajuste = 100. Sumando el ajuste
+    // de vuelta da 150, que es justo lo congelado.
+    expect(r.reconciliations[0].expectedNow).toBe(150);
+    expect(r.reconciliations[0].stale).toBe(false);
+  });
+
+  it('pero una venta vieja cargada DESPUÉS sí la marca como vieja', async () => {
+    const p = prismaConAjuste();
+    p.sale.findMany = jest.fn().mockResolvedValue([
+      { date: new Date('2026-09-01'), amount: '100' },
+      { date: new Date('2026-09-02'), amount: '50' },
+      // Esta entró después de conciliar, con fecha anterior al conteo.
+      { date: new Date('2026-09-15'), amount: '40' },
+    ]);
+
+    const r = await service(p).summary(ORG);
+
+    expect(r.reconciliations[0].expectedNow).toBe(190);
+    expect(r.reconciliations[0].stale).toBe(true);
+  });
+});

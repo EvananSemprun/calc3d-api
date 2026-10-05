@@ -219,6 +219,16 @@ export class CashService {
       reconciliations: d.conciliaciones.map((c) => {
         const esperadoHoy = businessCash(d.ledger, dia(c.date)).balance;
         const congelado = c.status === 'CONFIRMED' && c.expectedUsd != null;
+        /**
+         * ⚠️ El ajuste que generó ESTA conciliación no la vuelve vieja.
+         *
+         * `expectedUsd` se congela ANTES de crear el ajuste, y el ajuste se
+         * fecha ese mismo día: por eso `esperadoHoy` ya viene con el faltante
+         * descontado y siempre difiere del congelado, en exactamente el monto
+         * del ajuste. Sin sumarlo de vuelta, `stale` se encendería en TODA
+         * conciliación ajustada y el aviso dejaría de significar algo.
+         */
+        const ajuste = c.adjustment ? n(c.adjustment.amount) : 0;
         const expectedUsd = congelado ? n(c.expectedUsd) : esperadoHoy;
         const totalUsd = congelado ? n(c.totalUsd) : this.aUsd(n(c.totalAmount), c.rate);
         const personalUsd = congelado ? n(c.personalUsd) : this.aUsd(n(c.personalAmount), c.rate);
@@ -236,9 +246,10 @@ export class CashService {
           totalUsd,
           personalUsd,
           ...reconcile({ expectedUsd, totalUsd, personalUsd }),
-          /** Lo que daría hoy. Si difiere de `expectedUsd`, entraron movimientos viejos. */
-          expectedNow: esperadoHoy,
-          stale: congelado && Math.abs(esperadoHoy - expectedUsd) > 0.01,
+          /** Lo que daría hoy, sin contar el ajuste propio de esta conciliación. */
+          expectedNow: Math.round((esperadoHoy + ajuste) * 100) / 100,
+          /** De verdad entraron movimientos con fecha anterior después de conciliar. */
+          stale: congelado && Math.abs(esperadoHoy + ajuste - expectedUsd) > 0.01,
           explanation: c.explanation,
           note: c.note,
           source: c.source,
