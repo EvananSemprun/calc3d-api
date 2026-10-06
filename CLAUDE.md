@@ -947,13 +947,30 @@ Excel nunca la suma a `Resumen!B3`, que es solo `SUM(Ventas!B11:BA11)`.
 - `campaignHealth` / `campaignRecommendation` miran **`revenue`**, no solo
   `sales`/`orders`: una campaña vieja con atribución declarada no tiene filas de
   venta y aun así vendió. Sin eso se pintaba "Sin datos" al lado de "ROAS 10,04×".
-- Al comparar la app con el Excel, **fijate hasta qué mes llega cada hoja**: la
-  hoja `Ventas` se corta en **agosto 2026** (desde septiembre se carga por la
-  bandeja de pedidos). Un número menor en el Excel no significa que la app esté
-  inflada.
-- ⚠️ `sincronizar-hojas.mjs` **está en el `.gitignore`** (línea 41): el soporte
-  que se le agregó para traer esa columna al campo correcto **vive solo en la
-  máquina del dueño**, no protege a nadie más.
+- Al comparar la app con el Excel, ojo con **cómo** está armada cada hoja: en
+  `Ventas`, hasta agosto la fila 11 son números escritos a mano, y **desde
+  septiembre es una fórmula** que suma las filas auxiliares más los encargos de
+  esa semana. Los montos diarios de mostrador viven como **texto**
+  (`"Sábado 3: 6.25$"`) en las filas 3-9 y las auxiliares los parsean. El libro
+  **no trae valores cacheados**, así que `data_only=True` devuelve vacío y sumar
+  las auxiliares da 0: hay que parsear el texto. Por no hacerlo, el acumulado del
+  Excel se calculó mal dos veces el 2026-10-04.
+
+### El Excel es RESPALDO; la app manda (decisión del 2026-10-04)
+
+El dueño decidió que la fuente de verdad es la app y `bananolab.xlsx` queda solo
+como respaldo. **Ya no se sincroniza Excel → app.**
+
+- `prisma/sincronizar-hojas.mjs` y `prisma/sincronizar-excel.mjs` **se borraron**
+  ese día. Eran de la etapa de migración; correrlos ahora pisaría datos que solo
+  existen en la app. Lo que la doc de `docs/excel-vs-app.md` y
+  `docs/backlog-migracion.md` cuenta sobre ellos es **historia**, no instrucciones.
+- El respaldo se genera **desde la app**: Configuración → Datos → "Descargar
+  reporte en Excel". El libro es la SALIDA, no la entrada.
+- Desfase conocido y aceptado al cerrar la decisión: Excel 2.530,48 vendido vs
+  app 2.506,98 — **23,50, íntegro en febrero–agosto** (residuo de la migración).
+  De septiembre en adelante los dos coinciden al centavo.
+- Si aparece un `.xlsx` editado a mano, **no sincronizarlo: preguntar primero.**
 
 ## Entorno
 - Windows / PowerShell: usar su sintaxis (`$env:VAR` no `$VAR`, `$null` no
