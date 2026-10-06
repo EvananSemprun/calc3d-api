@@ -564,6 +564,48 @@ en el repo web: se sobrescribe al sincronizar.
         Agregarle el parentesis "para que sea mas preciso" lo vuelve a romper.
       - `OwnerMovement` queda excluido: el unico que hay es el cuadre manual del
         17/09, lo escribio la app y no salio del libro.
+  - **Elegir la deuda destino del faltante (2026-10-06, shared 0.24.0)** — al
+    confirmar una conciliación con faltante, el dueño puede decir contra qué
+    deuda va en vez de dejar el FIFO. `applyPayment(obligations, amount, order,
+    target?)`: la elegida cobra primero hasta su `outstanding` y el remanente
+    sigue el orden normal. **Sin `target` el reparto es byte a byte el de
+    antes.**
+    - ⚠️ **Una destino que no está en `obligations` LANZA**
+      (`UnknownObligationError`), no devuelve un plan vacío. Un plan vacío es
+      indistinguible de "no había nada que aplicar" —un resultado legítimo—,
+      así que el llamador no podría notar la diferencia y el faltante se
+      repartiría por el orden normal: justo el que el dueño NO eligió.
+    - ⚠️ **La pertenencia se cierra por CONSTRUCCIÓN.** La lista que
+      `obligaciones(d, contraparteDeLaCuenta, hastaLaFecha)` deriva es la
+      única puerta: ser miembro ES la autorización. **No se consulta la deuda
+      por id contra la base** —ese camino no sabe de contraparte ni de fecha y
+      reabre el IDOR—. El servicio solo traduce el error del motor a un 400.
+    - DTO: `CashReconciliationConfirmSchema` gana `targetSource`
+      (`EXPENSE|LOAN_PAYMENT|MOVEMENT`) + `targetSourceId`, **los dos o
+      ninguno**, y exige `attributeShortfall: true` (elegir deuda y pedir que
+      no se atribuya es contradictorio). `ObligationSourceSchema` se construye
+      desde `OBLIGATION_SOURCES` del motor para que no puedan divergir.
+    - **`GET /cash/reconciliations/:id/plan?targetSource&targetSourceId`** —
+      previsualización de SOLO LECTURA. Devuelve el `plan` y, además, las
+      `obligations` **elegibles** (mismo filtro que `confirm`), `willAttribute`
+      y la diferencia. El front NO calcula el reparto: en la fase 1 lo deducía
+      de `obligations` del resumen (sin filtro de fecha, contraparte por
+      defecto) y, conciliando con retraso, el dueño aprobaba un reparto que no
+      era el que ocurría.
+    - ⚠️ **Una destino que no se va a usar se RECHAZA, no se ignora**: si la
+      conciliación no va a atribuir (cuenta sin `autoAttributeShortfall`,
+      diferencia a favor, ya confirmada), mandar destino es 400.
+    - El reparto se calcula **antes** de abrir la transacción: el 400 sale sin
+      haber escrito nada. Confirmar sigue siendo idempotente (409 + un solo
+      `OwnerMovement`) y anular sigue revirtiendo movimiento y aplicaciones.
+    - ⚠️ **`baseFalsa` de `cash.service.spec.ts` ahora también escribe** y
+      resuelve los `include` de `account` y `adjustment`. Es el mock que se
+      comporta como Postgres (un `where` sin `organizationId` devuelve de MÁS):
+      cada test de aislamiento viene con su **hermano** que comprueba que la
+      fila es alcanzable cuando se la pide legítimamente. Verificación por
+      mutación: ignorar la destino desconocida pone en rojo los 6 tests de
+      seguridad; sacarle el `organizationId` a `expense.findMany` pone en rojo
+      el de otra organización (y deja verde a su hermano).
   - **Mantenimiento por hora DERIVADO (2026-09-26)**: `derivedMaintenance` en
     `printers.module.ts` = gastos `MAINTENANCE` ÷ horas de la última lectura de
     TODAS las máquinas (`maintenanceRatePerHour`, como la hoja Costeo). Es una

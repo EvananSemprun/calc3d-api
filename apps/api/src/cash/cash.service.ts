@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   applyPayment,
   businessCash,
@@ -7,12 +12,17 @@ import {
   obligationLedger,
   ownerFinancing,
   reconcile,
+  UnknownObligationError,
   type ApplicationOrder,
   type CashCategory,
   type CashLedger,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
+  type CashShortfallPlanQueryDto,
+  type Obligation,
   type ObligationInput,
+  type ObligationRef,
+  type ObligationSource,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
 import type { RecordSource } from '@prisma/client';
@@ -48,6 +58,20 @@ const SIN_DETALLE: EtiquetaAsiento = { label: 'Sin detalle', source: 'MANUAL' };
 
 /** Un texto vacío o en blanco no es una etiqueta: hay que caer al respaldo. */
 const texto = (s: string | null | undefined) => (s?.trim() ? s.trim() : null);
+
+/**
+ * Los dos campos sueltos del DTO, como la referencia que entiende el motor.
+ *
+ * El schema ya garantiza que vengan los dos o ninguno; esto solo traduce. NO
+ * valida que la deuda exista: eso lo decide la lista derivada de obligaciones.
+ */
+const destinoDe = (dto: {
+  targetSource?: ObligationSource | null;
+  targetSourceId?: string | null;
+}): ObligationRef | null =>
+  dto.targetSource && dto.targetSourceId
+    ? { source: dto.targetSource, sourceId: dto.targetSourceId }
+    : null;
 
 @Injectable()
 export class CashService {
@@ -274,6 +298,53 @@ export class CashService {
   }
 
   /**
+   * A quién y hasta cuándo se le atribuiría el faltante de esta conciliación,
+   * o `null` si no se atribuiría nada.
+   *
+   * Es la MISMA condición que evalúa `confirm()`. Existe aparte para que la
+   * previsualización y el resumen no la vuelvan a escribir cada uno.
+   */
+  private atribucionDe(
+    d: Awaited<ReturnType<CashService['datos']>>,
+    c: { accountId: string; date: Date; status: string },
+    r: { kind: string },
+  ) {
+    if (c.status !== 'DRAFT' || r.kind !== 'SHORT') return null;
+    const cuenta = d.cuentas.find((a) => a.id === c.accountId);
+    if (!cuenta?.shared || !cuenta.autoAttributeShortfall || !cuenta.sharedWithId) return null;
+    return { counterpartyId: cuenta.sharedWithId, fecha: dia(c.date) };
+  }
+
+  /**
+   * El reparto, con la traducción del único error que puede devolver el motor.
+   *
+   * ⚠️ `deudas` es la ÚNICA puerta: son las obligaciones que el servidor ya
+   * derivó para ESTA organización, la contraparte de la CUENTA y hasta la
+   * fecha del conteo. La deuda destino se acepta por ser MIEMBRO de esa lista,
+   * no por pasar una lista de chequeos. Buscarla por id contra la base sería
+   * un camino paralelo —y uno que no sabe de la contraparte ni de la fecha—:
+   * ahí vuelve el IDOR.
+   */
+  private reparto(
+    deudas: Obligation[],
+    monto: number,
+    order: ApplicationOrder,
+    destino: ObligationRef | null,
+  ) {
+    try {
+      return applyPayment(deudas, monto, order, destino);
+    } catch (e) {
+      if (e instanceof UnknownObligationError) {
+        throw new BadRequestException(
+          'Esa deuda no se puede saldar con esta conciliación: tiene que ser una deuda ' +
+            'reembolsable de la contraparte de la cuenta, con fecha anterior al conteo.',
+        );
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Qué va a pasar si se confirma este borrador: contra qué deudas se aplica
    * el faltante y cuánto queda como retiro.
    *
@@ -281,19 +352,30 @@ export class CashService {
    * contraparte de la CUENTA y las obligaciones filtradas HASTA la fecha de la
    * conciliación—, o la pantalla prometería un reparto distinto del que
    * ocurre. Devuelve `null` cuando no habría ajuste.
+   *
+   * Con `destino`, esa deuda cobra primero. ⚠️ Si no habría ajuste, una deuda
+   * destino se RECHAZA en vez de ignorarse: aceptarla y no usarla es
+   * exactamente la clase de mentira que esta pantalla existe para evitar.
    */
   private planDe(
     d: Awaited<ReturnType<CashService['datos']>>,
     c: { accountId: string; date: Date; status: string },
     r: { kind: string; differenceUsd: number },
+    destino: ObligationRef | null = null,
   ) {
-    if (c.status !== 'DRAFT' || r.kind !== 'SHORT') return null;
-    const cuenta = d.cuentas.find((a) => a.id === c.accountId);
-    if (!cuenta?.shared || !cuenta.autoAttributeShortfall || !cuenta.sharedWithId) return null;
+    const atribucion = this.atribucionDe(d, c, r);
+    if (!atribucion) {
+      if (destino) {
+        throw new BadRequestException(
+          'Esta conciliación no va a atribuir ningún faltante, así que no hay deuda destino que elegir',
+        );
+      }
+      return null;
+    }
 
-    const fecha = dia(c.date);
-    const deudas = this.obligaciones(d, cuenta.sharedWithId, fecha);
-    const plan = applyPayment(deudas, Math.abs(r.differenceUsd), d.order);
+    const { counterpartyId, fecha } = atribucion;
+    const deudas = this.obligaciones(d, counterpartyId, fecha);
+    const plan = this.reparto(deudas, Math.abs(r.differenceUsd), d.order, destino);
     const porId = new Map(deudas.map((o) => [o.sourceId, o]));
 
     return {
@@ -307,6 +389,56 @@ export class CashService {
       /** Lo que sobra después de cancelar todo: se registra como retiro. */
       leftover: plan.leftover,
       order: d.order,
+    };
+  }
+
+  /**
+   * PREVISUALIZAR el reparto de un faltante contra una deuda elegida, SIN
+   * escribir nada.
+   *
+   * ⚠️ Existe porque el reparto lo calcula el SERVIDOR, siempre. En la fase 1
+   * el front lo deducía de `obligations` —una lista sin filtro de fecha y con
+   * la contraparte por defecto de la organización— mientras el servidor
+   * filtraba hasta la fecha del conteo y usaba la contraparte de la CUENTA.
+   * Conciliando con retraso, el dueño aprobaba un reparto que no era el que
+   * ocurría. Por eso acá también viajan las obligaciones ELEGIBLES: la lista
+   * que la pantalla ofrece para elegir tiene que ser la misma que el servidor
+   * va a aceptar.
+   */
+  async shortfallPlan(organizationId: string, id: string, query: CashShortfallPlanQueryDto) {
+    const c = await this.prisma.cashReconciliation.findFirst({ where: { id, organizationId } });
+    if (!c) throw new NotFoundException('No existe esa conciliación');
+
+    const d = await this.datos(organizationId);
+    const fecha = dia(c.date);
+    // Una confirmada muestra lo CONGELADO, igual que en el resumen: es un
+    // documento, no una vista que se recalcula sola.
+    const congelado = c.status === 'CONFIRMED' && c.expectedUsd != null;
+    const expectedUsd = congelado ? n(c.expectedUsd) : businessCash(d.ledger, fecha).balance;
+    const totalUsd = congelado ? n(c.totalUsd) : this.aUsd(n(c.totalAmount), c.rate);
+    const personalUsd = congelado ? n(c.personalUsd) : this.aUsd(n(c.personalAmount), c.rate);
+    const r = reconcile({ expectedUsd, totalUsd, personalUsd });
+
+    const destino = destinoDe(query);
+    const atribucion = this.atribucionDe(d, c, r);
+
+    return {
+      reconciliationId: c.id,
+      accountId: c.accountId,
+      date: fecha,
+      status: c.status,
+      expectedUsd,
+      totalUsd,
+      personalUsd,
+      ...r,
+      applicationOrder: d.order,
+      /** Si confirmar hoy registraría el ajuste. Con `false`, `plan` es null. */
+      willAttribute: atribucion != null,
+      counterpartyId: atribucion?.counterpartyId ?? null,
+      target: destino,
+      /** Las deudas que se pueden elegir. Vacía si no habría atribución. */
+      obligations: atribucion ? this.obligaciones(d, atribucion.counterpartyId, fecha) : [],
+      plan: this.planDe(d, c, r, destino),
     };
   }
 
@@ -529,12 +661,29 @@ export class CashService {
       dto.attributeShortfall &&
       c.account.sharedWithId != null;
 
-    await this.prisma.$transaction(async (tx) => {
-      if (atribuir) {
-        const contraparte = c.account.sharedWithId!;
-        const monto = Math.abs(r.differenceUsd);
-        const plan = applyPayment(this.obligaciones(d, contraparte, fecha), monto, d.order);
+    const destino = destinoDe(dto);
+    // ⚠️ Una deuda destino que no se va a usar NO se ignora en silencio. El
+    // dueño pidió que el faltante fuera contra ESA deuda; confirmar sin
+    // hacerlo y sin decir nada es la misma mentira que el endpoint de
+    // previsualización existe para evitar.
+    if (destino && !atribuir) {
+      throw new BadRequestException(
+        'Esta conciliación no va a atribuir ningún faltante, así que no hay deuda destino que elegir',
+      );
+    }
 
+    /**
+     * El reparto se calcula ANTES de abrir la transacción: si la deuda destino
+     * no es una de las elegibles, el 400 sale sin haber escrito nada.
+     */
+    const contraparte = atribuir ? c.account.sharedWithId! : null;
+    const monto = Math.abs(r.differenceUsd);
+    const plan = contraparte
+      ? this.reparto(this.obligaciones(d, contraparte, fecha), monto, d.order, destino)
+      : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (contraparte && plan) {
         const ajuste = await tx.ownerMovement.create({
           data: {
             organizationId,

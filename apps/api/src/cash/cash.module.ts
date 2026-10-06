@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -14,12 +15,14 @@ import {
   CashCategorySchema,
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
+  CashShortfallPlanQuerySchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   type CashAccountUpsertDto,
   type CashCategoryDto,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
+  type CashShortfallPlanQueryDto,
   type CounterpartyUpsertDto,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
@@ -79,6 +82,30 @@ export class CashController {
     @Body(new ZodValidationPipe(CashReconciliationUpsertSchema)) dto: CashReconciliationUpsertDto,
   ) {
     return this.service.saveReconciliation(user.organizationId, dto);
+  }
+
+  /**
+   * PREVISUALIZAR el reparto del faltante contra una deuda elegida. Solo
+   * lectura: no escribe nada, por eso es un GET.
+   *
+   * ⚠️ El reparto lo calcula el SERVIDOR, siempre. El front NO puede deducirlo
+   * de `obligations` del resumen: esa lista viene sin filtro de fecha y con la
+   * contraparte por defecto de la organización, mientras que confirmar filtra
+   * hasta la fecha del conteo y usa la contraparte de la CUENTA. Conciliando
+   * con retraso —el caso normal— el dueño aprobaría un reparto que no es el
+   * que ocurre. Ya pasó en la fase 1.
+   *
+   * ⚠️ El `:id` va en medio de una ruta de tres segmentos, así que no compite
+   * con `breakdown/:category`. Si alguna vez aparece un `@Get(':algo')` suelto,
+   * tiene que ir DESPUÉS de las dos.
+   */
+  @Get('reconciliations/:id/plan')
+  shortfallPlan(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(CashShortfallPlanQuerySchema)) query: CashShortfallPlanQueryDto,
+  ) {
+    return this.service.shortfallPlan(user.organizationId, id, query);
   }
 
   @Post('reconciliations/:id/confirm')

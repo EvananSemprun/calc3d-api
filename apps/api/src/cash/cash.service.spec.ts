@@ -5,7 +5,9 @@ import {
   CASH_SIGN,
   CashAccountUpsertSchema,
   CashCategorySchema,
+  CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
+  CashShortfallPlanQuerySchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   SettingsUpdateSchema,
@@ -879,19 +881,69 @@ function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
       return true;
     });
 
+  /**
+   * El `include: { account: true }` que usa `confirm()`. Es la ÚNICA relación
+   * que este mock resuelve, y se resuelve de verdad —buscando la cuenta en su
+   * tabla— en vez de clavarla en la fila: una cuenta que no existe tiene que
+   * llegar como `null`, igual que en Postgres.
+   */
+  const conIncludes = (nombre: string, fila: Record<string, unknown> | null, include?: Record<string, unknown>) => {
+    if (!fila || !include) return fila;
+    if (nombre === 'cashReconciliation') {
+      const extra: Record<string, unknown> = {};
+      if (include.account) {
+        extra.account = (tablas.cashAccount ?? []).find((a) => a.id === fila.accountId) ?? null;
+      }
+      if (include.adjustment) {
+        extra.adjustment =
+          (tablas.ownerMovement ?? []).find((m) => m.cashReconciliationId === fila.id) ?? null;
+      }
+      return { ...fila, ...extra };
+    }
+    return fila;
+  };
+
+  let secuencia = 0;
+
   const delegado = (nombre: string) => ({
     findMany: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
       Promise.resolve((tablas[nombre] ?? []).filter((f) => coincide(f, where))),
     ),
-    findFirst: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
-      Promise.resolve((tablas[nombre] ?? []).find((f) => coincide(f, where)) ?? null),
+    findFirst: jest.fn(
+      ({ where, include }: { where?: Record<string, unknown>; include?: Record<string, unknown> } = {}) =>
+        Promise.resolve(
+          conIncludes(nombre, (tablas[nombre] ?? []).find((f) => coincide(f, where)) ?? null, include),
+        ),
     ),
     findUnique: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) =>
       Promise.resolve((tablas[nombre] ?? []).find((f) => coincide(f, where)) ?? null),
     ),
+    // Las escrituras también tocan las tablas: lo que se escribe se puede
+    // volver a leer, como en la base. Si solo contaran llamadas, un test no
+    // podría distinguir "se escribió mal" de "no se escribió".
+    create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+      const fila = { id: `${nombre}-${++secuencia}`, ...data };
+      (tablas[nombre] ??= []).push(fila);
+      return Promise.resolve(fila);
+    }),
+    createMany: jest.fn(({ data }: { data: Record<string, unknown>[] }) => {
+      for (const d of data) (tablas[nombre] ??= []).push({ id: `${nombre}-${++secuencia}`, ...d });
+      return Promise.resolve({ count: data.length });
+    }),
+    update: jest.fn(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const fila = (tablas[nombre] ?? []).find((f) => coincide(f, where));
+      if (fila) Object.assign(fila, data);
+      return Promise.resolve(fila ?? null);
+    }),
+    deleteMany: jest.fn(({ where }: { where?: Record<string, unknown> } = {}) => {
+      const quedan = (tablas[nombre] ?? []).filter((f) => !coincide(f, where));
+      const count = (tablas[nombre] ?? []).length - quedan.length;
+      tablas[nombre] = quedan;
+      return Promise.resolve({ count });
+    }),
   });
 
-  return {
+  const base = {
     sale: delegado('sale'),
     payment: delegado('payment'),
     expense: delegado('expense'),
@@ -904,6 +956,9 @@ function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
     counterparty: delegado('counterparty'),
     settings: delegado('settings'),
   };
+
+  /** La transacción corre el callback contra este mismo mock. */
+  return { ...base, $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(base)) };
 }
 
 type Tablas = Record<string, Record<string, unknown>[]>;
@@ -1158,5 +1213,327 @@ describe('CashService.breakdown', () => {
     const r = await servicioFalso(t).breakdown(ORG, 'loanPayments');
 
     expect(r).toEqual({ category: 'loanPayments', total: 0, entries: [] });
+  });
+});
+
+/**
+ * ELEGIR LA DEUDA DESTINO DEL FALTANTE.
+ *
+ * El dueño puede decir "este faltante va contra ESTA deuda" en vez de dejar
+ * que se reparta por el orden configurado. Toca plata y toca una deuda pedida
+ * POR ID desde el cliente, así que es superficie de IDOR.
+ *
+ * ⚠️ La validación NO es una lista de chequeos sobre la deuda pedida: la
+ * destino tiene que ser MIEMBRO de la lista que el servidor ya deriva (la
+ * organización, la contraparte de la CUENTA, hasta la fecha del conteo). Lo
+ * que prueba cada rechazo de abajo es que esa lista es la única puerta; por
+ * eso cada uno viene con su test HERMANO que comprueba que la misma fila SÍ
+ * es alcanzable cuando se la pide legítimamente. Sin el hermano, un `[]` por
+ * "el mock no tenía la fila" se leería como "el scope la filtró" y el test
+ * pasaría con y sin la protección.
+ */
+describe('Caja — la deuda destino del faltante', () => {
+  /**
+   * Dos negocios, dos contrapartes y deudas en tres posiciones distintas
+   * (antes del conteo, después del conteo, de otra contraparte, de otra
+   * organización). Los montos están elegidos para que el reparto con destino
+   * y el reparto FIFO den listas DISTINTAS: si dieran lo mismo, el test no
+   * distinguiría "se respetó la elección" de "se ignoró".
+   */
+  const tablas = (): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+      { id: 'cp2', organizationId: ORG, name: 'Socia', kind: 'PARTNER', active: true, isDefault: false },
+      { id: 'cp-B', organizationId: OTHER_ORG, name: 'Dueño B', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [
+      { organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' },
+      { organizationId: OTHER_ORG, debtApplicationOrder: 'OLDEST_FIRST' },
+    ],
+    cashAccount: [
+      { id: 'acc1', organizationId: ORG, name: 'Binance', currency: 'USD', shared: true, sharedWithId: 'cp1', autoAttributeShortfall: true, isDefault: true },
+      { id: 'acc2', organizationId: ORG, name: 'Banco de la socia', currency: 'USD', shared: true, sharedWithId: 'cp2', autoAttributeShortfall: true, isDefault: false },
+      { id: 'acc-B', organizationId: OTHER_ORG, name: 'Caja B', currency: 'USD', shared: true, sharedWithId: 'cp-B', autoAttributeShortfall: true, isDefault: true },
+    ],
+    loan: [],
+    payment: [],
+    loanPayment: [],
+    debtApplication: [],
+    sale: [
+      { id: 'v1', organizationId: ORG, date: new Date('2026-09-01'), amount: '200', kind: 'COUNTER', note: null, source: 'MANUAL' },
+      { id: 'v-B', organizationId: OTHER_ORG, date: new Date('2026-09-01'), amount: '100', kind: 'COUNTER', note: null, source: 'MANUAL' },
+    ],
+    expense: [
+      { id: 'g-vieja', organizationId: ORG, date: new Date('2026-08-01'), amount: '30', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta', source: 'MANUAL' },
+      { id: 'g-nueva', organizationId: ORG, date: new Date('2026-09-20'), amount: '50', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Tornillos', source: 'MANUAL' },
+      { id: 'g-futura', organizationId: ORG, date: new Date('2026-10-20'), amount: '70', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Boquillas', source: 'MANUAL' },
+      { id: 'g-ajena', organizationId: OTHER_ORG, date: new Date('2026-08-10'), amount: '40', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Gasto del otro negocio', source: 'MANUAL' },
+    ],
+    ownerMovement: [
+      { id: 'mv-cp2', organizationId: ORG, date: new Date('2026-08-05'), kind: 'CONTRIBUTION', amount: '100', concept: 'Aporte de la socia', note: null, counterpartyId: 'cp2', refundable: true, source: 'MANUAL', cashReconciliationId: null },
+    ],
+    cashReconciliation: [
+      // Esperado 300 (200 de venta + 100 de aporte), real 280−60 = 220: faltan 80.
+      { id: 'r1', organizationId: ORG, accountId: 'acc1', date: new Date('2026-09-30T00:00:00Z'), status: 'DRAFT', totalAmount: '280', personalAmount: '60', currency: 'USD', rate: null, totalUsd: null, personalUsd: null, expectedUsd: null, differenceUsd: null, explanation: null, note: null, source: 'MANUAL', confirmedAt: null, voidedAt: null, adjustment: null },
+      // La misma plata, pero la cuenta se comparte con la SOCIA.
+      { id: 'r2', organizationId: ORG, accountId: 'acc2', date: new Date('2026-09-30T00:00:00Z'), status: 'DRAFT', totalAmount: '280', personalAmount: '60', currency: 'USD', rate: null, totalUsd: null, personalUsd: null, expectedUsd: null, differenceUsd: null, explanation: null, note: null, source: 'MANUAL', confirmedAt: null, voidedAt: null, adjustment: null },
+      // Conteo de fin de octubre: acá el gasto del 20/10 YA es una deuda válida.
+      { id: 'r3', organizationId: ORG, accountId: 'acc1', date: new Date('2026-10-31T00:00:00Z'), status: 'DRAFT', totalAmount: '180', personalAmount: '0', currency: 'USD', rate: null, totalUsd: null, personalUsd: null, expectedUsd: null, differenceUsd: null, explanation: null, note: null, source: 'MANUAL', confirmedAt: null, voidedAt: null, adjustment: null },
+      // Esperado 100, real 60: faltan 40, que es justo lo que puso el dueño B.
+      { id: 'r-B', organizationId: OTHER_ORG, accountId: 'acc-B', date: new Date('2026-09-30T00:00:00Z'), status: 'DRAFT', totalAmount: '60', personalAmount: '0', currency: 'USD', rate: null, totalUsd: null, personalUsd: null, expectedUsd: null, differenceUsd: null, explanation: null, note: null, source: 'MANUAL', confirmedAt: null, voidedAt: null, adjustment: null },
+    ],
+  });
+
+  const confirmar = (
+    t: Tablas,
+    org: string,
+    id: string,
+    target?: { targetSource: string; targetSourceId: string },
+  ) =>
+    servicioFalso(t).confirm(
+      org,
+      id,
+      CashReconciliationConfirmSchema.parse({ attributeShortfall: true, ...target }),
+      'user-1',
+    );
+
+  // ---------- rechazos: la destino no es miembro de la lista derivada ----------
+
+  it('una deuda de OTRA organización se rechaza: 400', async () => {
+    await expect(
+      confirmar(tablas(), ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-ajena' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('…y su HERMANO: ese mismo gasto SÍ es alcanzable para su propio negocio', async () => {
+    const t = tablas();
+    await confirmar(t, OTHER_ORG, 'r-B', { targetSource: 'EXPENSE', targetSourceId: 'g-ajena' });
+
+    expect(t.debtApplication).toEqual([
+      expect.objectContaining({ organizationId: OTHER_ORG, expenseId: 'g-ajena', amount: 40 }),
+    ]);
+  });
+
+  it('una deuda de OTRA contraparte se rechaza: 400', async () => {
+    // El aporte es de la socia; la cuenta de r1 se comparte con el propietario.
+    await expect(
+      confirmar(tablas(), ORG, 'r1', { targetSource: 'MOVEMENT', targetSourceId: 'mv-cp2' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('…y su HERMANO: en la cuenta que SÍ se comparte con ella, el aporte se aplica', async () => {
+    const t = tablas();
+    await confirmar(t, ORG, 'r2', { targetSource: 'MOVEMENT', targetSourceId: 'mv-cp2' });
+
+    expect(t.debtApplication).toEqual([
+      expect.objectContaining({ obligationMovementId: 'mv-cp2', amount: 80 }),
+    ]);
+  });
+
+  it('una deuda POSTERIOR a la fecha del conteo se rechaza: 400', async () => {
+    await expect(
+      confirmar(tablas(), ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-futura' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('…y su HERMANO: en el conteo de fin de octubre esa misma deuda ya es elegible', async () => {
+    const t = tablas();
+    await confirmar(t, ORG, 'r3', { targetSource: 'EXPENSE', targetSourceId: 'g-futura' });
+
+    // Faltan 120: la elegida se lleva sus 70 y el resto va de la más antigua.
+    expect(t.debtApplication.map((a) => [a.expenseId, a.amount])).toEqual([
+      ['g-futura', 70],
+      ['g-vieja', 30],
+      ['g-nueva', 20],
+    ]);
+  });
+
+  it('un id inventado se rechaza: 400, y no escribe nada', async () => {
+    const t = tablas();
+
+    await expect(
+      confirmar(t, ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'no-existe' }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(t.ownerMovement).toHaveLength(1); // solo el aporte de la socia
+    expect(t.debtApplication).toEqual([]);
+    expect(t.cashReconciliation.find((c) => c.id === 'r1')).toMatchObject({ status: 'DRAFT' });
+  });
+
+  it('el ORIGEN es parte de la identidad: el id de un gasto no pasa como movimiento', async () => {
+    await expect(
+      confirmar(tablas(), ORG, 'r1', { targetSource: 'MOVEMENT', targetSourceId: 'g-vieja' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('elegir destino en una conciliación que NO va a atribuir se rechaza en vez de ignorarse', async () => {
+    const t = tablas();
+    const cuenta = t.cashAccount.find((a) => a.id === 'acc1');
+    if (cuenta) cuenta.autoAttributeShortfall = false;
+
+    await expect(
+      confirmar(t, ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-vieja' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  // ---------- el camino feliz ----------
+
+  it('la elegida cobra primero y el remanente sigue el orden configurado', async () => {
+    const t = tablas();
+    await confirmar(t, ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-nueva' });
+
+    expect(t.debtApplication.map((a) => [a.expenseId, a.amount])).toEqual([
+      ['g-nueva', 50],
+      ['g-vieja', 30],
+    ]);
+  });
+
+  it('SIN destino el reparto es el de siempre: FIFO, de la más antigua', async () => {
+    const t = tablas();
+    await confirmar(t, ORG, 'r1');
+
+    expect(t.debtApplication.map((a) => [a.expenseId, a.amount])).toEqual([
+      ['g-vieja', 30],
+      ['g-nueva', 50],
+    ]);
+  });
+
+  it('con destino, confirmar sigue siendo idempotente: dos veces es 409 y un solo ajuste', async () => {
+    const t = tablas();
+    const destino = { targetSource: 'EXPENSE', targetSourceId: 'g-nueva' };
+
+    await confirmar(t, ORG, 'r1', destino);
+    await expect(confirmar(t, ORG, 'r1', destino)).rejects.toThrow(ConflictException);
+
+    expect(t.ownerMovement.filter((m) => m.cashReconciliationId === 'r1')).toHaveLength(1);
+    expect(t.debtApplication).toHaveLength(2);
+  });
+
+  it('anular revierte el ajuste elegido y deja la fila en el historial', async () => {
+    const t = tablas();
+    await confirmar(t, ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-nueva' });
+    await servicioFalso(t).voidReconciliation(ORG, 'r1');
+
+    expect(t.ownerMovement.filter((m) => m.cashReconciliationId === 'r1')).toEqual([]);
+    expect(t.cashReconciliation.find((c) => c.id === 'r1')).toMatchObject({ status: 'VOID' });
+  });
+
+  // ---------- la previsualización, de solo lectura ----------
+
+  describe('GET /cash/reconciliations/:id/plan', () => {
+    const plan = (t: Tablas, org: string, id: string, q: Record<string, unknown> = {}) =>
+      servicioFalso(t).shortfallPlan(org, id, CashShortfallPlanQuerySchema.parse(q));
+
+    it('devuelve el reparto con la deuda elegida SIN escribir nada', async () => {
+      const t = tablas();
+      const r = await plan(t, ORG, 'r1', { targetSource: 'EXPENSE', targetSourceId: 'g-nueva' });
+
+      expect(r.plan?.applications.map((a) => [a.sourceId, a.amount])).toEqual([
+        ['g-nueva', 50],
+        ['g-vieja', 30],
+      ]);
+      expect(r.plan?.leftover).toBe(0);
+      expect(t.debtApplication).toEqual([]);
+      expect(t.ownerMovement).toHaveLength(1);
+      expect(t.cashReconciliation.find((c) => c.id === 'r1')).toMatchObject({ status: 'DRAFT' });
+    });
+
+    it('sin destino previsualiza el reparto por el orden configurado', async () => {
+      const r = await plan(tablas(), ORG, 'r1');
+
+      expect(r.plan?.applications.map((a) => a.sourceId)).toEqual(['g-vieja', 'g-nueva']);
+    });
+
+    it('la previsualización y lo que escribe confirmar son el MISMO reparto', async () => {
+      const destino = { targetSource: 'EXPENSE', targetSourceId: 'g-futura' };
+      const previo = await plan(tablas(), ORG, 'r3', destino);
+
+      const t = tablas();
+      await confirmar(t, ORG, 'r3', destino);
+
+      expect(t.debtApplication.map((a) => [a.expenseId, a.amount])).toEqual(
+        previo.plan?.applications.map((a) => [a.sourceId, a.amount]),
+      );
+    });
+
+    it('ofrece las deudas ELEGIBLES, filtradas como las filtra confirmar', async () => {
+      const r = await plan(tablas(), ORG, 'r1');
+
+      // g-futura es posterior al conteo y mv-cp2 es de la socia: el servidor
+      // las va a ignorar, así que la pantalla tampoco puede ofrecerlas.
+      expect(r.obligations.map((o) => o.sourceId)).toEqual(['g-vieja', 'g-nueva']);
+      expect(r.differenceUsd).toBe(-80);
+      expect(r.kind).toBe('SHORT');
+      expect(r.willAttribute).toBe(true);
+    });
+
+    it('una destino inválida es 400 también acá: la pantalla no promete lo imposible', async () => {
+      for (const malo of [
+        { targetSource: 'EXPENSE', targetSourceId: 'g-ajena' },
+        { targetSource: 'EXPENSE', targetSourceId: 'g-futura' },
+        { targetSource: 'MOVEMENT', targetSourceId: 'mv-cp2' },
+        { targetSource: 'EXPENSE', targetSourceId: 'no-existe' },
+      ]) {
+        await expect(plan(tablas(), ORG, 'r1', malo)).rejects.toThrow(BadRequestException);
+      }
+    });
+
+    it('una conciliación de otra organización no se previsualiza: 404', async () => {
+      await expect(plan(tablas(), ORG, 'r-B')).rejects.toThrow(NotFoundException);
+    });
+  });
+});
+
+/**
+ * La deuda destino llega por la red. Lo único que frena un origen inventado es
+ * la validación en tiempo de ejecución, y se prueba contra el pipe REAL: un
+ * mock del pipe probaría el mock.
+ */
+describe('La deuda destino muere en el PIPE, no en el servicio', () => {
+  const pipeBody = new ZodValidationPipe(CashReconciliationConfirmSchema);
+  const pipeQuery = new ZodValidationPipe(CashShortfallPlanQuerySchema);
+
+  it('un targetSource fuera del enum es 400', () => {
+    for (const malo of ['SALE', 'expense', '', 'EXPENSE; drop', 'PAYMENT']) {
+      expect(() =>
+        pipeBody.transform({ attributeShortfall: true, targetSource: malo, targetSourceId: 'g1' }),
+      ).toThrow(BadRequestException);
+      expect(() => pipeQuery.transform({ targetSource: malo, targetSourceId: 'g1' })).toThrow(
+        BadRequestException,
+      );
+    }
+  });
+
+  it('medio destino tampoco pasa', () => {
+    expect(() => pipeBody.transform({ targetSourceId: 'g1' })).toThrow(BadRequestException);
+    expect(() => pipeQuery.transform({ targetSource: 'EXPENSE' })).toThrow(BadRequestException);
+  });
+
+  it('los tres orígenes de verdad pasan', () => {
+    for (const bueno of ['EXPENSE', 'LOAN_PAYMENT', 'MOVEMENT']) {
+      expect(pipeQuery.transform({ targetSource: bueno, targetSourceId: 'x' })).toMatchObject({
+        targetSource: bueno,
+      });
+    }
+  });
+
+  it('confirmar valida el body con ZodValidationPipe (metadata real de Nest)', () => {
+    const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'confirm') as
+      | Record<string, { index: number; data?: string; pipes: unknown[] }>
+      | undefined;
+    const body = Object.entries(meta ?? {}).find(([clave]) => clave.startsWith('3:'));
+
+    if (!body) throw new Error('falta @Body(new ZodValidationPipe(...)) en confirm');
+    expect(body[1].pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+  });
+
+  it('la previsualización valida la query con ZodValidationPipe (metadata real de Nest)', () => {
+    const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'shortfallPlan') as
+      | Record<string, { index: number; data?: string; pipes: unknown[] }>
+      | undefined;
+    const query = Object.entries(meta ?? {}).find(([clave]) => clave.startsWith('4:'));
+
+    if (!query) throw new Error('falta @Query(new ZodValidationPipe(...)) en shortfallPlan');
+    expect(query[1].pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
   });
 });
