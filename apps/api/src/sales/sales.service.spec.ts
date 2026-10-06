@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 
 /** Prisma mockeado: cada método usado por el servicio es un jest.fn() plano. */

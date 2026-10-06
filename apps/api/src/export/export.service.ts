@@ -3,7 +3,6 @@ import {
   formatMoney,
   formatPercent,
   PRICE_STATUS_LABEL,
-  type CalcResult,
   type ExchangeRateSnapshot,
 } from '@calc3d/shared';
 import PDFDocument from 'pdfkit';
