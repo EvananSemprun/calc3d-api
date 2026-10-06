@@ -133,6 +133,21 @@ en el repo web: se sobrescribe al sincronizar.
       nombre del Excel (`reporte-AAAA-MM-DD.xlsx`); tests:
       `printers/printers.service.spec.ts`, `reports/reports.controller.spec.ts`.
       `monthKey(fecha)` sigue siendo correcto para fechas YA guardadas (día 1 UTC).
+    - ⚠️ **La regla completa son DOS clases de fecha, y la mitad equivocada
+      produce el bug simétrico.** "Usá `businessDateKey` siempre" es tan falso
+      como "usá `toISOString` siempre":
+      - **Fecha de negocio** (`Sale.date`, `Expense.date`, `CashReconciliation.date`…):
+        se guarda a medianoche UTC y **ya es** el día que el dueño eligió. Se lee
+        con `toISOString().slice(0, 10)`. Pasarla por `businessDateKey` la corre
+        **un día para atrás**.
+      - **Instante real** (`createdAt`, `confirmedAt`, "ahora"): es un momento
+        del tiempo. Se lee con `businessDateKey`. Leerla con `toISOString()` la
+        corre **un día para adelante** desde las 20:00 de Caracas.
+
+      Los dos backfill de `apps/api/prisma/` son el ejemplo vivo:
+      `backfill-caja.mjs` usa `toISOString` (toca `date`) y
+      `backfill-importado.mjs` usa `businessDateKey` (toca `createdAt`).
+      **Los dos están bien. "Unificar el helper" rompe uno de los dos.**
     - `Quote.code` = correlativo por organización (max+1, igual que `Order`); cada
       versión duplicada toma el suyo. Los presupuestos previos se numeraron en la
       migración; sin correlativo el documento sale como `S/N-{año}`.
@@ -413,26 +428,142 @@ en el repo web: se sobrescribe al sincronizar.
       y el libro se guardó sin recalcular, así que `data_only=True` devuelve
       `None`. Hay que parsear el texto del día (`"Martes 3: 10$"`). Un lector
       que confíe en ellas ve un mostrador de $0 y **no falla**.
-  - **Caja y financiamiento (2026-09-26, shared 0.17.0)** (`cash/cash.module.ts`,
-    `shared/calc/cash.ts`): la hoja "Caja" del Excel y el bloque "Quién puso la
-    plata" de "Inversion". Toda la plata vive en UNA cuenta de Binance mezclada
-    con la personal de Vanan, así que la caja del negocio se RECONSTRUYE.
+  - **Caja: obligaciones y conciliación (fase 1, 2026-10-05, shared 0.21.0)** —
+    `cash/cash.service.ts` (el servicio salió de `cash.module.ts`, que quedó con
+    el controller y re-exporta `CashService` porque `reports.module.ts` lo
+    importa de ahí) + `shared/calc/cash.ts`, `obligations.ts` y `reconcile.ts`.
+    Reemplaza la cascada de retiros y el "conteo de los lunes". Spec:
+    `docs/superpowers/specs/2026-10-05-caja-saas-design.md`; plan:
+    `docs/superpowers/plans/2026-10-05-caja-fase-1.md`.
     - ⚠️ **Quién pagó = `paidBy` (BUSINESS/OWNER/LOAN) en `Expense` y
-      `LoanPayment`.** Una compra que paga Vanan se anota UNA vez, como gasto
-      con `paidBy: OWNER`; el aporte sale solo. La hoja la anotaba dos veces
-      (Gastos + "Aporte de Vanan" en Caja) y eso descuadraba. `OwnerMovement`
-      es SOLO plata pura (retiro/aporte sin compra); `CashCount` es el conteo
-      de los lunes (solo el total de Binance; lo del negocio se deriva A ESA
-      FECHA con `businessCash(ledger, until)`).
-    - Saldo = ventas + abonos − gastos operativos (sin LOAN) − equipos pagados
-      por la caja + aportes (gastos OWNER + movimientos) − retiros − cuotas
-      pagadas por la caja. Los equipos de Vanan o del préstamo NO entran.
-    - `ownerFinancing`: lo que Vanan sacó se descuenta en cascada diseñador →
-      compras → cuotas → equipo; al prestamista se le paga con cuotas. Nueva
-      categoría **`DESIGN`** (el diseñador lo paga Vanan de su sueldo).
-    - `GET /cash`, `POST/DELETE /cash/movements`, `PUT /cash/counts` (upsert por
-      día), `DELETE /cash/counts/:id` (con `deleteMany` + organización: IDOR →
-      404). Tests: `cash.spec.ts` (shared), `cash/cash.service.spec.ts`.
+      `LoanPayment`.** Una compra que paga la contraparte se anota UNA vez, como
+      gasto con `paidBy: OWNER`; el aporte sale solo. La hoja la anotaba dos
+      veces y eso descuadraba. `OwnerMovement` es SOLO plata pura.
+    - ⚠️ **Las obligaciones se DERIVAN, no se almacenan.** Una deuda con la
+      contraparte ES un gasto suyo, una cuota suya o un aporte reembolsable,
+      visto como deuda; su saldo es `monto − aplicaciones`, igual que
+      `loanBalance`. Lo único que se persiste es **`DebtApplication`** (qué
+      parte de qué pago cancela qué deuda), con un CHECK de "exactamente una
+      obligación". **Murió la cascada por categoría**: `applyPayment` reparte
+      FIFO por fecha (`Settings.debtApplicationOrder`, `OLDEST_FIRST`), con
+      desempate por id para que el reparto sea reproducible. El excedente sale
+      por `leftover` y es RETIRO, nunca deuda negativa ni gasto.
+    - `businessCash` abrió dos líneas: `contributions` → `contributionsRefundable`
+      + `contributionsCapital`, y `withdrawals` → `debtRepayments` + `ownerDraws`
+      (de `movements[].applied`). `balance` da lo mismo que en 0.20.0.
+    - **`CashCount` → `CashReconciliation`**, con `status DRAFT/CONFIRMED/VOID`.
+      ⚠️ **Lo personal es un dato DECLARADO, no el residuo**: hasta 0.20.0 era
+      `total − esperado`, y por construcción eso nunca daba faltante.
+      `reconcile()` compara `total − personal` contra lo esperado; **nunca el
+      total de la cuenta contra lo esperado**. Al confirmar se CONGELAN los
+      importes (es un documento, no una vista) y `stale` avisa si después
+      entraron movimientos con fecha anterior — sumando de vuelta el ajuste
+      propio, o se encendería en toda conciliación ajustada.
+    - **Atribución automática de faltantes: por CUENTA y APAGADA por defecto**
+      (`CashAccount.autoAttributeShortfall`). Convierte un desconocido en una
+      deuda saldada, así que la pantalla muestra el reparto antes de confirmar
+      y deja escribir otra explicación. **Una diferencia A FAVOR no genera
+      nada.** Idempotencia: `OwnerMovement.cashReconciliationId` es ÚNICO y
+      `confirm` exige `DRAFT` (si no, 409). Anular borra el ajuste (sus
+      aplicaciones caen en cascada) y deja la fila en el historial.
+    - ⚠️ **`summary()` devuelve `plan`**: el reparto que haría `confirm()`, por
+      el MISMO camino (contraparte de la CUENTA, obligaciones filtradas HASTA la
+      fecha). El front NO puede deducirlo de `obligations`, que viene sin filtro
+      y con la contraparte por defecto: conciliando con retraso mostraría deudas
+      que el servidor va a ignorar.
+    - `Counterparty` (OWNER/PARTNER/EXTERNAL_LENDER) y `CashAccount` sacan los
+      nombres propios del código. **El nombre de la contraparte es un
+      provisional** (`'Propietario'`): no hay en los datos ninguna fuente
+      confiable del nombre real. Se renombra desde Configuración -> Caja.
+    - Rutas: `GET /cash`, `POST/DELETE /cash/movements`,
+      `PUT /cash/reconciliations`, `POST /cash/reconciliations/:id/confirm`,
+      `POST /cash/reconciliations/:id/void`.
+  - **ABM de contrapartes y cuentas (fase 2, 2026-10-05, shared 0.22.0)** —
+    `cash/counterparties.service.ts` y `cash/cash-accounts.service.ts`, cada uno
+    en su archivo (`cash.service.ts` ya tiene 480 lineas con el resumen, las
+    obligaciones y la conciliacion). Rutas: `/counterparties` y `/cash-accounts`,
+    las dos con `GET`, `POST`, `PUT /:id`, `POST /:id/default` y `DELETE /:id`.
+    Plan: `docs/superpowers/plans/2026-10-05-caja-fase-2.md`.
+    - ⚠️ **Las guardas de borrado no son cosmeticas.** Una contraparte con
+      movimientos, o que es con quien se comparte una cuenta, o la unica
+      propietaria -> **409 con un mensaje que dice que hacer**; la salida es
+      DESACTIVARLA, como una ficha de filamento descontinuada. Lo mismo con una
+      cuenta que tiene conciliaciones o es la unica.
+    - ⚠️ **La caja necesita SIEMPRE una contraparte propietaria activa**: es a
+      quien le atribuye la deuda. `remove` lo protegia, pero desactivarla o
+      cambiarle el tipo esquivaba la guarda, asi que `update` la exige tambien y
+      `defaultCounterparty()` prefiere una activa sobre la marcada por defecto.
+    - **Una sola por defecto / una sola principal**, con indices unicos
+      PARCIALES en la base (`Counterparty_org_default_key`,
+      `CashAccount_org_default_key`; Prisma no los declara, van a mano en la
+      migracion). `setDefault` desmarca y marca **dentro de una transaccion**, y
+      `remove` traspasa el titulo si borra la que lo tenia — borrando primero y
+      promoviendo despues, o el indice rechaza el instante con dos.
+    - ⚠️ **La contraparte de una cuenta compartida se valida contra la
+      organizacion.** Es el IDOR menos obvio y el de peor consecuencia:
+      `confirm()` le atribuiria un faltante de plata a la contraparte de otro
+      negocio. Fijado en `common/multi-tenant.audit.spec.ts`.
+    - `Settings` gana `reconciliationFrequency`, `reconciliationWeekday` y
+      `debtApplicationOrder`. La frecuencia es un RECORDATORIO: no bloquea nada.
+    - ⚠️ **Lo que sigue pendiente (fase 4)**: `Expense.paidBy` y
+      `LoanPayment.paidBy` siguen siendo el enum `BUSINESS/OWNER/LOAN`, asi que
+      **un socio no puede figurar como quien pago un gasto**. Se difirio a
+      proposito: toca los 86 gastos y las 4 cuotas que ya existen y su unico
+      beneficio es multi-socio, que todavia no le hace falta a nadie. Diseno ya
+      decidido: `counterpartyId` nulable donde el `kind` lleva lo que hoy lleva
+      el enum (null = la caja pago, OWNER/PARTNER = genera obligacion,
+      EXTERNAL_LENDER = no genera). Conservar los dos campos se descarto: dos
+      que significan lo mismo terminan divergiendo.
+    - Tests: `cash.spec.ts`, `obligations.spec.ts`, `reconcile.spec.ts` (shared),
+      `cash/cash.service.spec.ts` (32) y `common/multi-tenant.audit.spec.ts`.
+    - ⚠️ **Multicuenta sigue funcionando solo en estructura**: se registran
+      cuentas, pero ninguna venta, gasto, abono ni cuota tiene `accountId`, asi
+      que el saldo esperado es uno solo y **solo se concilia la principal**.
+      Compararlo contra otra cuenta daria una diferencia inventada, y la
+      pantalla lo dice en vez de esconderlo.
+  - **Detalle por categoria y etiqueta "Importado" (fase 3, 2026-10-05, shared
+    0.23.0)** — plan: `docs/superpowers/plans/2026-10-05-caja-fase-3.md`.
+    - ⚠️ **`businessCash` ya NO clasifica: clasifica `cashEntries` y
+      `businessCash` SUMA.** `cashEntries(ledger, until?)` devuelve cada asiento
+      con su `CashCategory`, y `GET /cash/breakdown/:category` devuelve esos
+      MISMOS asientos. **Es la unica clasificacion.** Si alguna vez aparece una
+      segunda —en la API, en el front, en el reporte de Excel— el detalle va a
+      sumar distinto que la linea de arriba el dia que una de las dos cambie, y
+      la pantalla de dinero se contradice a si misma.
+    - Los asientos llevan `id`, **no etiquetas**: `shared` no conoce los nombres
+      de columna de Prisma. El join `id -> texto` lo hace la API.
+    - **Un retiro emite DOS asientos** (`debtRepayments` por `min(amount,
+      applied)` y `ownerDraws` por el resto), con el mismo id. Y **un gasto
+      operativo de la contraparte tambien** (gasto Y aporte): asi suma
+      `businessCash`, es la regla que evita la doble carga, y por eso el join
+      por id tiene que tolerar ids repetidos.
+    - ⚠️ **El test "suma(entries de X) === businessCash[X]" es TAUTOLOGICO**
+      para el motor: los dos lados salen de `cashEntries`. Lo que de verdad
+      protege la clasificacion son los **numeros clavados** de `cash.spec.ts` y
+      los tests de `businessCash — los filtros que nadie estaba mirando`. En la
+      API ese mismo test SI sirve, pero para otra cosa: que el `filter`, el
+      `map` y el join no pierdan ni dupliquen asientos.
+    - Verificacion por mutacion con dientes: sacarle `paidBy === 'BUSINESS'` a
+      `equipment` rompe **2 tests viejos**; sacarle `paidBy !== 'LOAN'` a
+      `operativo` **no rompia ninguno** (el unico gasto LOAN de la suite tenia
+      `isInvestment: true`). Elegir la primera si hay que repetirla.
+    - `Sale` y `Payment` ganaron `source` (migracion `20261008120000`, aditiva).
+    - **`prisma/backfill-importado.mjs`** marca `EXCEL_IMPORT` **por la marca
+      textual** `"del excel"`, NO por fecha. Dry-run por defecto, `--write`/
+      `--commit` sinonimos, `--undo` reversa completa, `--incluir=Modelo:dia`
+      para los grupos que el dueno confirme. Lo que no lleva marca **no se marca
+      solo**: se lista para revisar.
+      - ⚠️ **Cualquier corte por fecha es FALSO.** La importacion no fue un
+        evento: fue un goteo hasta al menos el 01/10 (habia un
+        `sincronizar-excel.mjs` periodico, hoy borrado). Hay **2 ventas creadas
+        el 2026-10-01 con la marca del Excel**: con cualquier corte quedaban
+        como cargadas a mano.
+      - ⚠️ **La marca es `del excel` SIN el parentesis.** Existen dos
+        redacciones: `"(del Excel, hoja …)"` y `"— historica del Excel, fecha
+        real no registrada"` (48 gastos). Verificado que no hay una tercera.
+        Agregarle el parentesis "para que sea mas preciso" lo vuelve a romper.
+      - `OwnerMovement` queda excluido: el unico que hay es el cuadre manual del
+        17/09, lo escribio la app y no salio del libro.
   - **Mantenimiento por hora DERIVADO (2026-09-26)**: `derivedMaintenance` en
     `printers.module.ts` = gastos `MAINTENANCE` ÷ horas de la última lectura de
     TODAS las máquinas (`maintenanceRatePerHour`, como la hoja Costeo). Es una
@@ -806,6 +937,21 @@ en el repo web: se sobrescribe al sincronizar.
   pendientes contra Railway. Por eso el backup (`pg_dump`) y el OK explícito del
   dueño van **ANTES del push**, no antes de un `migrate deploy` manual: para
   cuando alguien fuera a correrlo a mano, el deploy ya lo disparó solo.
+- ⚠️ **Una migración NO puede depender de que alguien corra un script entre
+  medias.** `migrate deploy` aplica **todas** las pendientes seguidas al
+  arrancar el contenedor, así que una que agregue una columna nullable y otra
+  posterior que la endurezca con `SET NOT NULL` corren juntas: la segunda falla
+  con *"la columna contiene valores null"*, el contenedor no arranca y la API
+  queda caída. Si hay que rellenar antes de endurecer, el relleno va **en SQL,
+  dentro de la misma migración** (ver `20261006130000_caja_not_null`). Lo que
+  necesita el motor de cálculo va en un script aparte que escriba solo columnas
+  que sigan siendo nullable. Medido contra un clon de la base el 2026-10-05.
+- Para probar una migración sin arriesgar la base local:
+  `CREATE DATABASE x TEMPLATE calc3d`, aplicarla ahí con
+  `psql --single-transaction -v ON_ERROR_STOP=1 -f`, verificar, y borrar el clon.
+  ⚠️ Postgres **18** (local) materializa los `NOT NULL` como entradas de
+  `pg_constraint` con nombre; **17** (Railway, producción) no. Un
+  `RENAME CONSTRAINT` sobre esos nombres anda en local y **revienta en prod**.
 - Las migraciones se **generan y commitean en local** (`prisma migrate dev` contra
   la base local). El comando manual de abajo es para los casos **fuera** de un
   deploy normal — verificar `migrate status` contra prod, o aplicar una
