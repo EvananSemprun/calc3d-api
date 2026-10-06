@@ -3,6 +3,7 @@ import {
   obligationLedger,
   obligationLedger as ledger,
   ownerFinancing,
+  UnknownObligationError,
   type ObligationInput,
 } from './obligations';
 
@@ -177,5 +178,120 @@ describe('ownerFinancing', () => {
 
     expect(f.owedToOwner).toBe(0);
     expect(f.owedToLender).toBe(750);
+  });
+});
+
+/**
+ * ELEGIR LA DEUDA DESTINO.
+ *
+ * El dueño puede decir "este faltante va contra ESTA deuda". La elegida cobra
+ * primero —hasta su saldo, nunca más— y lo que sobre sigue el orden normal.
+ */
+describe('applyPayment — con una deuda destino elegida', () => {
+  /** Tres deudas, una por cada origen, para que el `source` importe. */
+  const tres = () =>
+    ledger([
+      o({ sourceId: 'vieja', date: '2026-08-01', amount: 30 }),
+      o({ sourceId: 'media', date: '2026-09-02', amount: 20, source: 'LOAN_PAYMENT' }),
+      o({ sourceId: 'nueva', date: '2026-10-03', amount: 25, source: 'MOVEMENT' }),
+    ]);
+
+  it('la elegida cobra primero y el remanente sigue el orden normal', () => {
+    const p = applyPayment(tres(), 40, 'OLDEST_FIRST', {
+      source: 'LOAN_PAYMENT',
+      sourceId: 'media',
+    });
+
+    expect(p.applications).toEqual([
+      { source: 'LOAN_PAYMENT', sourceId: 'media', amount: 20 },
+      { source: 'EXPENSE', sourceId: 'vieja', amount: 20 },
+    ]);
+    expect(p.leftover).toBe(0);
+  });
+
+  it('si la elegida absorbe todo el importe, no toca ninguna otra', () => {
+    const p = applyPayment(tres(), 25, 'OLDEST_FIRST', { source: 'MOVEMENT', sourceId: 'nueva' });
+
+    expect(p.applications).toEqual([{ source: 'MOVEMENT', sourceId: 'nueva', amount: 25 }]);
+    expect(p.leftover).toBe(0);
+  });
+
+  it('la elegida no cobra dos veces: su tope sigue siendo su saldo', () => {
+    const p = applyPayment(tres(), 100, 'OLDEST_FIRST', {
+      source: 'LOAN_PAYMENT',
+      sourceId: 'media',
+    });
+
+    expect(p.applications.filter((a) => a.sourceId === 'media')).toEqual([
+      { source: 'LOAN_PAYMENT', sourceId: 'media', amount: 20 },
+    ]);
+    // 100 − 75 de deuda total: el excedente sigue saliendo por leftover.
+    expect(p.applications.reduce((s, a) => s + a.amount, 0)).toBe(75);
+    expect(p.leftover).toBe(25);
+  });
+
+  it('el remanente respeta NEWEST_FIRST, no se cuelga del orden de la elegida', () => {
+    const p = applyPayment(tres(), 60, 'NEWEST_FIRST', { source: 'EXPENSE', sourceId: 'vieja' });
+
+    expect(p.applications).toEqual([
+      { source: 'EXPENSE', sourceId: 'vieja', amount: 30 },
+      { source: 'MOVEMENT', sourceId: 'nueva', amount: 25 },
+      { source: 'LOAN_PAYMENT', sourceId: 'media', amount: 5 },
+    ]);
+  });
+
+  it('una destino que NO está en la lista es un error del llamador, no un plan vacío', () => {
+    expect(() =>
+      applyPayment(tres(), 40, 'OLDEST_FIRST', { source: 'EXPENSE', sourceId: 'fantasma' }),
+    ).toThrow(UnknownObligationError);
+  });
+
+  it('el `source` es parte de la identidad: el mismo id con otro origen no es la misma deuda', () => {
+    expect(() =>
+      applyPayment(tres(), 40, 'OLDEST_FIRST', { source: 'MOVEMENT', sourceId: 'vieja' }),
+    ).toThrow(UnknownObligationError);
+  });
+
+  it('la destino se valida aunque no hubiera nada que aplicar', () => {
+    // Con importe cero el reparto sería vacío igual: si no se validara antes,
+    // una destino inventada pasaría sin que nadie se entere.
+    expect(() =>
+      applyPayment(tres(), 0, 'OLDEST_FIRST', { source: 'EXPENSE', sourceId: 'fantasma' }),
+    ).toThrow(UnknownObligationError);
+  });
+
+  it('una destino YA saldada no es un error: el reparto sigue el orden normal', () => {
+    const l = ledger([
+      o({ sourceId: 'saldada', date: '2026-07-01', amount: 40, applied: 40 }),
+      o({ sourceId: 'abierta', date: '2026-08-01', amount: 30 }),
+    ]);
+
+    const p = applyPayment(l, 10, 'OLDEST_FIRST', { source: 'EXPENSE', sourceId: 'saldada' });
+
+    expect(p.applications).toEqual([{ source: 'EXPENSE', sourceId: 'abierta', amount: 10 }]);
+  });
+
+  it('sin destino el reparto es EXACTAMENTE el de siempre', () => {
+    const conNull = applyPayment(tres(), 40, 'OLDEST_FIRST', null);
+    const sinNada = applyPayment(tres(), 40, 'OLDEST_FIRST');
+
+    expect(conNull).toEqual(sinNada);
+    expect(sinNada.applications).toEqual([
+      { source: 'EXPENSE', sourceId: 'vieja', amount: 30 },
+      { source: 'LOAN_PAYMENT', sourceId: 'media', amount: 10 },
+    ]);
+  });
+
+  it('el error dice CUÁL deuda no existe, para que la API pueda explicarlo', () => {
+    try {
+      applyPayment(tres(), 40, 'OLDEST_FIRST', { source: 'EXPENSE', sourceId: 'fantasma' });
+      throw new Error('tendría que haber lanzado');
+    } catch (e) {
+      expect(e).toBeInstanceOf(UnknownObligationError);
+      expect((e as UnknownObligationError).target).toEqual({
+        source: 'EXPENSE',
+        sourceId: 'fantasma',
+      });
+    }
   });
 });

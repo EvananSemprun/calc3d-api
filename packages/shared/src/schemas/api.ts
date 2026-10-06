@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OBLIGATION_SOURCES } from '../calc/obligations';
 
 /**
  * Si un componente del CATÁLOGO se usa por pieza o una sola vez por pedido.
@@ -582,13 +583,74 @@ export const CashReconciliationUpsertSchema = z
   });
 export type CashReconciliationUpsertDto = z.infer<typeof CashReconciliationUpsertSchema>;
 
+/**
+ * El origen de una obligación, cerrado en tiempo de ejecución.
+ *
+ * ⚠️ Se construye desde `OBLIGATION_SOURCES` (el motor) a propósito: si fuera
+ * un `z.enum([...])` escrito a mano, agregar un origen al motor dejaría este
+ * enum viejo y la deuda nueva sería inelegible con un 400 que nadie entiende.
+ */
+export const ObligationSourceSchema = z.enum(OBLIGATION_SOURCES);
+export type ObligationSourceDto = z.infer<typeof ObligationSourceSchema>;
+
+/**
+ * LA DEUDA DESTINO del faltante: contra cuál de las obligaciones de la
+ * contraparte se aplica, en vez de repartirlo por el orden configurado.
+ *
+ * ⚠️ Van los DOS campos. `sourceId` solo alcanzaría hoy porque los cuid de
+ * tablas distintas no chocan, pero eso es un detalle del generador de ids, no
+ * una garantía del contrato: con el origen explícito, un id de gasto no puede
+ * hacerse pasar por una cuota.
+ *
+ * ⚠️ Acá NO se valida que la deuda exista ni que sea de esta organización.
+ * Eso se cierra en el servidor contra la lista DERIVADA de obligaciones (ver
+ * `applyPayment`); un chequeo por id contra la base sería un camino paralelo y
+ * reabriría el IDOR que esa derivación evita.
+ */
+const DEUDA_DESTINO = {
+  targetSource: ObligationSourceSchema.optional().nullable(),
+  targetSourceId: z.string().trim().min(1).optional().nullable(),
+};
+
+/** O vienen los dos o no viene ninguno: con uno solo no se identifica nada. */
+const destinoCompleto = (v: { targetSource?: unknown; targetSourceId?: unknown }) =>
+  (v.targetSource == null) === (v.targetSourceId == null);
+
+const DESTINO_INCOMPLETO =
+  'La deuda destino necesita su origen y su id: con uno solo no se identifica';
+
 /** Al confirmar: el dueño puede explicar el descuadre en vez de atribuirlo. */
-export const CashReconciliationConfirmSchema = z.object({
-  explanation: z.string().trim().min(1).optional().nullable(),
-  /** `false` salta el ajuste automático aunque la cuenta lo tenga activado. */
-  attributeShortfall: z.boolean().default(true),
-});
+export const CashReconciliationConfirmSchema = z
+  .object({
+    explanation: z.string().trim().min(1).optional().nullable(),
+    /** `false` salta el ajuste automático aunque la cuenta lo tenga activado. */
+    attributeShortfall: z.boolean().default(true),
+    ...DEUDA_DESTINO,
+  })
+  .refine(destinoCompleto, {
+    message: DESTINO_INCOMPLETO,
+    path: ['targetSourceId'],
+  })
+  // Elegir una deuda y a la vez pedir que no se atribuya es contradictorio, y
+  // la contradicción se resolvería en silencio a favor de no hacer nada.
+  .refine((v) => v.targetSource == null || v.attributeShortfall, {
+    message: 'Para elegir una deuda destino hay que atribuir el faltante',
+    path: ['targetSource'],
+  });
 export type CashReconciliationConfirmDto = z.infer<typeof CashReconciliationConfirmSchema>;
+
+/**
+ * La query de `GET /cash/reconciliations/:id/plan`: el mismo destino, suelto,
+ * para previsualizar el reparto sin escribir nada. Sin destino previsualiza el
+ * reparto por el orden configurado, que es lo que haría `confirm()` hoy.
+ */
+export const CashShortfallPlanQuerySchema = z
+  .object({ ...DEUDA_DESTINO })
+  .refine(destinoCompleto, {
+    message: DESTINO_INCOMPLETO,
+    path: ['targetSourceId'],
+  });
+export type CashShortfallPlanQueryDto = z.infer<typeof CashShortfallPlanQuerySchema>;
 
 /** Una contraparte: el dueño, un socio o un prestamista externo. */
 export const CounterpartyUpsertSchema = z.object({

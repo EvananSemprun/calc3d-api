@@ -14,7 +14,17 @@
 import Decimal from 'decimal.js';
 import { D, toCents } from './money';
 
-export type ObligationSource = 'EXPENSE' | 'LOAN_PAYMENT' | 'MOVEMENT';
+/**
+ * Los tres orígenes de una obligación, como VALOR.
+ *
+ * El tipo se borra al compilar; lo único que puede frenar un origen inventado
+ * que llega por la red es un enum en tiempo de ejecución. Para que las dos
+ * declaraciones no puedan divergir, el schema Zod (`ObligationSourceSchema`)
+ * se construye a partir de esta lista en vez de repetirla.
+ */
+export const OBLIGATION_SOURCES = ['EXPENSE', 'LOAN_PAYMENT', 'MOVEMENT'] as const;
+
+export type ObligationSource = (typeof OBLIGATION_SOURCES)[number];
 
 /** Para agrupar en "Quién puso la plata"; no afecta el orden de pago. */
 export type ObligationCategory =
@@ -73,23 +83,61 @@ export interface PaymentPlan {
 }
 
 /**
+ * Apunta a UNA obligación concreta.
+ *
+ * ⚠️ Hacen falta los DOS campos. Los ids vienen de tablas distintas y hoy no
+ * chocan, pero identificar una deuda solo por id deja la unicidad en manos de
+ * un detalle del generador de ids: el día que un origen cambie de esquema, el
+ * faltante se aplicaría a la deuda equivocada sin que nada avise.
+ */
+export interface ObligationRef {
+  source: ObligationSource;
+  sourceId: string;
+}
+
+/**
+ * La deuda destino no está entre las obligaciones que se pasaron.
+ *
+ * ⚠️ Es un error del LLAMADOR, no un dato del negocio, y por eso LANZA en vez
+ * de devolver un plan vacío: un plan vacío es indistinguible de "no había nada
+ * que aplicar", que es un resultado legítimo, así que el llamador no podría
+ * notar la diferencia y el faltante terminaría repartiéndose en silencio por
+ * el orden normal —exactamente el reparto que el dueño NO eligió—. Ignorar la
+ * destino sería peor todavía: la pantalla prometería una cosa y el servidor
+ * haría otra.
+ */
+export class UnknownObligationError extends Error {
+  constructor(readonly target: ObligationRef) {
+    super(`La deuda destino (${target.source} ${target.sourceId}) no está entre las obligaciones`);
+    this.name = 'UnknownObligationError';
+  }
+}
+
+/**
  * Reparte `amount` entre las obligaciones abiertas.
  *
  * `obligations` tiene que venir de `obligationLedger` (ya ordenado de la más
  * antigua a la más reciente); `NEWEST_FIRST` simplemente lo recorre al revés.
+ *
+ * Con `target`, esa obligación cobra PRIMERO —hasta su saldo, nunca más— y el
+ * remanente sigue el orden normal. Sin `target`, el reparto es el de siempre.
+ *
+ * ⚠️ `obligations` es la ÚNICA definición de qué se puede elegir: la destino
+ * tiene que ser miembro de esta lista. Quien llame no tiene que (ni debe)
+ * validar la deuda por su cuenta contra la base; si lo hiciera, la lista que
+ * autoriza y la que se reparte podrían no ser la misma.
  */
 export function applyPayment(
   obligations: Obligation[],
   amount: number,
   order: ApplicationOrder = 'OLDEST_FIRST',
+  target?: ObligationRef | null,
 ): PaymentPlan {
   let resto = Decimal.max(0, D(amount));
-  const cola = order === 'NEWEST_FIRST' ? [...obligations].reverse() : obligations;
   const applications: PaymentApplication[] = [];
 
-  for (const deuda of cola) {
-    if (resto.lte(0)) break;
-    if (deuda.outstanding <= 0) continue;
+  const aplicar = (deuda: Obligation) => {
+    if (resto.lte(0) || deuda.outstanding <= 0) return;
     const cuota = Decimal.min(resto, deuda.outstanding);
     applications.push({
       source: deuda.source,
@@ -97,6 +145,26 @@ export function applyPayment(
       amount: toCents(cuota),
     });
     resto = resto.minus(cuota);
+  };
+
+  // La validación va ANTES de aplicar nada, y corre aunque el importe sea
+  // cero: si no, una destino inventada pasaría sin que nadie se entere en
+  // cuanto el reparto fuera vacío por otro motivo.
+  let elegida: Obligation | undefined;
+  if (target) {
+    elegida = obligations.find(
+      (deuda) => deuda.source === target.source && deuda.sourceId === target.sourceId,
+    );
+    if (!elegida) throw new UnknownObligationError(target);
+    aplicar(elegida);
+  }
+
+  const cola = order === 'NEWEST_FIRST' ? [...obligations].reverse() : obligations;
+  for (const deuda of cola) {
+    if (resto.lte(0)) break;
+    // La elegida ya cobró lo suyo; sin esto cobraría dos veces.
+    if (deuda === elegida) continue;
+    aplicar(deuda);
   }
 
   return { applications, leftover: toCents(resto) };
