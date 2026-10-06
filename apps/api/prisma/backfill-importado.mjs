@@ -46,6 +46,11 @@ const require = createRequire(import.meta.url);
 const { businessDateKey, BUSINESS_TIME_ZONE } = require('@calc3d/shared');
 
 const WRITE = process.argv.includes('--write') || process.argv.includes('--commit');
+
+// Los 5 s por defecto de Prisma alcanzan contra la base local, pero NO contra
+// Railway, que esta por internet: el ensayo (que abre la transaccion, aplica y
+// revierte) se corta a mitad de camino con 'Transaction already closed'.
+const TX = { timeout: 120_000, maxWait: 30_000 };
 const UNDO = process.argv.includes('--undo');
 
 /** Los grupos sin marca que el dueño ya confirmó, como `Modelo:AAAA-MM-DD`. */
@@ -299,7 +304,7 @@ async function marcar() {
       );
     }
     if (!WRITE) throw new Ensayo();
-  });
+  }, TX);
 }
 
 async function deshacer() {
@@ -323,7 +328,7 @@ async function deshacer() {
     }
     console.log(`\nSe devolverian ${total} fila(s) a MANUAL.`);
     if (!WRITE) throw new Ensayo();
-  });
+  }, TX);
 }
 
 (UNDO ? deshacer() : marcar())

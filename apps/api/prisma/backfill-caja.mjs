@@ -19,6 +19,11 @@ const { businessCash, obligationLedger, applyPayment } = require('@calc3d/shared
 // y que dos scripts hermanos pidieran banderas distintas hacía que la corrida
 // "real" saliera en ensayo y se leyera como éxito.
 const COMMIT = process.argv.includes('--commit') || process.argv.includes('--write');
+
+// Los 5 s por defecto de Prisma alcanzan contra la base local, pero NO contra
+// Railway, que esta por internet: el ensayo (que abre la transaccion, aplica y
+// revierte) se corta a mitad de camino con 'Transaction already closed'.
+const TX = { timeout: 120_000, maxWait: 30_000 };
 const prisma = new PrismaClient();
 const dia = (d) => d.toISOString().slice(0, 10);
 const n = (x) => Number(x);
@@ -258,7 +263,7 @@ const main = async () => {
         );
       }
       if (!COMMIT) throw new Error('ENSAYO: nada se escribio. Corre con --commit.');
-    });
+    }, TX);
   }
 };
 
