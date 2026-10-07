@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OBLIGATION_SOURCES } from '../calc/obligations';
+import { GROWTH_LEVELS, type GrowthLevel } from '../calc/goal';
 
 /**
  * Si un componente del CATÁLOGO se usa por pieza o una sola vez por pedido.
@@ -722,6 +723,24 @@ export const GoalUpsertSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 export type GoalUpsertDto = z.infer<typeof GoalUpsertSchema>;
+
+/**
+ * Qué se le pide a `GET /goals/suggestion`.
+ *
+ * ⚠️ El enum de crecimiento se **deriva de `GROWTH_LEVELS`**, no se escribe
+ * aparte: dos listas del mismo conjunto terminan divergiendo, y el porcentaje
+ * que se muestra dejaría de ser el que se aplica.
+ */
+export const GrowthLevelSchema = z.enum(
+  Object.keys(GROWTH_LEVELS) as [GrowthLevel, ...GrowthLevel[]],
+);
+
+export const GoalSuggestionQuerySchema = z.object({
+  /** El mes que se está cargando, como `AAAA-MM`. */
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'El mes va como AAAA-MM (ej. 2026-09)'),
+  growth: GrowthLevelSchema.optional(),
+});
+export type GoalSuggestionQueryDto = z.infer<typeof GoalSuggestionQuerySchema>;
 
 // ---------- Lectura mensual del contador de una impresora ----------
 
