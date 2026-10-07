@@ -164,3 +164,132 @@ describe('GoalsService.realesPorMes', () => {
     expect(r.get('2026-03')?.sales).toBe(999);
   });
 });
+
+describe('GoalsService.suggestion', () => {
+  // Parado en octubre 2026: los 3 ultimos completos son jul, ago y sep.
+  const HOY = new Date('2026-10-07T12:00:00.000Z');
+
+  const conVentas = (org = ORG) =>
+    baseFalsa({
+      ventas: [
+        venta(org, '2026-07-10', 100),
+        venta(org, '2026-08-10', 200),
+        venta(org, '2026-09-10', 300),
+      ],
+    });
+
+  it('NO escribe nada: es de solo lectura', async () => {
+    const p = conVentas() as Record<string, Record<string, unknown>>;
+    await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    // Si algun dia aparece una escritura en este camino, el mock no la tiene y
+    // el test se cae: es la guarda, no un adorno.
+    for (const tabla of Object.values(p)) {
+      for (const metodo of ['create', 'update', 'upsert', 'delete', 'updateMany', 'createMany']) {
+        expect(tabla[metodo]).toBeUndefined();
+      }
+    }
+  });
+
+  it('usa los 3 ultimos meses COMPLETOS: el mes en curso no entra', async () => {
+    const p = baseFalsa({
+      ventas: [
+        venta(ORG, '2026-07-10', 100),
+        venta(ORG, '2026-08-10', 200),
+        venta(ORG, '2026-09-10', 300),
+        venta(ORG, '2026-10-05', 9999), // en curso: no puede contaminar
+      ],
+    });
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    expect(s.sales.monthsUsed).toEqual(['2026-09', '2026-08', '2026-07']);
+    expect(s.sales.value).toBe(233);
+  });
+
+  it('un mes FUTURO usa los mismos 3 completos de hoy, y dice cuales', async () => {
+    const p = conVentas();
+
+    // Enero 2027 estando en octubre 2026: sus 3 meses previos (oct, nov, dic)
+    // no terminaron. Sin esta regla la sugerencia quedaria vacia.
+    const enero = await service(p).suggestion(ORG, { month: '2027-01' }, HOY);
+    const noviembre = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    expect(enero.sales.monthsUsed).toEqual(['2026-09', '2026-08', '2026-07']);
+    expect(enero.sales.value).toBe(noviembre.sales.value);
+  });
+
+  it('el borde de fin de mes se decide en hora de Venezuela', async () => {
+    const p = conVentas();
+    // 2026-10-01T02:00Z son todavia las 22:00 del 30/09 en Caracas: el mes en
+    // curso sigue siendo SEPTIEMBRE y el ultimo completo, agosto.
+    const s = await service(p).suggestion(ORG, { month: '2026-12' }, new Date('2026-10-01T02:00:00.000Z'));
+
+    expect(s.sales.monthsUsed).toEqual(['2026-08', '2026-07']);
+  });
+
+  it('informa cuantos meses pudo usar cuando hay menos de 3', async () => {
+    const p = baseFalsa({ ventas: [venta(ORG, '2026-09-10', 300)] });
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    expect(s.sales.monthsUsed).toEqual(['2026-09']);
+    expect(s.sales.value).toBe(300);
+  });
+
+  it('una metrica sin datos viene null CON motivo, no en cero', async () => {
+    const p = conVentas();
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    // No hay un solo pedido entregado: encargos no se sugiere.
+    expect(s.orders).toMatchObject({ value: null, reason: 'SIN_DATOS' });
+    expect(s.sales.value).toBe(233);
+  });
+
+  it('sin el mismo mes del ano anterior, el aviso de temporada es SIN_HISTORIA', async () => {
+    const p = conVentas();
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    // Enero 2026 no existe en estos datos: no se pudo medir. Que el silencio
+    // no se lea como aprobacion es justo el punto.
+    expect(s.seasonal.status).toBe('SIN_HISTORIA');
+  });
+
+  it('el crecimiento se aplica y se informa', async () => {
+    const p = conVentas();
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11', growth: 'AMBICIOSO' }, HOY);
+
+    expect(s.growth).toBe('AMBICIOSO');
+    expect(s.growthPct).toBe(0.25);
+    expect(s.sales.value).toBe(Math.round(s.sales.base! * 1.25));
+  });
+
+  it('no mira los meses de otra organizacion', async () => {
+    const p = baseFalsa({
+      ventas: [
+        venta(ORG, '2026-09-10', 100),
+        venta(OTRA, '2026-09-11', 9999),
+      ],
+    });
+
+    const s = await service(p).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    expect(s.sales.value).toBe(100);
+  });
+
+  it('el mock modela la base: esas ventas SI sugieren para su propio negocio', async () => {
+    const p = baseFalsa({
+      ventas: [
+        venta(ORG, '2026-09-10', 100),
+        venta(OTRA, '2026-09-11', 9999),
+      ],
+    });
+
+    const s = await service(p).suggestion(OTRA, { month: '2026-11' }, HOY);
+
+    expect(s.sales.value).toBe(9999);
+  });
+});

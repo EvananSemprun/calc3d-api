@@ -12,12 +12,19 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  GoalSuggestionQuerySchema,
   GoalUpsertSchema,
+  businessDateKey,
   goalProgress,
   goalsSummary,
   monthKey,
   monthStart,
+  previousMonth,
+  seasonalCheck,
+  suggestGoals,
+  type GoalSuggestionQueryDto,
   type GoalUpsertDto,
+  type HistoricMonth,
   type OrderLine,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -263,6 +270,77 @@ export class GoalsService {
     return this.list(organizationId);
   }
 
+  /**
+   * La propuesta para el mes que se está cargando. **NO escribe nada.**
+   *
+   * ⚠️ La base son los **3 últimos meses completos que existen HOY**, no los 3
+   * anteriores al mes elegido. El dueño carga las metas con meses de
+   * anticipación —al 2026-10 ya tenía noviembre, diciembre y enero— y los tres
+   * meses previos a enero todavía no terminaron: la lectura literal dejaría la
+   * sugerencia vacía justo en el caso que más usa.
+   *
+   * El precio de esa decisión es que la pantalla **tiene que nombrar los meses
+   * usados**. Sugerir enero sobre julio-septiembre es defendible, pero solo si
+   * el dueño lo ve; un "basado en 3 meses completos" a secas se leería como si
+   * fueran octubre a diciembre.
+   */
+  async suggestion(organizationId: string, dto: GoalSuggestionQueryDto, now = new Date()) {
+    // "Completo" = que ya terminó, en hora de Venezuela. El servidor corre en
+    // UTC y el último día del mes, desde las 20:00 de Caracas, cree que ya
+    // empezó el siguiente: sin esto, el mes en curso se colaría en la base.
+    const mesActual = businessDateKey(now).slice(0, 7);
+    const ultimoCompleto = previousMonth(mesActual);
+    const anteriores = (desde: string, cuantos: number) => {
+      const out: string[] = [];
+      let m = desde;
+      for (let i = 0; i < cuantos; i++) {
+        out.push(m);
+        m = previousMonth(m);
+      }
+      return out;
+    };
+
+    const base = anteriores(ultimoCompleto, 3);
+
+    // El mismo mes del año anterior y su propia base, para el aviso de
+    // temporada. Si caen en el futuro no hay nada que medir.
+    const haceUnAnio = anteriores(dto.month, 13).at(-1)!;
+    const baseAnterior = anteriores(previousMonth(haceUnAnio), 3);
+
+    const necesarios = [...base, haceUnAnio, ...baseAnterior].filter((m) => m <= ultimoCompleto);
+    const porMes = necesarios.length
+      ? await this.realesPorMes(
+          organizationId,
+          monthStart(necesarios.slice().sort()[0]),
+          monthStart(mesActual),
+        )
+      : new Map<string, RealesDelMes>();
+
+    const hist = (mes: string, metrica: 'sales' | 'orders' | 'newClients'): HistoricMonth => {
+      const r = porMes.get(mes) ?? VACIO;
+      return { month: mes, value: r[metrica], hasData: r.hayDatos[metrica] };
+    };
+    const serie = (meses: string[], metrica: 'sales' | 'orders' | 'newClients') =>
+      meses.filter((m) => m <= ultimoCompleto).map((m) => hist(m, metrica));
+
+    const propuesta = suggestGoals({
+      sales: serie(base, 'sales'),
+      orders: serie(base, 'orders'),
+      newClients: serie(base, 'newClients'),
+      growth: dto.growth,
+    });
+
+    return {
+      month: dto.month,
+      ...propuesta,
+      /** ⚠️ `SIN_HISTORIA` es "no se pudo medir", NO "no hay riesgo". */
+      seasonal:
+        haceUnAnio <= ultimoCompleto
+          ? seasonalCheck(hist(haceUnAnio, 'sales'), serie(baseAnterior, 'sales'))
+          : ({ status: 'SIN_HISTORIA' } as const),
+    };
+  }
+
   /** La meta de un mes puntual, para la tarjeta del Dashboard. */
   async forMonth(organizationId: string, month: string) {
     const { months } = await this.list(organizationId);
@@ -275,6 +353,18 @@ export class GoalsService {
 @Controller('goals')
 export class GoalsController {
   constructor(private service: GoalsService) {}
+
+  /**
+   * La propuesta para un mes. Es de SOLO LECTURA: rellena el formulario y no
+   * guarda nada. Va antes de cualquier `@Get(':algo')` que se agregue despues.
+   */
+  @Get('suggestion')
+  suggestion(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(GoalSuggestionQuerySchema)) q: GoalSuggestionQueryDto,
+  ) {
+    return this.service.suggestion(user.organizationId, q);
+  }
 
   @Get()
   list(@CurrentUser() user: AuthUser, @Query('month') month?: string) {

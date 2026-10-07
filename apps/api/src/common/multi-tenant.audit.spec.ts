@@ -5,6 +5,7 @@ import { ClientsService } from '../clients/clients.module';
 import { CashService } from '../cash/cash.service';
 import { CounterpartiesService } from '../cash/counterparties.service';
 import { CashAccountsService } from '../cash/cash-accounts.service';
+import { GoalsService } from '../goals/goals.module';
 
 /**
  * Auditoría multi-tenant: cada lectura por id DEBE filtrar también por
@@ -342,5 +343,72 @@ describe('Aislamiento multi-tenant — contrapartes y cuentas', () => {
       where: { id: 'cp-de-otra-org', organizationId: ORG },
     });
     expect(prisma.cashAccount.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('Aislamiento multi-tenant — Metas', () => {
+  /**
+   * La sugerencia es de solo lectura, pero lee TODA la actividad del negocio
+   * para promediarla: si no filtra, una organización vería las ventas de otra
+   * convertidas en su propia meta.
+   */
+  const baseFalsa = (ventas: { organizationId: string; date: Date; amount: number }[]) => {
+    const filtrar = (where: Record<string, unknown> = {}) =>
+      ventas.filter((v) => {
+        for (const [k, cond] of Object.entries(where)) {
+          if (k === 'date') {
+            const c = cond as { gte?: Date; lt?: Date };
+            if (c.gte && v.date < c.gte) return false;
+            if (c.lt && v.date >= c.lt) return false;
+          } else if ((v as Record<string, unknown>)[k] !== cond) return false;
+        }
+        return true;
+      });
+    return {
+      sale: {
+        findMany: jest.fn(({ where }: never) => Promise.resolve(filtrar(where))),
+        findFirst: jest.fn(({ where }: never) =>
+          Promise.resolve([...filtrar(where)].sort((a, b) => +a.date - +b.date)[0] ?? null),
+        ),
+      },
+      order: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
+      client: { findMany: jest.fn().mockResolvedValue([]) },
+      goal: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+  };
+
+  const VENTAS = [
+    { organizationId: ORG, date: new Date('2026-09-10T00:00:00.000Z'), amount: 100 },
+    { organizationId: OTHER, date: new Date('2026-09-11T00:00:00.000Z'), amount: 9999 },
+  ];
+  const HOY = new Date('2026-10-07T12:00:00.000Z');
+
+  it('GoalsService.suggestion no sugiere con las ventas de otra organización', async () => {
+    const p = baseFalsa(VENTAS);
+    const s = await new GoalsService(p as never).suggestion(ORG, { month: '2026-11' }, HOY);
+
+    expect(s.sales.value).toBe(100);
+  });
+
+  it('y el mock no es ciego: esas ventas SÍ sugieren para su propio negocio', async () => {
+    // Sin este hermano, el test de arriba pasaría aunque el mock devolviera
+    // vacío siempre — o sea, con y sin el scope.
+    const p = baseFalsa(VENTAS);
+    const s = await new GoalsService(p as never).suggestion(OTHER, { month: '2026-11' }, HOY);
+
+    expect(s.sales.value).toBe(9999);
+  });
+
+  it('GoalsService.realesPorMes filtra por organizationId', async () => {
+    const p = baseFalsa(VENTAS);
+    await new GoalsService(p as never).realesPorMes(
+      ORG,
+      new Date('2026-09-01T00:00:00.000Z'),
+      new Date('2026-10-01T00:00:00.000Z'),
+    );
+
+    expect(p.sale.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+    );
   });
 });
