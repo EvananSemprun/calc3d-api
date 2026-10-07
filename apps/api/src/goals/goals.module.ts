@@ -341,6 +341,21 @@ export class GoalsService {
     };
   }
 
+  /**
+   * Lo real de UN mes, exista o no su meta.
+   *
+   * Va aparte de `forMonth` a propósito: ésa devuelve `null` sin meta y el
+   * Dashboard cuenta con eso para no dibujar la tarjeta. Acá el `null` sería
+   * justo lo contrario de lo que la pantalla necesita — un mes sin meta igual
+   * tuvo ventas, y hay que poder verlas al lado de "Sin meta definida".
+   */
+  async actuals(organizationId: string, month: string) {
+    const inicio = monthStart(month);
+    const porMes = await this.realesPorMes(organizationId, inicio, finDe(inicio));
+    const r = porMes.get(month) ?? VACIO;
+    return { month, sales: r.sales, orders: r.orders, newClients: r.newClients };
+  }
+
   /** La meta de un mes puntual, para la tarjeta del Dashboard. */
   async forMonth(organizationId: string, month: string) {
     const { months } = await this.list(organizationId);
@@ -364,6 +379,15 @@ export class GoalsController {
     @Query(new ZodValidationPipe(GoalSuggestionQuerySchema)) q: GoalSuggestionQueryDto,
   ) {
     return this.service.suggestion(user.organizationId, q);
+  }
+
+  /** Lo real de un mes, exista o no su meta. Solo lectura. */
+  @Get('actuals')
+  actuals(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(GoalSuggestionQuerySchema.pick({ month: true }))) q: { month: string },
+  ) {
+    return this.service.actuals(user.organizationId, q.month);
   }
 
   @Get()

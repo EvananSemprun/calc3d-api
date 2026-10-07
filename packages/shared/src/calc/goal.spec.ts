@@ -85,6 +85,20 @@ describe('weightedBase', () => {
     expect(b).toBeCloseTo((150 * 3 + 320 * 2 + 300) / 6, 2);
   });
 
+  it('una serie en SUBIDA es tendencia, no un mes raro: no se recorta', () => {
+    // El caso real de 2026: 0, 1 y 14 clientes nuevos. Con recorte proponia 1,
+    // o sea por debajo del mes anterior. Un mes excepcional ROMPE la serie; uno
+    // que la continua es crecimiento.
+    const b = weightedBase([mes('2026-07', 0), mes('2026-08', 1), mes('2026-09', 14)]);
+    expect(b).toBeCloseTo((14 * 3 + 1 * 2 + 0) / 6, 2);
+    expect(b!).toBeGreaterThan(1);
+  });
+
+  it('una serie en BAJADA tampoco se recorta', () => {
+    const b = weightedBase([mes('2026-07', 300), mes('2026-08', 200), mes('2026-09', 100)]);
+    expect(b).toBeCloseTo((100 * 3 + 200 * 2 + 300) / 6, 2);
+  });
+
   it('con la mediana en cero NO se recorta: un mes bueno no se aplasta', () => {
     // Sin la guarda, [0, 0, 300] daría 0 y borraría el único mes con ventas.
     const b = weightedBase([mes('2026-07', 0), mes('2026-08', 0), mes('2026-09', 300)]);

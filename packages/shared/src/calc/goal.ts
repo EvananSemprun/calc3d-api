@@ -139,9 +139,21 @@ export function weightedBase(months: HistoricMonth[]): number | null {
   const orden = [...utiles].sort((a, b) => (a.month < b.month ? 1 : -1)).slice(0, 3);
   const valores = orden.map((m) => m.value);
 
+  // ⚠️ Si los meses vienen TODOS en subida o TODOS en bajada, no hay un mes raro
+  // que recortar: hay una tendencia, y recortarla sugiere por debajo del último
+  // mes. Medido contra los datos reales de 2026: con 0, 1 y 14 clientes nuevos
+  // el recorte proponía **1**, y con $117, $188 y $315 proponía $223. Un mes
+  // excepcional se reconoce porque ROMPE la serie, no porque sea el más alto.
+  const deViejoANuevo = [...valores].reverse();
+  const tendencia =
+    deViejoANuevo.every((v, i) => i === 0 || v >= deViejoANuevo[i - 1]) ||
+    deViejoANuevo.every((v, i) => i === 0 || v <= deViejoANuevo[i - 1]);
+
   const centro = mediana(valores);
   const recortados =
-    centro > 0 ? valores.map((v) => Math.min(Math.max(v, centro * 0.5), centro * 1.5)) : valores;
+    centro > 0 && !tendencia
+      ? valores.map((v) => Math.min(Math.max(v, centro * 0.5), centro * 1.5))
+      : valores;
 
   const pesos = [3, 2, 1];
   let suma = 0;
