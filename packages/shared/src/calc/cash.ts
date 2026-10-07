@@ -28,6 +28,20 @@
  */
 
 export type PaidBy = 'BUSINESS' | 'OWNER' | 'LOAN';
+
+/**
+ * QUIEN PUSO LA PLATA de un asiento, por TIPO de contraparte.
+ *
+ * `null` = la caja del negocio. El motor necesita el **tipo** y no el id: lo
+ * que decide si un gasto genera deuda no es con quien sea, sino si esa persona
+ * es duena del negocio (le volves la plata) o un prestamista (la deuda ya vive
+ * en el saldo del prestamo, y contarla aca seria contarla dos veces).
+ */
+export type PayerKind = 'OWNER' | 'PARTNER' | 'EXTERNAL_LENDER';
+
+/** Un socio se trata igual que el propietario: puso plata y hay que devolversela. */
+export const generaObligacion = (p: PayerKind | null): boolean =>
+  p === 'OWNER' || p === 'PARTNER';
 export type OwnerMovementKind = 'CONTRIBUTION' | 'WITHDRAWAL';
 
 /** Fecha como ISO o `AAAA-MM-DD`; solo se comparan los primeros 10 caracteres. */
@@ -44,7 +58,8 @@ export interface CashLedger {
   expenses: {
     date: Fecha;
     amount: number;
-    paidBy: PaidBy;
+    /** `null` = la caja. Ver `PayerKind`. */
+    payer: PayerKind | null;
     isInvestment: boolean;
     /** Compra de filamento (la hoja la muestra aparte de los gastos generales). */
     isFilament: boolean;
@@ -52,7 +67,13 @@ export interface CashLedger {
     refundable: boolean;
     id?: string;
   }[];
-  loanPayments: { date: Fecha; amount: number; paidBy: PaidBy; refundable: boolean; id?: string }[];
+  loanPayments: {
+    date: Fecha;
+    amount: number;
+    payer: PayerKind | null;
+    refundable: boolean;
+    id?: string;
+  }[];
   movements: {
     date: Fecha;
     amount: number;
@@ -147,8 +168,12 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
 
   // Lo pagado con el préstamo nunca toca la caja; los equipos de la contraparte
   // viven en el financiamiento.
-  const operativo = (e: CashLedger['expenses'][number]) => !e.isInvestment && e.paidBy !== 'LOAN';
-  const deLaContraparte = (e: CashLedger['expenses'][number]) => operativo(e) && e.paidBy === 'OWNER';
+  // Lo que paga el prestamista nunca toca la caja, y los equipos de la
+  // contraparte viven en el financiamiento.
+  const operativo = (e: CashLedger['expenses'][number]) =>
+    !e.isInvestment && e.payer !== 'EXTERNAL_LENDER';
+  const deLaContraparte = (e: CashLedger['expenses'][number]) =>
+    operativo(e) && generaObligacion(e.payer);
 
   for (const v of ledger.sales) if (vale(v.date)) push('collected', v);
   for (const p of ledger.orderPayments) if (vale(p.date)) push('collected', p);
@@ -161,7 +186,7 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     // anulan en el saldo. Dejar uno solo cambiaría `balance`.
     if (operativo(e) && !e.isFilament) push('expenses', e);
     if (operativo(e) && e.isFilament) push('filament', e);
-    if (e.isInvestment && e.paidBy === 'BUSINESS') push('equipment', e);
+    if (e.isInvestment && e.payer == null) push('equipment', e);
     if (deLaContraparte(e)) push(e.refundable ? 'contributionsRefundable' : 'contributionsCapital', e);
   }
 
@@ -179,7 +204,7 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
   }
 
   for (const c of ledger.loanPayments) {
-    if (vale(c.date) && c.paidBy === 'BUSINESS') push('loanPayments', c);
+    if (vale(c.date) && c.payer == null) push('loanPayments', c);
   }
 
   return out;

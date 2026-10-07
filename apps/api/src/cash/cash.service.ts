@@ -16,6 +16,7 @@ import {
   type ApplicationOrder,
   type CashCategory,
   type CashLedger,
+  type PayerKind,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type CashShortfallPlanQueryDto,
@@ -41,6 +42,17 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 const dia = (d: Date) => d.toISOString().slice(0, 10);
 const n = (x: unknown) => Number(x);
+
+/**
+ * El enum viejo traducido al TIPO de contraparte que entiende el motor.
+ *
+ * ⚠️ **Es un puente temporal.** Cuando `Expense` y `LoanPayment` lleven
+ * `counterpartyId`, el tipo sale de la contraparte de verdad y esta función
+ * muere. Vive acá, en el borde, para que el motor no conozca el enum ni un día
+ * más de lo necesario: el día de la migración se cambia UN lugar.
+ */
+const pagador = (p: 'BUSINESS' | 'OWNER' | 'LOAN'): PayerKind | null =>
+  p === 'BUSINESS' ? null : p === 'OWNER' ? 'OWNER' : 'EXTERNAL_LENDER';
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */
@@ -140,7 +152,7 @@ export class CashService {
         id: g.id,
         date: dia(g.date),
         amount: n(g.amount),
-        paidBy: g.paidBy,
+        payer: pagador(g.paidBy),
         isInvestment: g.isInvestment,
         isFilament: g.materialId != null,
         refundable: g.refundable,
@@ -149,7 +161,7 @@ export class CashService {
         id: c.id,
         date: dia(c.date),
         amount: n(c.amount),
-        paidBy: c.paidBy,
+        payer: pagador(c.paidBy),
         refundable: c.refundable,
       })),
       movements: movimientos.map((m) => ({

@@ -26,6 +26,8 @@ const COMMIT = process.argv.includes('--commit') || process.argv.includes('--wri
 const TX = { timeout: 120_000, maxWait: 30_000 };
 const prisma = new PrismaClient();
 const dia = (d) => d.toISOString().slice(0, 10);
+// Mismo puente que `cash.service.ts`: el motor ya no conoce el enum.
+const pagador = (p) => (p === 'BUSINESS' ? null : p === 'OWNER' ? 'OWNER' : 'EXTERNAL_LENDER');
 const n = (x) => Number(x);
 
 async function backfill(tx, org) {
@@ -204,7 +206,7 @@ async function armarLedger(tx, organizationId) {
     expenses: gastos.map((g) => ({
       date: dia(g.date),
       amount: n(g.amount),
-      paidBy: g.paidBy,
+      payer: pagador(g.paidBy),
       isInvestment: g.isInvestment,
       isFilament: g.materialId != null,
       refundable: g.refundable,
@@ -212,7 +214,7 @@ async function armarLedger(tx, organizationId) {
     loanPayments: cuotas.map((c) => ({
       date: dia(c.date),
       amount: n(c.amount),
-      paidBy: c.paidBy,
+      payer: pagador(c.paidBy),
       refundable: c.refundable,
     })),
     movements: movimientos.map((m) => ({

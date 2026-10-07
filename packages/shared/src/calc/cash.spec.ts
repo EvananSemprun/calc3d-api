@@ -15,8 +15,8 @@ describe('businessCash', () => {
     l.sales = [{ date: '2026-09-01', amount: 100 }];
     l.orderPayments = [{ date: '2026-09-02', amount: 30 }];
     l.expenses = [
-      { date: '2026-09-03', amount: 20, paidBy: 'BUSINESS', isInvestment: false, isFilament: false, refundable: true },
-      { date: '2026-09-03', amount: 25, paidBy: 'BUSINESS', isInvestment: false, isFilament: true, refundable: true },
+      { date: '2026-09-03', amount: 20, payer: null, isInvestment: false, isFilament: false, refundable: true },
+      { date: '2026-09-03', amount: 25, payer: null, isInvestment: false, isFilament: true, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -32,7 +32,7 @@ describe('businessCash', () => {
     const l = vacio();
     l.sales = [{ date: '2026-09-01', amount: 50 }];
     l.expenses = [
-      { date: '2026-09-23', amount: 20, paidBy: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
+      { date: '2026-09-23', amount: 20, payer: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -45,7 +45,7 @@ describe('businessCash', () => {
   it('lo pagado con el préstamo no toca la caja', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-07-27', amount: 917, paidBy: 'LOAN', isInvestment: true, isFilament: false, refundable: true },
+      { date: '2026-07-27', amount: 917, payer: 'EXTERNAL_LENDER', isInvestment: true, isFilament: false, refundable: true },
     ];
 
     expect(businessCash(l).balance).toBe(0);
@@ -54,7 +54,7 @@ describe('businessCash', () => {
   it('un equipo que pagó el propietario no entra en la caja (vive en el financiamiento)', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-01-02', amount: 615, paidBy: 'OWNER', isInvestment: true, isFilament: false, refundable: true },
+      { date: '2026-01-02', amount: 615, payer: 'OWNER', isInvestment: true, isFilament: false, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -67,7 +67,7 @@ describe('businessCash', () => {
   it('un equipo que pagó el negocio SÍ sale de la caja', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-10-01', amount: 300, paidBy: 'BUSINESS', isInvestment: true, isFilament: false, refundable: true },
+      { date: '2026-10-01', amount: 300, payer: null, isInvestment: true, isFilament: false, refundable: true },
     ];
 
     expect(businessCash(l).equipment).toBe(300);
@@ -77,8 +77,8 @@ describe('businessCash', () => {
   it('las cuotas: solo resta la que pagó la caja', () => {
     const l = vacio();
     l.loanPayments = [
-      { date: '2026-08-08', amount: 50, paidBy: 'OWNER', refundable: true },
-      { date: '2026-10-08', amount: 100, paidBy: 'BUSINESS', refundable: true },
+      { date: '2026-08-08', amount: 50, payer: 'OWNER', refundable: true },
+      { date: '2026-10-08', amount: 100, payer: null, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -174,19 +174,19 @@ const completo = (): CashLedger => ({
   sales: [{ id: 'venta-1', date: '2026-09-01', amount: 100 }],
   orderPayments: [{ id: 'abono-1', date: '2026-09-02', amount: 30.55 }],
   expenses: [
-    { id: 'gasto-1', date: '2026-09-03', amount: 20, paidBy: 'BUSINESS', isInvestment: false, isFilament: false, refundable: true },
-    { id: 'gasto-2', date: '2026-09-04', amount: 25.25, paidBy: 'BUSINESS', isInvestment: false, isFilament: true, refundable: true },
-    { id: 'gasto-3', date: '2026-09-05', amount: 300, paidBy: 'BUSINESS', isInvestment: true, isFilament: false, refundable: true },
+    { id: 'gasto-1', date: '2026-09-03', amount: 20, payer: null, isInvestment: false, isFilament: false, refundable: true },
+    { id: 'gasto-2', date: '2026-09-04', amount: 25.25, payer: null, isInvestment: false, isFilament: true, refundable: true },
+    { id: 'gasto-3', date: '2026-09-05', amount: 300, payer: null, isInvestment: true, isFilament: false, refundable: true },
     // Filamento que pagó la contraparte y se le devuelve: gasto Y aporte reembolsable.
-    { id: 'gasto-4', date: '2026-09-06', amount: 40, paidBy: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
+    { id: 'gasto-4', date: '2026-09-06', amount: 40, payer: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
     // Gasto general que puso la contraparte a fondo perdido: gasto Y capital.
-    { id: 'gasto-5', date: '2026-09-07', amount: 15, paidBy: 'OWNER', isInvestment: false, isFilament: false, refundable: false },
+    { id: 'gasto-5', date: '2026-09-07', amount: 15, payer: 'OWNER', isInvestment: false, isFilament: false, refundable: false },
     // Pagado con el préstamo: no toca la caja por ninguna de las nueve líneas.
-    { id: 'gasto-6', date: '2026-09-07', amount: 917, paidBy: 'LOAN', isInvestment: false, isFilament: false, refundable: true },
+    { id: 'gasto-6', date: '2026-09-07', amount: 917, payer: 'EXTERNAL_LENDER', isInvestment: false, isFilament: false, refundable: true },
   ],
   loanPayments: [
-    { id: 'cuota-1', date: '2026-09-08', amount: 50, paidBy: 'BUSINESS', refundable: true },
-    { id: 'cuota-2', date: '2026-09-09', amount: 60, paidBy: 'OWNER', refundable: true },
+    { id: 'cuota-1', date: '2026-09-08', amount: 50, payer: null, refundable: true },
+    { id: 'cuota-2', date: '2026-09-09', amount: 60, payer: 'OWNER', refundable: true },
   ],
   movements: [
     { id: 'mov-1', date: '2026-09-10', amount: 200, kind: 'CONTRIBUTION', refundable: true },
@@ -261,7 +261,7 @@ describe('cashEntries', () => {
     // el saldo cambiaría.
     const l = vacio();
     l.expenses = [
-      { id: 'g', date: '2026-09-06', amount: 40, paidBy: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
+      { id: 'g', date: '2026-09-06', amount: 40, payer: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
     ];
 
     expect(cashEntries(l)).toEqual([
@@ -342,7 +342,7 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
   it('un gasto CORRIENTE pagado con el préstamo tampoco toca la caja', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-07-27', amount: 917, paidBy: 'LOAN', isInvestment: false, isFilament: false, refundable: true },
+      { date: '2026-07-27', amount: 917, payer: 'EXTERNAL_LENDER', isInvestment: false, isFilament: false, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -355,7 +355,7 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
   it('un filamento pagado con el préstamo tampoco toca la caja', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-07-27', amount: 120, paidBy: 'LOAN', isInvestment: false, isFilament: true, refundable: true },
+      { date: '2026-07-27', amount: 120, payer: 'EXTERNAL_LENDER', isInvestment: false, isFilament: true, refundable: true },
     ];
 
     const c = businessCash(l);
@@ -367,7 +367,7 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
   it('un aporte de capital en especie: el gasto de la contraparte NO reembolsable', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-09-07', amount: 15, paidBy: 'OWNER', isInvestment: false, isFilament: false, refundable: false },
+      { date: '2026-09-07', amount: 15, payer: 'OWNER', isInvestment: false, isFilament: false, refundable: false },
     ];
 
     const c = businessCash(l);
@@ -381,7 +381,7 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
   it('un equipo pagado con el préstamo no entra como equipo de la caja', () => {
     const l = vacio();
     l.expenses = [
-      { date: '2026-07-27', amount: 917, paidBy: 'LOAN', isInvestment: true, isFilament: false, refundable: true },
+      { date: '2026-07-27', amount: 917, payer: 'EXTERNAL_LENDER', isInvestment: true, isFilament: false, refundable: true },
     ];
 
     expect(businessCash(l).equipment).toBe(0);
@@ -389,7 +389,7 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
 
   it('una cuota pagada con el préstamo no sale de la caja', () => {
     const l = vacio();
-    l.loanPayments = [{ date: '2026-08-08', amount: 50, paidBy: 'LOAN', refundable: true }];
+    l.loanPayments = [{ date: '2026-08-08', amount: 50, payer: 'EXTERNAL_LENDER', refundable: true }];
 
     expect(businessCash(l).loanPayments).toBe(0);
     expect(businessCash(l).balance).toBe(0);
