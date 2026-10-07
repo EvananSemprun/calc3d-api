@@ -57,6 +57,22 @@ Las definiciones **no se tocan** — están verificadas contra septiembre 2026
 - **encargos** = pedidos entregados en el mes;
 - **clientes nuevos** = los que tuvieron su PRIMERA compra en el mes.
 
+### 2 bis. La base son los 3 meses completos que existen HOY
+
+El pedido dice "los 3 meses completos **anteriores al período elegido**". Tomado
+al pie de la letra eso no funciona acá, porque **el dueño carga las metas con
+meses de anticipación**: al 2026-10-07 ya tiene cargadas noviembre, diciembre y
+enero. Para enero 2027 los tres meses anteriores son oct/nov/dic, y **ninguno
+terminó**: la sugerencia quedaría vacía justo en el caso que más usa.
+
+**La base son los últimos 3 meses completos que existen al momento de sugerir**,
+sin importar qué mes se esté cargando. Hoy serían jul/ago/sep.
+
+⚠️ Y por eso **la pantalla tiene que nombrar los meses usados**, no solo
+cuántos: sugerir enero sobre julio-septiembre es defendible, pero solo si el
+dueño lo ve. Un "basado en 3 meses completos" a secas, cargando enero, se leería
+como si fueran octubre a diciembre.
+
 ### 3. "Sin actividad" y "sin datos" no son lo mismo
 
 El pedido lo exige y en estos datos la diferencia es real: la primera venta es
@@ -111,7 +127,35 @@ Conservador **+0 %** (sostener la base ya es una meta en un mes flojo), Moderado
 recalcularla, y el porcentaje se muestra. Es **prioridad baja**: va al final y
 si hay que recortar algo, se recorta esto.
 
-### 7. Lo que NO entra
+### 6 bis. Un mes que todavía no pasó no fracasó
+
+Noviembre tiene meta 450 y resultado 0 porque **no empezó**. Mostrar "0 % de
+cumplimiento" con la barra vacía al lado de $450 se lee como un fracaso que no
+ocurrió, y el dueño lo va a ver así todos los días hasta diciembre.
+
+- **Mes futuro**: se muestra la meta y **"Aún no empezó"**. Sin porcentaje, sin
+  barra.
+- **Mes en curso**: sí se muestra el avance parcial, rotulado como parcial. Es
+  información real y es la que sirve para corregir a tiempo.
+- **Mes cerrado**: como hoy.
+
+⚠️ "Futuro", "en curso" y "cerrado" se deciden **en hora de Venezuela**, no con
+`new Date()` a pelo (ver 1.4).
+
+### 7. `Goal` NO lleva `source`, y Metas no necesita migración
+
+El pedido pide la etiqueta "Importado". Pero el dueño decidió (2026-10-07) que
+**las 5 metas cargadas quedan como manuales**: las transcribió él del libro, no
+las trajo un script.
+
+Con eso, **ninguna meta estaría nunca en `EXCEL_IMPORT`**: la columna y la
+insignia serían código muerto desde el primer día — una columna con un solo
+valor posible y un badge que no se dibuja nunca. **No se agregan.**
+
+Si algún día un cliente importa metas de verdad, es un `ADD COLUMN` con
+`DEFAULT`, aditivo y de un renglón. Agregarlo hoy no compra nada.
+
+### 8. Lo que NO entra
 
 - **Guardar la sugerencia automáticamente**, ni "aceptar todas". El pedido es
   explícito: solo se guarda con "Guardar".
@@ -134,11 +178,12 @@ packages/shared/
   src/schemas/api.ts                MOD  contrato de la sugerencia
 
 apps/api/
-  prisma/schema.prisma              MOD  Goal.source
-  prisma/migrations/
-    2026…_meta_origen/              NEW  ADD COLUMN aditivo
   src/goals/goals.module.ts         MOD  actuals por rango + endpoint de sugerencia
   src/goals/goals.service.spec.ts   NEW  (hoy la lógica vive en el module)
+```
+
+**Sin migración** (decisión 7): el modelo de datos no cambia.
+```
 ```
 
 ### `calc3d-web`
@@ -238,29 +283,26 @@ apps/web/
 
 ---
 
-## Tarea 3: `Goal.source` y el contrato
+## Tarea 3: el contrato
 
-**Archivos:** `prisma/schema.prisma`, la migración, `packages/shared/src/schemas/api.ts`
+**Archivo:** `packages/shared/src/schemas/api.ts`
 
-- [ ] 3.1 — `source RecordSource @default(MANUAL)` en `Goal`.
+**No hay migración ni cambio de modelo** (decisión 7).
 
-- [ ] 3.2 — Migración y **verificar a mano que es puramente aditiva**: un
-  `ALTER TABLE "Goal" ADD COLUMN "source" "RecordSource" NOT NULL DEFAULT 'MANUAL'`
-  y nada más. Si Prisma propone cualquier `DROP`, `RENAME` o `SET NOT NULL`,
-  **parar y avisar**.
+- [ ] 3.1 — El contrato Zod de la sugerencia: el mes, el nivel de crecimiento
+  opcional, y la forma de la respuesta.
 
-- [ ] 3.3 — Generar la migración **sin tocar ninguna base**, con
-  `prisma migrate diff --from-schema-datamodel <schema de HEAD> --to-schema-datamodel <nuevo> --script`.
+- [ ] 3.2 — El enum de crecimiento se **deriva de `GROWTH_LEVELS`**, no se
+  escribe aparte. Dos listas del mismo conjunto terminan divergiendo; anclarlo
+  con un test: `expect(GrowthSchema.options).toEqual(Object.keys(GROWTH_LEVELS))`.
 
-- [ ] 3.4 — El contrato Zod de la sugerencia, con el nivel de crecimiento
-  derivado de `GROWTH_LEVELS` para que no puedan divergir.
+- [ ] 3.3 — ⚠️ **Una métrica sin datos viaja como `null` con su motivo**, no
+  como 0 ni como campo ausente. El front tiene que poder distinguir "no se pudo
+  sugerir" de "se sugiere cero", y un campo que falta se lee como lo segundo.
 
-- [ ] 3.5 — ⚠️ **Las 5 metas de producción quedan en `MANUAL`.** Vinieron del
-  Excel, pero marcarlas "Importado" es una decisión sobre el origen de los datos
-  del dueño: va en un paso aparte del despliegue, con su dry-run, **no** en la
-  migración.
+- [ ] 3.4 — `pnpm test:shared` verde.
 
-- [ ] 3.6 — `git commit -m "feat(api): origen del registro en las metas"`
+- [ ] 3.5 — `git commit -m "feat(shared): contrato de la sugerencia de metas"`
 
 ---
 
@@ -286,8 +328,10 @@ apps/web/
 
 - [ ] 4.4 — Tests:
   - [ ] **no escribe nada**: contar las metas antes y después de llamarlo;
-  - [ ] usa **solo meses anteriores completos** — el mes elegido y el mes en
-    curso nunca entran en la base;
+  - [ ] usa **solo meses completos** — el mes en curso nunca entra en la base;
+  - [ ] **pedir un mes futuro usa los últimos 3 completos de hoy** (decisión
+    2 bis): sugerir enero 2027 parado en octubre 2026 tiene que dar lo mismo que
+    sugerir cualquier otro mes, y devolver **cuáles** meses usó;
   - [ ] con menos de 3 meses, informa cuántos usó;
   - [ ] una métrica sin datos viene `null` con motivo;
   - [ ] **aislamiento**: la sugerencia de una organización no puede mirar los
@@ -343,8 +387,13 @@ apps/web/
   no escondido al pie: es lo último que el dueño tiene que leer antes de fijar
   el número.
 
-- [ ] 5.8 — Badge discreto **"Importado"** donde `source === 'EXCEL_IMPORT'`.
-  Solo ese valor: `MIGRATION` y `RECONCILIATION` no son importaciones.
+- [ ] 5.8 — **Mes futuro**: la meta y **"Aún no empezó"**, sin porcentaje ni
+  barra. **Mes en curso**: el avance parcial, rotulado como parcial. **Mes
+  cerrado**: como hoy. (Decisión 6 bis.)
+
+  ⚠️ **Sin insignia "Importado" en Metas**: ninguna meta va a estar nunca en
+  `EXCEL_IMPORT` (decisión 7). Un badge que no se dibuja nunca es ruido en el
+  código y una promesa falsa en la pantalla.
 
 - [ ] 5.9 — Selector de crecimiento (Conservador / Moderado / Ambicioso) con su
   porcentaje a la vista. **Último paso**: si hay que recortar, se recorta esto.
@@ -410,8 +459,7 @@ apps/web/
 1. **API primero**, panel después. La respuesta de `/goals` cambia de forma y un
    panel nuevo contra la API vieja se cae al dibujar; React Query además conserva
    la respuesta vieja en caché, así que en producción no se arregla recargando.
-2. La migración de `Goal.source` se aplica sola al arrancar el contenedor
-   (`prisma migrate deploy` en el `Dockerfile`). Es `ADD COLUMN` con `DEFAULT`:
-   segura.
-3. **Marcar las 5 metas como importadas es un paso aparte**, con dry-run, y se
-   decide con el dueño. No va en la migración.
+2. **No hay migración ni script de datos.** El modelo no cambia y no se toca ni
+   una fila: este despliegue es solo código. Es, de lejos, el más barato de
+   revertir de todo lo que llevamos — si algo sale mal, se vuelve al commit
+   anterior y listo.

@@ -95,7 +95,21 @@ Son cosas distintas que hoy comparten la palabra "préstamo":
   (equipos, diseñador, aportes). Son obligaciones derivadas, y es **acá** donde
   caen los pagos por conciliación.
 
-Van en bloques separados y rotulados. Hoy el segundo solo se ve en Caja.
+Van en bloques separados y rotulados.
+
+**Caja NO pierde nada.** El dueño decidió (2026-10-07) que las obligaciones se
+vean en los dos lugares, con enfoques distintos:
+
+- **Caja** sigue con "Quién puso la plata": el **resumen por fuente** — cuánto
+  pusiste, cuánto recuperaste, cuánto falta. Es la lectura de un vistazo.
+- **Préstamos** muestra **cada obligación una por una, con sus pagos**. Eso hoy
+  no se puede ver en ningún lado: el agregado esconde qué gasto concreto sigue
+  sin devolverse.
+
+⚠️ **Los dos salen del MISMO servicio.** Si Préstamos recalcula las
+obligaciones por su cuenta, el día que un filtro cambie las dos pantallas van a
+decir cosas distintas sobre la misma deuda. El reporte de Excel ya reusa
+`CashService` por exactamente este motivo.
 
 ⚠️ **La regla no cambia:** el faltante de una conciliación **solo** puede
 aplicarse a deudas del propietario. Que el préstamo externo aparezca en la misma
