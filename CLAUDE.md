@@ -738,6 +738,39 @@ en el repo web: se sobrescribe al sincronizar.
     arriba de 1 (a diferencia de `breakEvenProgress`): pasarse de la meta es
     información. Import: `prisma/import-metas.mjs`, que **verifica la
     derivación** contra las columnas reales de la hoja y no escribe si difieren.
+  - **Sugerir metas (2026-10-07, shared 0.25.0)** — `GET /goals/suggestion`:
+    - ⚠️ **Es de SOLO LECTURA.** Rellena el formulario y no escribe nada; hay un
+      test que recorre el mock exigiendo que en ese camino no exista ni un
+      método de escritura.
+    - `realesPorMes(org, desde, hasta)` calcula lo real **sin depender de que
+      exista la meta**. Antes el rango salía de los meses que ya la tenían y con
+      cero metas devolvía vacío. Marca además, **por métrica**, si el mes tenía
+      con qué contar: un mes **sin actividad** entra como 0 y uno **sin datos**
+      no entra. Acá los encargos arrancan en septiembre y las ventas en febrero,
+      así que agosto no tiene 0 encargos — no tiene encargos.
+    - ⚠️ **La base son los 3 últimos meses completos que existen HOY**, no los 3
+      anteriores al mes elegido: el dueño carga con meses de anticipación y los
+      previos a enero no terminaron. La respuesta dice **qué** meses usó y la
+      pantalla los nombra.
+    - **"Completo" se decide en hora de Venezuela** (`businessDateKey`). Hay
+      test de borde: a las 02:00 UTC del 1/10 en Caracas son las 22:00 del 30/09.
+    - ⚠️ **La fórmula es mediana → recorte → ponderada 3/2/1, y el recorte NO se
+      aplica a una tendencia.** Una ponderada sola no reduce un mes excepcional
+      —lo amplifica si es el más reciente— pero recortar una serie que viene
+      creciendo sugiere **por debajo del último mes**: medido contra los datos
+      reales (0, 1 y 14 clientes nuevos) proponía **1**. Un mes excepcional se
+      reconoce porque **rompe** la serie, no porque sea el más alto.
+    - Una métrica sin datos devuelve `null` **con motivo**, nunca 0: un 0 sería
+      una recomendación.
+    - `seasonalCheck` tiene **tres** estados. `SIN_HISTORIA` es "no se pudo
+      medir", no "no hay riesgo": el primer mes medible es febrero 2027.
+    - ⚠️ **`GET /goals/actuals` va aparte de `GET /goals?month=`** a propósito:
+      esa devuelve `null` sin meta y **el Dashboard cuenta con eso** para no
+      dibujar su tarjeta. Cambiarla haría aparecer una tarjeta de metas en cero.
+    - **`Goal` NO lleva `source`.** El dueño decidió que sus 5 metas quedan como
+      manuales (las transcribió él), así que ninguna estaría nunca en
+      `EXCEL_IMPORT`: la columna tendría un solo valor posible y el badge no se
+      dibujaría nunca.
   - **Punto de equilibrio en TRES niveles (2026-09-07)** —
     `breakEvenLevels()` en `shared/calc/breakeven.ts`: no perder / además la
     cuota / además la reserva. `Settings.equipmentReserve` guarda la reserva;
