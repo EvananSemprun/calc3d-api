@@ -49,25 +49,62 @@ const finDe = (inicio: Date) => {
   return d;
 };
 
+/**
+ * Los meses `AAAA-MM` de `[desde, hasta)`, en orden. Hace falta recorrerlos
+ * todos y no solo los que tuvieron movimiento: un mes sin actividad es un 0
+ * legítimo y tiene que aparecer en el promedio.
+ */
+const mesesEntre = (desde: Date, hasta: Date) => {
+  const out: string[] = [];
+  const d = new Date(Date.UTC(desde.getUTCFullYear(), desde.getUTCMonth(), 1));
+  while (d < hasta) {
+    out.push(monthKey(d));
+    d.setUTCMonth(d.getUTCMonth() + 1);
+  }
+  return out;
+};
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Lo real de un mes, con la marca de si cada métrica tenía con qué contar.
+ *
+ * ⚠️ `hayDatos: false` NO es "no pasó nada": es que el mes es ANTERIOR al primer
+ * dato de esa métrica, así que no había con qué medirla. La diferencia importa
+ * para sugerir: un mes **sin actividad** entra en el promedio como 0, y uno
+ * **sin datos** no entra. Tratarlos igual hunde la sugerencia inventando un mes
+ * malo que nunca ocurrió — p. ej. los encargos arrancan en 2026-09, así que
+ * agosto no tiene 0 encargos: no tiene encargos.
+ */
+export interface RealesDelMes {
+  sales: number;
+  orders: number;
+  newClients: number;
+  hayDatos: { sales: boolean; orders: boolean; newClients: boolean };
+}
+
+const VACIO: RealesDelMes = {
+  sales: 0,
+  orders: 0,
+  newClients: 0,
+  hayDatos: { sales: false, orders: false, newClients: false },
+};
+
 @Injectable()
 export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Las metas con lo real de cada mes. Trae TODO de una vez y agrupa en memoria:
-   * son decenas de filas, y una consulta por mes serían tres por cada uno.
+   * Lo real de cada mes de `[desde, hasta)`, **sin depender de que exista una
+   * meta**. Antes esto vivía adentro de `list()` y el rango salía de los meses
+   * que ya tenían meta cargada; con eso no se podía ni sugerir (mira meses
+   * anteriores, que normalmente no la tienen) ni mostrar un mes sin meta.
+   *
+   * Trae TODO de una vez y agrupa en memoria: son decenas de filas, y una
+   * consulta por mes serían tres por cada uno.
    */
-  async list(organizationId: string) {
-    const metas = await this.prisma.goal.findMany({
-      where: { organizationId },
-      orderBy: { month: 'asc' },
-    });
-    if (metas.length === 0) return { months: [], summary: goalsSummary([]) };
-
-    const desde = metas[0].month;
-    const hasta = finDe(metas[metas.length - 1].month);
-
-    const [ventas, pedidos, clientes] = await Promise.all([
+  async realesPorMes(organizationId: string, desde: Date, hasta: Date) {
+    const [ventas, pedidos, clientes, primeraVenta, primerPedido] = await Promise.all([
       this.prisma.sale.findMany({
         where: { organizationId, date: { gte: desde, lt: hasta } },
         select: { date: true, amount: true },
@@ -85,11 +122,28 @@ export class GoalsService {
           sales: { select: { date: true } },
         },
       }),
+      // Desde cuándo hay con qué contar cada métrica. Sin filtro de rango a
+      // propósito: la frontera no depende de lo que se esté mirando.
+      this.prisma.sale.findFirst({
+        where: { organizationId },
+        orderBy: { date: 'asc' },
+        select: { date: true },
+      }),
+      this.prisma.order.findFirst({
+        where: { organizationId, deliveryDate: { not: null } },
+        orderBy: { deliveryDate: 'asc' },
+        select: { deliveryDate: true },
+      }),
     ]);
 
-    const porMes = new Map<string, { sales: number; orders: number; newClients: number }>();
+    const porMes = new Map<string, RealesDelMes>();
     const bucket = (mes: string) => {
-      const b = porMes.get(mes) ?? { sales: 0, orders: 0, newClients: 0 };
+      const b = porMes.get(mes) ?? {
+        sales: 0,
+        orders: 0,
+        newClients: 0,
+        hayDatos: { sales: false, orders: false, newClients: false },
+      };
       porMes.set(mes, b);
       return b;
     };
@@ -108,11 +162,57 @@ export class GoalsService {
       ].filter((f): f is Date => !!f);
       if (!fechas.length) continue;
       const primera = new Date(Math.min(...fechas.map((f) => f.getTime())));
-      bucket(monthKey(primera)).newClients += 1;
+      const mes = monthKey(primera);
+      // Solo cuenta si cae DENTRO del rango pedido: la consulta de clientes no
+      // lo filtra porque necesita la historia completa para saber cuál fue la
+      // primera compra.
+      if (mes >= monthKey(desde) && mes < monthKey(hasta)) bucket(mes).newClients += 1;
     }
 
+    // La frontera de "sin datos", por métrica. Un cliente estrena su primera
+    // compra con una venta o con un pedido entregado, así que su frontera es la
+    // más temprana de las dos, igual que la de ventas.
+    const mesDe = (d?: Date | null) => (d ? monthKey(d) : null);
+    const mVenta = mesDe(primeraVenta?.date);
+    const mPedido = mesDe(primerPedido?.deliveryDate);
+    const primeros = [mVenta, mPedido].filter((x): x is string => x != null).sort();
+    const desdeActividad = primeros[0] ?? null;
+
+    const alcanza = (mes: string, frontera: string | null) => frontera != null && mes >= frontera;
+
+    // Todos los meses del rango, aunque no hayan tenido movimiento: un mes sin
+    // actividad es un 0 legítimo y tiene que aparecer.
+    for (const mes of mesesEntre(desde, hasta)) {
+      const b = bucket(mes);
+      b.hayDatos = {
+        sales: alcanza(mes, desdeActividad),
+        orders: alcanza(mes, mPedido),
+        newClients: alcanza(mes, desdeActividad),
+      };
+      b.sales = round2(b.sales);
+    }
+
+    return porMes;
+  }
+
+  /**
+   * Las metas con lo real de cada mes.
+   */
+  async list(organizationId: string) {
+    const metas = await this.prisma.goal.findMany({
+      where: { organizationId },
+      orderBy: { month: 'asc' },
+    });
+    if (metas.length === 0) return { months: [], summary: goalsSummary([]) };
+
+    const porMes = await this.realesPorMes(
+      organizationId,
+      metas[0].month,
+      finDe(metas[metas.length - 1].month),
+    );
+
     const months = metas.map((m) => {
-      const real = porMes.get(monthKey(m.month)) ?? { sales: 0, orders: 0, newClients: 0 };
+      const real = porMes.get(monthKey(m.month)) ?? VACIO;
       const salesTarget = Number(m.salesTarget);
       return {
         id: m.id,
@@ -170,7 +270,6 @@ export class GoalsService {
   }
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 @UseGuards(JwtAuthGuard)
 @Controller('goals')
