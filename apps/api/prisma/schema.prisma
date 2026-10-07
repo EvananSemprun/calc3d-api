@@ -71,6 +71,14 @@ enum OwnerMovementKind {
 
 /// Qué es una contraparte respecto del negocio. Un socio y el dueño se tratan
 /// igual (ponen plata y se les debe); un prestamista externo no participa.
+/// Cada cuánto se propone pagar una cuota. Es el período del OBJETIVO, no una
+/// promesa al acreedor: los pagos reales pueden ser irregulares.
+enum PaymentFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
 enum CounterpartyKind {
   OWNER
   PARTNER
@@ -486,6 +494,16 @@ model Expense {
   /// Quién lo pagó. Alimenta la caja del negocio y lo que se le debe a la
   /// contraparte.
   paidBy PaidBy @default(BUSINESS)
+
+  /// QUIÉN pagó. `null` = la caja del negocio. Reemplaza a `paidBy`, que muere
+  /// en la migración siguiente; conviven solo mientras el backfill traduce.
+  ///
+  /// ⚠️ Esto es lo que arregla el filtro de `obligaciones()`: hoy los gastos se
+  /// filtran por `paidBy === OWNER` sin mirar la contraparte, así que la cuenta
+  /// compartida de un socio derivaría como deudas suyas los gastos del
+  /// propietario.
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String?
 
   /// Si lo pagó la contraparte: ¿se le devuelve, o fue aporte de capital?
   /// Default `true` para no alterar el histórico. Solo se lee con `paidBy = OWNER`.
@@ -992,6 +1010,25 @@ model Loan {
   printer   Printer? @relation(fields: [printerId], references: [id], onDelete: SetNull)
   printerId String?
 
+  /// QUIÉN prestó la plata. Nulable solo mientras dura la migración: el backfill
+  /// lo completa y una migración posterior lo vuelve obligatorio. `name` es el
+  /// concepto de la deuda ("Deuda impresora P2S"), no el acreedor.
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String?
+
+  /// Qué se financió, en palabras del dueño. Aparte de `name`, que es corto.
+  concept String?
+
+  /// El período de la CUOTA OBJETIVO (`monthlyPayment`). El punto de equilibrio
+  /// la normaliza a mensual antes de sumarla: una cuota semanal de $50 no son
+  /// $50 al mes.
+  paymentFrequency PaymentFrequency @default(MONTHLY)
+
+  /// Solo si el dueño la sabe. **No se inventa a partir de la frecuencia**: sin
+  /// calendario pactado, una fecha calculada se leería como un compromiso que
+  /// no existe.
+  nextDueDate DateTime?
+
   payments  LoanPayment[]
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -1021,6 +1058,31 @@ model LoanPayment {
   source     RecordSource @default(MANUAL)
 
   debtApplications DebtApplication[]
+
+  /// QUIÉN aportó la plata. `null` = la caja del negocio. Reemplaza a `paidBy`,
+  /// que muere en la migración siguiente; conviven solo mientras el backfill
+  /// traduce.
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String?
+
+  /// De qué cuenta salió. Opcional: hoy solo se concilia la principal.
+  account   CashAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  accountId String?
+
+  /// Anular NO borra: el pago queda en el historial y el saldo se recalcula.
+  /// Mismo patrón que `CashReconciliation`.
+  voidedAt   DateTime?
+  voidReason String?
+
+  /// La parte que NO amortiza capital. Hoy siempre 0 y sin UI: el préstamo real
+  /// no tiene intereses. Está para que el día que haya uno, el saldo no se
+  /// calcule mal en silencio.
+  interestAmount Decimal @default(0) @db.Decimal(12, 4)
+
+  /// Lo que se pagó de verdad, si no fue en USD. Sin UI: el dueño paga en
+  /// dólares. El saldo siempre se lleva en USD, como todo el motor.
+  currency String?
+  rate     Decimal? @db.Decimal(18, 6)
 
   createdAt DateTime @default(now())
 
@@ -1095,8 +1157,8 @@ model OwnerMovement {
   counterparty   Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
   counterpartyId String
   /// Un CONTRIBUTION con `refundable = false` es un aporte de capital.
-  refundable     Boolean       @default(true)
-  source         RecordSource  @default(MANUAL)
+  refundable     Boolean      @default(true)
+  source         RecordSource @default(MANUAL)
 
   /// ⚠️ LA IDEMPOTENCIA: una conciliación genera UN solo ajuste.
   cashReconciliation   CashReconciliation? @relation(fields: [cashReconciliationId], references: [id], onDelete: Cascade)
@@ -1128,8 +1190,11 @@ model Counterparty {
   active         Boolean          @default(true)
   notes          String?
 
-  movements OwnerMovement[]
-  accounts  CashAccount[]
+  movements    OwnerMovement[]
+  accounts     CashAccount[]
+  loans        Loan[]
+  expenses     Expense[]
+  loanPayments LoanPayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1159,6 +1224,7 @@ model CashAccount {
   isDefault              Boolean         @default(false)
 
   reconciliations CashReconciliation[]
+  loanPayments    LoanPayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
