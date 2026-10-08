@@ -505,15 +505,10 @@ en el repo web: se sobrescribe al sincronizar.
       negocio. Fijado en `common/multi-tenant.audit.spec.ts`.
     - `Settings` gana `reconciliationFrequency`, `reconciliationWeekday` y
       `debtApplicationOrder`. La frecuencia es un RECORDATORIO: no bloquea nada.
-    - ⚠️ **Lo que sigue pendiente (fase 4)**: `Expense.paidBy` y
-      `LoanPayment.paidBy` siguen siendo el enum `BUSINESS/OWNER/LOAN`, asi que
-      **un socio no puede figurar como quien pago un gasto**. Se difirio a
-      proposito: toca los 86 gastos y las 4 cuotas que ya existen y su unico
-      beneficio es multi-socio, que todavia no le hace falta a nadie. Diseno ya
-      decidido: `counterpartyId` nulable donde el `kind` lleva lo que hoy lleva
-      el enum (null = la caja pago, OWNER/PARTNER = genera obligacion,
-      EXTERNAL_LENDER = no genera). Conservar los dos campos se descarto: dos
-      que significan lo mismo terminan divergiendo.
+    - **La fase 4 ya NO está pendiente** (2026-10-08): `Expense` y `LoanPayment`
+      llevan `counterpartyId`, `null` = la caja pagó. El enum `paidBy` convive
+      **solo hasta que el backfill corra en producción**; lo borra la migración
+      2, que a propósito **no está commiteada todavía**. Ver "Préstamos" abajo.
     - Tests: `cash.spec.ts`, `obligations.spec.ts`, `reconcile.spec.ts` (shared),
       `cash/cash.service.spec.ts` (32) y `common/multi-tenant.audit.spec.ts`.
     - ⚠️ **Multicuenta sigue funcionando solo en estructura**: se registran
@@ -676,6 +671,47 @@ en el repo web: se sobrescribe al sincronizar.
       equilibrio en `Settings`). ⚠️ Un script `.mjs` **no puede importar el
       build ESM de shared** (usa imports sin extensión, que el ESM nativo de
       Node no resuelve): se trae el CJS con `createRequire`.
+  - **Préstamos: acreedor, anulación y las dos deudas (2026-10-08, shared
+    0.26.0)** — plan: `docs/superpowers/plans/2026-10-07-prestamos-saas.md`.
+    - ⚠️ **El motor de caja ya NO conoce `PaidBy`.** `CashLedger` lleva
+      `payer: PayerKind | null` (`null` = la caja). El motor necesita el **tipo**
+      y no el id: lo que decide si un gasto genera deuda es si quien pagó es
+      dueño del negocio (se le devuelve) o un prestamista (esa deuda ya vive en
+      el saldo del préstamo). Mientras el enum siga en la base, `cash.service.ts`
+      y `backfill-caja.mjs` traducen en el BORDE con `pagador()`, marcada como
+      puente temporal.
+    - ⚠️ **DOS migraciones, y NO pueden ir en el mismo despliegue.** La 1
+      (`20261009120000`) es puramente aditiva. Entre las dos corre
+      `prisma/backfill-pagadores.mjs`. `migrate deploy` aplica todas las
+      pendientes seguidas al arrancar el contenedor: commitear la 2 junto con la
+      1 borraría `paidBy` antes de que nadie lo tradujera.
+    - El backfill trae **su propio guard**: dentro de la transacción saca la
+      foto de las nueve líneas del saldo y de la deuda leyendo por el ENUM,
+      traduce, la vuelve a sacar leyendo por la CONTRAPARTE, y si algo se movió
+      un centavo revierte y aborta con código 1.
+    - `installmentTarget` reemplaza a `monthlyPayment` en la respuesta: con
+      frecuencias, llamarla "mensual" sería mentir. `monthlyLoanPayments`
+      **normaliza a mensual antes de sumar** — una cuota semanal de $50 son $217.
+    - `payOffEstimate` da **dos lecturas**, al ritmo objetivo y al real. Una sola
+      miente con pagos irregulares, que es el caso. El ritmo real se mide contra
+      el CALENDARIO, no por cantidad de pagos.
+    - **Anular no borra** (`POST /loans/:id/payments/:pid/void`, con motivo). Es
+      POST y no DELETE porque DELETE promete que la fila desaparece. Anular dos
+      veces es 409.
+    - Un pago **no puede amortizar más que el saldo**: `loanBalance` recorta en 0
+      y sin la guarda el exceso quedaba invisible.
+    - Que un pago personal **genere deuda se pregunta** (`generatesDebt`). El
+      default de la base era `true` y toda cuota del propietario generaba
+      obligación sin que nadie lo decidiera. Si pagó la caja no genera nada, por
+      más que el campo venga en `true`.
+    - `GET /loans/overview` devuelve **las dos deudas** y pide las obligaciones
+      al MISMO `CashService` que usa Caja. Si las recalculara, el día que un
+      filtro cambie las dos pantallas dirían cosas distintas sobre la misma
+      deuda.
+    - **Verificado contra un dump de producción el 2026-10-08**: migración
+      aplicada, backfill corrido, y las 4 cifras de Caja, las 9 líneas del saldo,
+      el saldo del préstamo y las 19 obligaciones **idénticas** antes y después.
+      Lo único que cambia es que el acreedor se completa.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
     con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
