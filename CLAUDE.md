@@ -712,6 +712,13 @@ en el repo web: se sobrescribe al sincronizar.
       aplicada, backfill corrido, y las 4 cifras de Caja, las 9 líneas del saldo,
       el saldo del préstamo y las 19 obligaciones **idénticas** antes y después.
       Lo único que cambia es que el acreedor se completa.
+    - ⚠️ **El prestamista nace con el nombre EQUIVOCADO y hay que renombrarlo a
+      mano.** `backfill-caja.mjs` lo creó con `loan.name` ("Deuda impresora
+      P2S") porque no tenía de dónde sacar el nombre real: eso es el concepto de
+      la deuda, no quién prestó la plata. El acreedor real es **Señor Edwin**
+      (dicho por el dueño el 2026-10-08). Es un `UPDATE` de una fila y **no hace
+      falta tocar la base**: se edita desde Configuración → Caja →
+      Contrapartes, que ya está en producción desde que salió Caja.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
     con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
