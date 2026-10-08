@@ -638,6 +638,21 @@ en el repo web: se sobrescribe al sincronizar.
     el campo tal cual llegaba (mass-assignment: podía pisar `rollGrams`,
     `lifetimeHours`, `unitsPerPackage` o incluso `status`/`organizationId` sin
     las reglas de su schema). Regresión: `expenses.service.spec.ts`.
+    ⚠️ **Quién pagó un gasto son DOS campos conviviendo** (2026-10-08, shared
+    0.26.0): `counterpartyId` (lo nuevo) y `paidBy` (el enum, que Caja todavía
+    lee). `quienPago()` los resuelve en UN lugar y devuelve **siempre el par
+    completo**, así que no pueden contradecirse: un gasto desparejo se vería de
+    una forma en la pantalla y se contaría de otra en Caja. No son simétricos:
+    con `counterpartyId` el tipo SALE de la contraparte y manda; con `paidBy`
+    solo —el panel viejo, vivo entre el deploy de la API y el del panel— se
+    completa con la misma regla que `backfill-pagadores.mjs` (la propietaria por
+    defecto, el **único** prestamista; con dos no adivina y deja `null`).
+    `counterpartyId` viaja en el body: se filtra por organización o el id de
+    otro negocio ataría el gasto —y su deuda— a alguien de afuera (**404**).
+    Regresión: 12 casos en `expenses.service.spec.ts`, con el mock de
+    contrapartes filtrando por TODAS las claves del `where` y aplicando el
+    `orderBy` de verdad. Las dos mutaciones (sacar el filtro por organización,
+    sacar el `orderBy`) **tumban un test cada una**. Muere con la migración 2.
   - **Combobox creatable + listas administradas** (`catalog-options/`): la marca, el
     tipo y el color del **filamento** viven en una **lista administrada aparte**:
     tabla `CatalogOption` (por org, `kind` = MATERIAL_BRAND/MATERIAL_TYPE/

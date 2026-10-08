@@ -481,8 +481,18 @@ export const ExpenseCreateSchema = z.object({
   // código con los que se registró (el `amount` SIEMPRE queda en USD base).
   rate: z.number().positive().optional().nullable(),
   currencyCode: z.string().length(3).optional().nullable(),
-  /** Quién lo pagó. Alimenta la caja y lo que el negocio le debe a la contraparte. */
+  /**
+   * Quién lo pagó. Alimenta la caja y lo que el negocio le debe a la contraparte.
+   *
+   * ⚠️ **Lo reemplaza `counterpartyId` y muere con la migración 2.** Mientras
+   * convivan, el que manda es `counterpartyId`: si viene, el servidor DERIVA
+   * `paidBy` del tipo de la contraparte. Así un cliente viejo (que solo manda
+   * `paidBy`) sigue andando y uno nuevo no puede dejar los dos campos diciendo
+   * cosas distintas sobre el mismo gasto.
+   */
   paidBy: PaidBySchema.default('BUSINESS'),
+  /** QUIÉN lo pagó. `null` = la caja del negocio. */
+  counterpartyId: z.string().min(1).optional().nullable(),
 });
 export type ExpenseCreateDto = z.infer<typeof ExpenseCreateSchema>;
 
@@ -505,6 +515,7 @@ export const ExpenseWithDefinitionSchema = z.object({
     quantity: z.number().int().positive().nullable().optional(),
     providerId: z.string().nullable().optional(),
     paidBy: PaidBySchema.default('BUSINESS'),
+    counterpartyId: z.string().min(1).optional().nullable(),
   }),
   link: z.object({
     kind: ExpenseLinkKindSchema,

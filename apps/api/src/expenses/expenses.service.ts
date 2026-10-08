@@ -7,6 +7,7 @@ import {
   type ExpenseCreateDto,
   type ExpenseUpdateDto,
   type ExpenseWithDefinitionDto,
+  type PaidByDto,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -37,6 +38,18 @@ interface CatalogDelegate {
 /** El único campo de referencia que puede escribir un gasto sobre cada tipo de ficha: su precio. */
 const PRICE_FIELD = { material: 'rollPrice', printer: 'price', component: 'packagePrice' } as const;
 
+/**
+ * El tipo de contraparte traducido al enum viejo. Es el INVERSO de `pagador()`
+ * en `cash.service.ts`, y existe por el mismo motivo: mientras `paidBy` y
+ * `counterpartyId` conviven, Caja sigue leyendo el enum. Si el gasto guardara
+ * solo la contraparte, el dinero que puso el dueño no aparecería en la caja
+ * hasta la migración 2.
+ *
+ * ⚠️ Muere con la migración 2, junto con `paidBy`.
+ */
+const enumDe = (kind: 'OWNER' | 'PARTNER' | 'EXTERNAL_LENDER'): PaidByDto =>
+  kind === 'EXTERNAL_LENDER' ? 'LOAN' : 'OWNER';
+
 @Injectable()
 export class ExpensesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -46,7 +59,57 @@ export class ExpensesService {
     printer: { select: { id: true, name: true } },
     component: { select: { id: true, name: true } },
     provider: { select: { id: true, name: true } },
+    counterparty: { select: { id: true, name: true, kind: true } },
   };
+
+  /**
+   * QUIÉN pagó, resuelto en UN solo lugar y devuelto SIEMPRE como el par
+   * completo. Que `paidBy` y `counterpartyId` puedan decir cosas distintas
+   * sobre el mismo gasto es el único riesgo real de que convivan: Caja lee el
+   * enum y la pantalla lee la contraparte, así que un gasto desparejo se vería
+   * de una forma y se contaría de otra.
+   *
+   * Las dos direcciones no son simétricas y no pueden serlo:
+   * - Con `counterpartyId` el tipo sale de la contraparte: es un dato, no una
+   *   suposición. Por eso MANDA cuando vienen los dos.
+   * - Con `paidBy` solo —el panel viejo, que sigue vivo entre el deploy de la
+   *   API y el del panel— hay que elegir una contraparte. Se usa la misma regla
+   *   que `backfill-pagadores.mjs`: la propietaria por defecto y el único
+   *   prestamista. Si no hay a quién apuntar queda en `null` y manda el enum,
+   *   que es lo que Caja lee hoy.
+   *
+   * ⚠️ Muere con la migración 2: ahí `paidBy` desaparece y queda la primera rama.
+   */
+  private async quienPago(
+    organizationId: string,
+    dto: { counterpartyId?: string | null; paidBy?: PaidByDto },
+  ): Promise<{ counterpartyId: string | null; paidBy: PaidByDto } | undefined> {
+    if (dto.counterpartyId !== undefined) {
+      if (!dto.counterpartyId) return { counterpartyId: null, paidBy: 'BUSINESS' };
+      // La contraparte viaja en el body: sin este filtro por organización, el id
+      // de otro negocio ataría el gasto —y la deuda que genera— a alguien de afuera.
+      const cp = await this.prisma.counterparty.findFirst({
+        where: { id: dto.counterpartyId, organizationId },
+      });
+      if (!cp) throw new NotFoundException('No existe esa contraparte');
+      return { counterpartyId: cp.id, paidBy: enumDe(cp.kind) };
+    }
+
+    if (!dto.paidBy) return undefined;
+    if (dto.paidBy === 'BUSINESS') return { counterpartyId: null, paidBy: 'BUSINESS' };
+
+    const candidatas = await this.prisma.counterparty.findMany({
+      where: {
+        organizationId,
+        kind: dto.paidBy === 'LOAN' ? 'EXTERNAL_LENDER' : { in: ['OWNER', 'PARTNER'] },
+      },
+      orderBy: [{ isDefault: 'desc' }, { active: 'desc' }, { createdAt: 'asc' }],
+    });
+    // Con dos prestamistas, cuál de los dos puso la plata no se adivina: queda
+    // en `null` y lo dice el enum, igual que antes de esta pantalla.
+    const elegida = dto.paidBy === 'LOAN' && candidatas.length !== 1 ? null : candidatas[0];
+    return { counterpartyId: elegida?.id ?? null, paidBy: dto.paidBy };
+  }
 
   list(organizationId: string, from?: string, to?: string) {
     return this.prisma.expense.findMany({
@@ -57,6 +120,7 @@ export class ExpensesService {
   }
 
   async create(organizationId: string, dto: ExpenseCreateDto) {
+    const quien = await this.quienPago(organizationId, dto);
     const gasto = await this.prisma.expense.create({
       data: {
         organizationId,
@@ -74,7 +138,7 @@ export class ExpensesService {
         campaignId: dto.campaignId || null,
         rate: dto.rate ?? null,
         currencyCode: dto.currencyCode ?? null,
-        paidBy: dto.paidBy,
+        ...(quien ?? { paidBy: dto.paidBy }),
       },
       include: this.linkInclude,
     });
@@ -121,6 +185,9 @@ export class ExpensesService {
       component: ComponentSchema,
     } as const;
     const linkField = `${link.kind}Id` as 'materialId' | 'printerId' | 'componentId';
+    // Fuera de la transacción a propósito: solo LEE, y resolver la contraparte
+    // adentro alargaría la transacción sin ganar nada.
+    const quien = await this.quienPago(organizationId, expense);
 
     return this.prisma.$transaction(async (tx) => {
       const model = (tx as unknown as Record<string, CatalogDelegate>)[link.kind];
@@ -171,7 +238,7 @@ export class ExpensesService {
           isInvestment: expense.isInvestment,
           quantity: expense.quantity ?? null,
           providerId: expense.providerId || null,
-          paidBy: expense.paidBy,
+          ...(quien ?? { paidBy: expense.paidBy }),
           [linkField]: linkId,
         },
         include: this.linkInclude,
@@ -181,6 +248,7 @@ export class ExpensesService {
 
   async update(organizationId: string, id: string, dto: ExpenseUpdateDto) {
     await this.ensureOwned(organizationId, id);
+    const quien = await this.quienPago(organizationId, dto);
     return this.prisma.expense.update({
       where: { id },
       data: {
@@ -198,7 +266,9 @@ export class ExpensesService {
         ...(dto.campaignId !== undefined && { campaignId: dto.campaignId || null }),
         ...(dto.rate !== undefined && { rate: dto.rate ?? null }),
         ...(dto.currencyCode !== undefined && { currencyCode: dto.currencyCode ?? null }),
-        ...(dto.paidBy && { paidBy: dto.paidBy }),
+        // Los dos campos se escriben JUNTOS o no se escribe ninguno: tocar uno
+        // solo es lo que los dejaría contradiciéndose.
+        ...quien,
       },
       include: this.linkInclude,
     });
