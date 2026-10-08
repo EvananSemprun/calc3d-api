@@ -6,6 +6,7 @@ import { CashService } from '../cash/cash.service';
 import { CounterpartiesService } from '../cash/counterparties.service';
 import { CashAccountsService } from '../cash/cash-accounts.service';
 import { GoalsService } from '../goals/goals.module';
+import { LoansService } from '../loans/loans.module';
 
 /**
  * Auditoría multi-tenant: cada lectura por id DEBE filtrar también por
@@ -410,5 +411,56 @@ describe('Aislamiento multi-tenant — Metas', () => {
     expect(p.sale.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
     );
+  });
+});
+
+describe('Aislamiento multi-tenant — Préstamos', () => {
+  /**
+   * El acreedor de un préstamo y quien aporta un pago son contrapartes: si no
+   * se validan contra la organización, una podría atarle su deuda a la
+   * contraparte de otro negocio.
+   */
+  const baseFalsa = (contrapartes: { id: string; organizationId: string }[]) => ({
+    loan: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(({ data }: never) => Promise.resolve({ ...(data as object), id: 'l1', payments: [] })),
+    },
+    loanPayment: { findFirst: jest.fn().mockResolvedValue(null) },
+    counterparty: {
+      findFirst: jest.fn(({ where }: never) =>
+        Promise.resolve(
+          contrapartes.find((c) =>
+            Object.entries(where as Record<string, unknown>).every(
+              ([k, v]) => (c as Record<string, unknown>)[k] === v,
+            ),
+          ) ?? null,
+        ),
+      ),
+    },
+  });
+  const CPS = [{ id: 'cp-ajena', organizationId: OTHER }];
+  const cash = { summary: jest.fn() };
+  const nuevo = { name: 'X', principal: 100, monthlyPayment: 0, counterpartyId: 'cp-ajena' } as never;
+
+  it('LoansService.create no acepta un acreedor de otra organización', async () => {
+    const p = baseFalsa(CPS);
+
+    await expect(new LoansService(p as never, cash as never).create(ORG, nuevo)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(p.counterparty.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+    );
+  });
+
+  it('y esa contraparte SÍ sirve para su propio negocio', async () => {
+    // Sin este hermano, el de arriba pasaría aunque el mock devolviera null
+    // siempre — o sea, con y sin el scope.
+    const p = baseFalsa(CPS);
+
+    const l = await new LoansService(p as never, cash as never).create(OTHER, nuevo);
+
+    expect(l.id).toBe('l1');
   });
 });

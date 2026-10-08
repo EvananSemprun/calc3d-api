@@ -519,11 +519,28 @@ export type ExpenseWithDefinitionDto = z.infer<typeof ExpenseWithDefinitionSchem
 
 // ---------- Deuda (préstamos) ----------
 
+export const PaymentFrequencySchema = z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY']);
+
 export const LoanCreateSchema = z.object({
   name: z.string().min(1, 'Ponele un nombre al préstamo'),
   principal: z.number().positive('El capital tiene que ser mayor que cero'),
+  /**
+   * La cuota OBJETIVO, en la frecuencia de abajo. Es lo que el dueño se propone
+   * pagar y lo que el punto de equilibrio le va a exigir cubrir; no es una
+   * promesa al acreedor ni un promedio observado.
+   */
   monthlyPayment: z.number().min(0).default(0),
+  paymentFrequency: PaymentFrequencySchema.default('MONTHLY'),
+  /** QUIÉN prestó la plata. `name` es el concepto de la deuda, no el acreedor. */
+  counterpartyId: z.string().min(1).optional().nullable(),
+  /** Qué se financió, en palabras del dueño. */
+  concept: z.string().optional().nullable(),
   startDate: z.string().optional().nullable(),
+  /**
+   * Solo si el dueño la sabe. **No se calcula a partir de la frecuencia**: sin
+   * calendario pactado, una fecha inventada se lee como un compromiso.
+   */
+  nextDueDate: z.string().optional().nullable(),
   /** Fecha en que se terminó de pagar; null = abierto. */
   closedAt: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -542,8 +559,27 @@ export const LoanPaymentCreateSchema = z.object({
   reference: z.string().optional().nullable(),
   /** Una cuota la paga la caja o el propietario; "con el préstamo" no tiene sentido acá. */
   paidBy: z.enum(['BUSINESS', 'OWNER']).default('BUSINESS'),
+  /** QUIÉN aportó la plata. `null` = la caja del negocio. */
+  counterpartyId: z.string().min(1).optional().nullable(),
+  /** De qué cuenta salió, si se sabe. */
+  accountId: z.string().min(1).optional().nullable(),
+  /**
+   * ⚠️ Si lo pagó una persona de su bolsillo, **¿el negocio se lo debe?**
+   *
+   * No se asume. Hasta hoy el default de la base era `true` y todo pago del
+   * propietario generaba obligación sin que nadie lo decidiera; el pedido es
+   * explícito en que esto se indica. Solo significa algo cuando hay
+   * `counterpartyId`: si pagó la caja, no hay a quién deberle.
+   */
+  generatesDebt: z.boolean().default(true),
 });
 export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
+
+/** Anular NO borra: el pago queda en el historial y el saldo se recalcula. */
+export const LoanPaymentVoidSchema = z.object({
+  reason: z.string().trim().min(1, 'Decí por qué se anula').max(200),
+});
+export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 
 // ---------- Caja ----------
 

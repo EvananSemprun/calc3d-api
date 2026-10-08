@@ -26,6 +26,13 @@ import { LoansModule, LoansService } from '../loans/loans.module';
 import { PrintersModule, PrintersService } from '../printers/printers.module';
 import { CashModule, CashService } from '../cash/cash.module';
 
+/** Cómo se lee cada frecuencia al lado de la cuota objetivo. */
+const CADA: Record<'WEEKLY' | 'BIWEEKLY' | 'MONTHLY', string> = {
+  WEEKLY: 'por semana',
+  BIWEEKLY: 'cada quincena',
+  MONTHLY: 'por mes',
+};
+
 /**
  * REPORTE EN EXCEL — el libro que reemplaza a `bananolab.xlsx`.
  *
@@ -135,7 +142,16 @@ export class ReportsService {
 
     bloque(resumen, 'Punto de equilibrio (mensual)');
     const fijos = fixedCostsTotal((settings?.fixedCosts as unknown as FixedCost[]) ?? []);
-    const cuota = monthlyLoanPayments(prestamos);
+    // La cuota de cada préstamo viene en SU frecuencia; `monthlyLoanPayments`
+    // la normaliza a mensual antes de sumar, que es lo que el punto de
+    // equilibrio necesita.
+    const cuota = monthlyLoanPayments(
+      prestamos.map((l) => ({
+        monthlyPayment: l.installmentTarget,
+        paymentFrequency: l.paymentFrequency,
+        closedAt: l.closedAt,
+      })),
+    );
     const niveles = breakEvenLevels({
       fixedMonthly: fijos,
       marginPct: settings?.breakEvenMarginPct ?? 0,
@@ -376,7 +392,12 @@ export class ReportsService {
       { header: 'Pagado por', width: 14 },
     ]);
     for (const l of prestamos) {
-      const cab = hDeuda.addRow([l.name, '', l.principal, `Cuota ${moneda(l.monthlyPayment)}/mes`]);
+      const cab = hDeuda.addRow([
+        l.name,
+        '',
+        l.principal,
+        `Cuota objetivo ${moneda(l.installmentTarget)} ${CADA[l.paymentFrequency]}`,
+      ]);
       cab.font = { bold: true };
       for (const p of l.payments) {
         hDeuda.addRow([

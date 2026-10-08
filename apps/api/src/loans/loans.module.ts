@@ -1,5 +1,7 @@
 import {
+  BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -14,12 +16,15 @@ import {
 import {
   LoanCreateSchema,
   LoanPaymentCreateSchema,
+  LoanPaymentVoidSchema,
   LoanUpdateSchema,
   loanBalance,
   loanPaid,
   loanProgress,
-  monthsToPayOff,
+  payOffEstimate,
   type LoanCreateDto,
+  type LoanPaymentVoidDto,
+  type PaymentFrequency,
   type LoanPaymentCreateDto,
   type LoanUpdateDto,
 } from '@calc3d/shared';
@@ -27,6 +32,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { CashModule } from '../cash/cash.module';
+import { CashService } from '../cash/cash.service';
 
 /**
  * DEUDA — los préstamos con los que se compró equipo, y sus pagos.
@@ -41,6 +48,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const incluir = {
   payments: { orderBy: { date: 'asc' } },
   printer: { select: { id: true, name: true } },
+  counterparty: { select: { id: true, name: true, kind: true } },
 } as const;
 
 type LoanConPagos = {
@@ -48,22 +56,32 @@ type LoanConPagos = {
   name: string;
   principal: unknown;
   monthlyPayment: unknown;
+  paymentFrequency: PaymentFrequency;
+  concept: string | null;
+  nextDueDate: Date | null;
   startDate: Date | null;
   closedAt: Date | null;
   notes: string | null;
   printerId: string | null;
   printer: { id: string; name: string } | null;
+  counterparty: { id: string; name: string; kind: string } | null;
   payments: {
     id: string;
     date: Date;
     amount: unknown;
     reference: string | null;
     paidBy: 'BUSINESS' | 'OWNER' | 'LOAN';
+    counterpartyId: string | null;
+    accountId: string | null;
+    refundable: boolean;
+    source: string;
+    voidedAt: Date | null;
+    voidReason: string | null;
   }[];
 };
 
 /** Arma la respuesta campo por campo: nunca se devuelve la fila cruda. */
-function serialize(l: LoanConPagos) {
+function serialize(l: LoanConPagos, now = new Date()) {
   const principal = Number(l.principal);
   const monthlyPayment = Number(l.monthlyPayment);
   const payments = l.payments.map((p) => ({
@@ -72,24 +90,54 @@ function serialize(l: LoanConPagos) {
     amount: Number(p.amount),
     reference: p.reference,
     paidBy: p.paidBy,
+    counterpartyId: p.counterpartyId,
+    accountId: p.accountId,
+    /** Si el que lo pagó de su bolsillo queda con una deuda a favor. */
+    generatesDebt: p.refundable,
+    source: p.source,
+    voidedAt: p.voidedAt?.toISOString() ?? null,
+    voidReason: p.voidReason,
   }));
-  const balance = loanBalance(principal, payments);
+
+  /**
+   * ⚠️ Un pago ANULADO no baja el saldo, pero **no se borra de la lista**: el
+   * historial tiene que mostrar que existió y que se anuló. Por eso el saldo se
+   * calcula sobre los vigentes y la pantalla recibe los dos.
+   */
+  const vigentes = payments.filter((p) => p.voidedAt == null);
+  const balance = loanBalance(principal, vigentes);
+  const frequency = l.paymentFrequency;
 
   return {
     id: l.id,
     name: l.name,
+    concept: l.concept,
     principal,
-    monthlyPayment,
+    /** La cuota OBJETIVO, en su frecuencia. No es un promedio ni un compromiso. */
+    installmentTarget: monthlyPayment,
+    paymentFrequency: frequency,
+    counterparty: l.counterparty,
+    nextDueDate: l.nextDueDate?.toISOString() ?? null,
     startDate: l.startDate?.toISOString() ?? null,
     closedAt: l.closedAt?.toISOString() ?? null,
     notes: l.notes,
     printer: l.printer,
     payments,
     // Derivados: la única fuente de estos números.
-    paid: loanPaid(payments),
+    paid: loanPaid(vigentes),
     balance,
-    progress: loanProgress(principal, payments),
-    monthsLeft: monthsToPayOff(balance, monthlyPayment),
+    progress: loanProgress(principal, vigentes),
+    /** Activo o Pagado, derivado del saldo. No hay "Cancelado". */
+    status: balance <= 0 || l.closedAt ? ('PAGADO' as const) : ('ACTIVO' as const),
+    /** Las DOS lecturas: al ritmo objetivo y al ritmo real. */
+    estimate: payOffEstimate({
+      balance,
+      installment: monthlyPayment,
+      frequency,
+      payments: vigentes,
+      startDate: l.startDate,
+      now,
+    }),
   };
 }
 
@@ -97,12 +145,45 @@ const fecha = (v?: string | null) => (v ? new Date(v) : null);
 
 @Injectable()
 export class LoansService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cash: CashService,
+  ) {}
 
   list(organizationId: string) {
     return this.prisma.loan
       .findMany({ where: { organizationId }, include: incluir, orderBy: { createdAt: 'asc' } })
       .then((ls) => ls.map((l) => serialize(l as LoanConPagos)));
+  }
+
+  /**
+   * LAS DOS DEUDAS de la pantalla.
+   *
+   * Son cosas distintas que comparten la palabra "préstamo": lo que le debés al
+   * **prestamista** (capital menos pagos) y lo que el negocio le debe al
+   * **propietario** por lo que puso (equipos, diseñador, aportes). Los pagos
+   * por conciliación caen en la segunda, que es donde de verdad se aplican.
+   *
+   * ⚠️ Las obligaciones se piden al **mismo servicio que usa Caja**. Si acá se
+   * recalcularan, el día que un filtro cambie las dos pantallas van a decir
+   * cosas distintas sobre la misma deuda — es el motivo por el que el reporte
+   * de Excel también reusa `CashService`.
+   */
+  async overview(organizationId: string) {
+    const [loans, caja] = await Promise.all([
+      this.list(organizationId),
+      this.cash.summary(organizationId),
+    ]);
+    return {
+      loans,
+      /** Lo que el negocio le debe a la contraparte, obligación por obligación. */
+      owner: {
+        counterparty: caja.counterparty,
+        obligations: caja.obligations,
+        total: caja.financing.owedToOwner,
+        applicationOrder: caja.applicationOrder,
+      },
+    };
   }
 
   async get(organizationId: string, id: string) {
@@ -121,6 +202,10 @@ export class LoansService {
         name: dto.name,
         principal: dto.principal,
         monthlyPayment: dto.monthlyPayment ?? 0,
+        paymentFrequency: dto.paymentFrequency ?? 'MONTHLY',
+        counterpartyId: await this.acreedor(organizationId, dto.counterpartyId),
+        concept: dto.concept ?? null,
+        nextDueDate: fecha(dto.nextDueDate),
         startDate: fecha(dto.startDate),
         closedAt: fecha(dto.closedAt),
         notes: dto.notes ?? null,
@@ -139,6 +224,12 @@ export class LoansService {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.principal !== undefined && { principal: dto.principal }),
         ...(dto.monthlyPayment !== undefined && { monthlyPayment: dto.monthlyPayment }),
+        ...(dto.paymentFrequency !== undefined && { paymentFrequency: dto.paymentFrequency }),
+        ...(dto.counterpartyId !== undefined && {
+          counterpartyId: await this.acreedor(organizationId, dto.counterpartyId),
+        }),
+        ...(dto.concept !== undefined && { concept: dto.concept ?? null }),
+        ...(dto.nextDueDate !== undefined && { nextDueDate: fecha(dto.nextDueDate) }),
         ...(dto.startDate !== undefined && { startDate: fecha(dto.startDate) }),
         ...(dto.closedAt !== undefined && { closedAt: fecha(dto.closedAt) }),
         ...(dto.notes !== undefined && { notes: dto.notes ?? null }),
@@ -156,7 +247,18 @@ export class LoansService {
   }
 
   async addPayment(organizationId: string, id: string, dto: LoanPaymentCreateDto) {
-    await this.get(organizationId, id);
+    const loan = await this.get(organizationId, id);
+
+    // ⚠️ No se puede amortizar mas que el saldo: el capital devuelto de mas no
+    // es un saldo a favor, es un error de carga. `loanBalance` lo recorta en 0
+    // y el exceso quedaria invisible.
+    if (dto.amount > loan.balance + 0.005) {
+      throw new BadRequestException(
+        `Ese pago ($${dto.amount}) es mayor que el saldo pendiente ($${loan.balance}).`,
+      );
+    }
+
+    const counterpartyId = await this.pagador(organizationId, dto);
     await this.prisma.loanPayment.create({
       data: {
         organizationId,
@@ -165,18 +267,53 @@ export class LoansService {
         amount: dto.amount,
         reference: dto.reference ?? null,
         paidBy: dto.paidBy,
+        counterpartyId,
+        accountId: dto.accountId ?? null,
+        // Solo significa algo si lo puso alguien: si pago la caja, no hay a
+        // quien deberle.
+        refundable: counterpartyId != null && dto.generatesDebt,
       },
     });
     return this.get(organizationId, id);
   }
 
-  async removePayment(organizationId: string, id: string, paymentId: string) {
+  /**
+   * Anular NO borra: el pago queda en el historial con su motivo y el saldo se
+   * recalcula sobre los vigentes. Mismo patron que `CashReconciliation`.
+   */
+  async voidPayment(organizationId: string, id: string, paymentId: string, dto: LoanPaymentVoidDto) {
     const pago = await this.prisma.loanPayment.findFirst({
       where: { id: paymentId, loanId: id, organizationId },
     });
     if (!pago) throw new NotFoundException('No existe ese pago');
-    await this.prisma.loanPayment.delete({ where: { id: paymentId } });
+    // Anular dos veces no puede mover el saldo dos veces.
+    if (pago.voidedAt) throw new ConflictException('Ese pago ya está anulado');
+
+    await this.prisma.loanPayment.update({
+      where: { id: paymentId },
+      data: { voidedAt: new Date(), voidReason: dto.reason },
+    });
     return this.get(organizationId, id);
+  }
+
+  /** La contraparte tiene que ser de ESTA organizacion. Es el IDOR obvio. */
+  private async acreedor(organizationId: string, counterpartyId?: string | null) {
+    if (!counterpartyId) return null;
+    const cp = await this.prisma.counterparty.findFirst({
+      where: { id: counterpartyId, organizationId },
+      select: { id: true },
+    });
+    if (!cp) throw new NotFoundException('No existe esa contraparte');
+    return cp.id;
+  }
+
+  /**
+   * Quien aporto la plata del pago. `BUSINESS` es la caja y no lleva
+   * contraparte; cualquier otra cosa se valida contra la organizacion.
+   */
+  private async pagador(organizationId: string, dto: LoanPaymentCreateDto) {
+    if (dto.paidBy === 'BUSINESS' && !dto.counterpartyId) return null;
+    return this.acreedor(organizationId, dto.counterpartyId);
   }
 }
 
@@ -184,6 +321,15 @@ export class LoansService {
 @Controller('loans')
 export class LoansController {
   constructor(private service: LoansService) {}
+
+  /**
+   * Las dos deudas. Va ANTES de `@Get(':id')`: con una ruta literal después,
+   * Nest la tomaría como un id.
+   */
+  @Get('overview')
+  overview(@CurrentUser() user: AuthUser) {
+    return this.service.overview(user.organizationId);
+  }
 
   @Get()
   list(@CurrentUser() user: AuthUser) {
@@ -226,17 +372,25 @@ export class LoansController {
     return this.service.addPayment(user.organizationId, id, dto);
   }
 
-  @Delete(':id/payments/:paymentId')
-  removePayment(
+  /**
+   * Anular, no borrar. El pago queda en el historial con su motivo.
+   *
+   * ⚠️ Es `POST` y no `DELETE` a proposito: `DELETE` promete que la fila
+   * desaparece, y acá no desaparece.
+   */
+  @Post(':id/payments/:paymentId/void')
+  voidPayment(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('paymentId') paymentId: string,
+    @Body(new ZodValidationPipe(LoanPaymentVoidSchema)) dto: LoanPaymentVoidDto,
   ) {
-    return this.service.removePayment(user.organizationId, id, paymentId);
+    return this.service.voidPayment(user.organizationId, id, paymentId, dto);
   }
 }
 
 @Module({
+  imports: [CashModule],
   controllers: [LoansController],
   providers: [LoansService],
   exports: [LoansService],
