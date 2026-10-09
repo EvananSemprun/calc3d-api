@@ -795,3 +795,56 @@ export const PrinterReadingUpsertSchema = z.object({
   note: z.string().optional().nullable(),
 });
 export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>;
+
+// ----- Facturas de compra (filamento e impresoras) -----
+
+/**
+ * Una línea: qué se pidió, cuánto y a cuánto.
+ *
+ * ⚠️ **`materialId`, `printerId` y `nombreNuevo` son EXCLUYENTES.** Dos a la
+ * vez haría una línea que es dos cosas; ninguna, una línea que no es nada y
+ * que al recibirla no sabría qué meter al inventario. El `refine` lo frena acá
+ * y no en el servicio, para que el 400 llegue antes de tocar la base.
+ */
+export const PurchaseInvoiceLineSchema = z
+  .object({
+    materialId: z.string().min(1).optional().nullable(),
+    printerId: z.string().min(1).optional().nullable(),
+    /** Para una ficha que todavía no existe: nace al recibir la compra. */
+    nombreNuevo: z.string().trim().min(1).optional().nullable(),
+    quantity: z.number().int().positive('Pedí al menos uno'),
+    unitPrice: z.number().min(0, 'El precio no puede ser negativo'),
+  })
+  .refine(
+    (l) => [l.materialId, l.printerId, l.nombreNuevo].filter(Boolean).length === 1,
+    'Cada línea es un filamento, una impresora o algo nuevo con su nombre: una sola cosa',
+  );
+export type PurchaseInvoiceLineDto = z.infer<typeof PurchaseInvoiceLineSchema>;
+
+export const PurchaseInvoiceUpsertSchema = z.object({
+  date: z.string().min(1, 'Falta la fecha de la factura'),
+  supplierId: z.string().min(1).optional().nullable(),
+  /** Cuándo se espera que llegue. Es una expectativa, no un compromiso. */
+  expectedAt: z.string().optional().nullable(),
+  reference: z.string().trim().optional().nullable(),
+  notes: z.string().trim().optional().nullable(),
+  lines: z.array(PurchaseInvoiceLineSchema).min(1, 'Una factura sin líneas no compra nada'),
+});
+export type PurchaseInvoiceUpsertDto = z.infer<typeof PurchaseInvoiceUpsertSchema>;
+
+/** Un abono. **Esto es lo que mueve la caja.** */
+export const PurchaseInvoicePaymentSchema = z.object({
+  date: z.string().min(1, 'Falta la fecha del abono'),
+  amount: z.number().positive('El abono tiene que ser mayor que cero'),
+  /** QUIÉN puso la plata. `null` = la caja del negocio. */
+  counterpartyId: z.string().min(1).optional().nullable(),
+  accountId: z.string().min(1).optional().nullable(),
+  note: z.string().trim().optional().nullable(),
+});
+export type PurchaseInvoicePaymentDto = z.infer<typeof PurchaseInvoicePaymentSchema>;
+
+/** Anular pide motivo: un abono anulado sin explicación es un agujero. */
+export const PurchaseVoidSchema = z.object({
+  reason: z.string().trim().min(1, 'Decí por qué se anula'),
+});
+export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;

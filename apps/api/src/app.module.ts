@@ -22,6 +22,7 @@ import { BackupModule } from './backup/backup.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { ReportsModule } from './reports/reports.module';
 import { LoansModule } from './loans/loans.module';
+import { PurchaseInvoicesModule } from './purchase-invoices/purchase-invoices.module';
 import { GoalsModule } from './goals/goals.module';
 import { CashModule } from './cash/cash.module';
 import { StorageModule } from './storage/storage.module';
@@ -52,6 +53,7 @@ import { StorePublicModule } from './store-public/store-public.module';
     BackupModule,
     CampaignsModule,
     LoansModule,
+    PurchaseInvoicesModule,
     GoalsModule,
     CashModule,
     ReportsModule,
