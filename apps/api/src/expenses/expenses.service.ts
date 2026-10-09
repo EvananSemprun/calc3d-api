@@ -172,7 +172,7 @@ export class ExpensesService {
    * comprar, se sigue manejando. `updateMany` con la organización: con el id de
    * una ficha ajena no escribe nada.
    */
-  private async recalcularPrecioDelRollo(
+  async recalcularPrecioDelRollo(
     organizationId: string,
     materialId: string | null | undefined,
   ) {

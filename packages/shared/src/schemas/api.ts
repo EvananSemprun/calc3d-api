@@ -848,3 +848,20 @@ export const PurchaseVoidSchema = z.object({
   reason: z.string().trim().min(1, 'Decí por qué se anula'),
 });
 export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;
+
+/**
+ * Recibir parte de una línea: cuántos llegaron.
+ *
+ * ⚠️ El MONTO no viaja: sale de `cantidad × precio unitario` de la línea. Si
+ * lo mandara el cliente, dos recepciones de la misma línea podrían sumar algo
+ * distinto del total de la factura y nadie se enteraría. Si el proveedor te
+ * cobró otra cosa, se corrige la línea antes de recibir.
+ */
+export const PurchaseReceiveSchema = z.object({
+  quantity: z.number().int().positive('¿Cuántos llegaron?'),
+  /** Cuándo llegó. Por defecto, hoy. */
+  date: z.string().optional().nullable(),
+  /** Para una ficha que nace en esta recepción. */
+  rollGrams: z.number().int().positive().optional().nullable(),
+});
+export type PurchaseReceiveDto = z.infer<typeof PurchaseReceiveSchema>;

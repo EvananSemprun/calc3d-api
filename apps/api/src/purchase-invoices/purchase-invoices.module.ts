@@ -15,17 +15,21 @@ import {
 import {
   PurchaseInvoicePaymentSchema,
   PurchaseInvoiceUpsertSchema,
+  PurchaseReceiveSchema,
   PurchaseVoidSchema,
   invoiceStatus,
   invoiceTotals,
   type PurchaseInvoicePaymentDto,
   type PurchaseInvoiceUpsertDto,
+  type PurchaseReceiveDto,
   type PurchaseVoidDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
+import { ExpensesModule } from '../expenses/expenses.module';
+import { ExpensesService } from '../expenses/expenses.service';
 
 const n = (x: unknown) => Number(x);
 
@@ -56,7 +60,11 @@ type FacturaCruda = Awaited<ReturnType<PurchaseInvoicesService['todas']>>[number
  */
 @Injectable()
 export class PurchaseInvoicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /** Para que el precio del rollo salga de la MISMA regla que una compra directa. */
+    private readonly expenses: ExpensesService,
+  ) {}
 
   private todas(organizationId: string) {
     return this.prisma.purchaseInvoice.findMany({
@@ -293,6 +301,95 @@ export class PurchaseInvoicesService {
     return this.get(organizationId, id);
   }
 
+  // ---------- recepción ----------
+
+  /**
+   * LLEGÓ LA MERCADERÍA (entera o parte).
+   *
+   * Crea el gasto —marcado con la línea, para que **su plata no se cuente dos
+   * veces**— sube lo recibido y deja que el precio del rollo lo recalcule la
+   * misma regla que usa una compra directa.
+   *
+   * ⚠️ El monto NO viaja en el body: sale de `cantidad × precio unitario`. Si
+   * lo mandara el cliente, dos recepciones de la misma línea podrían sumar
+   * algo distinto del total de la factura sin que nadie se entere.
+   *
+   * ⚠️ Todo en UNA transacción: un gasto creado sin subir `received` dejaría
+   * la línea pidiendo de nuevo lo que ya llegó, y volver a recibirla cargaría
+   * el filamento dos veces en el inventario.
+   */
+  async receive(
+    organizationId: string,
+    id: string,
+    lineId: string,
+    dto: PurchaseReceiveDto,
+  ) {
+    const f = await this.mia(organizationId, id);
+    if (f.voidedAt) throw new BadRequestException('La factura está anulada');
+
+    const linea = f.lines.find((l) => l.id === lineId);
+    if (!linea) throw new NotFoundException('Esa línea no es de esta factura');
+
+    const pendiente = linea.quantity - linea.received;
+    if (pendiente <= 0) throw new BadRequestException('Esa línea ya llegó entera');
+    if (dto.quantity > pendiente) {
+      throw new BadRequestException(
+        `Pediste ${linea.quantity} y ya recibiste ${linea.received}: no podés recibir ${dto.quantity} más.`,
+      );
+    }
+
+    const fecha = dto.date ? new Date(dto.date) : new Date();
+    const monto = Math.round(dto.quantity * n(linea.unitPrice) * 10000) / 10000;
+
+    const materialId = await this.prisma.$transaction(async (tx) => {
+      // Una ficha que nace acá: el color que nunca compraste no existía hasta
+      // que llegó. Marca, tipo y gramos se corrigen después desde la ficha.
+      let matId = linea.materialId;
+      let impId = linea.printerId;
+      if (!matId && !impId && linea.nombreNuevo) {
+        if (linea.printerId === null && linea.materialId === null) {
+          const nueva = await tx.material.create({
+            data: {
+              organizationId,
+              name: linea.nombreNuevo,
+              rollPrice: n(linea.unitPrice),
+              ...(dto.rollGrams ? { rollGrams: dto.rollGrams } : {}),
+            },
+          });
+          matId = nueva.id;
+          await tx.purchaseInvoiceLine.update({ where: { id: lineId }, data: { materialId: matId } });
+        }
+      }
+
+      await tx.expense.create({
+        data: {
+          organizationId,
+          date: fecha,
+          category: impId ? 'EQUIPMENT' : 'CONSUMABLE',
+          description: `Compra ${linea.nombreNuevo ?? linea.material?.name ?? linea.printer?.name ?? ''}`.trim(),
+          amount: monto,
+          quantity: dto.quantity,
+          isInvestment: impId != null,
+          materialId: matId,
+          printerId: impId,
+          providerId: f.supplierId,
+          // ⚠️ Esto es lo que le dice a Caja que su plata ya se contó.
+          purchaseInvoiceLineId: lineId,
+        },
+      });
+
+      await tx.purchaseInvoiceLine.update({
+        where: { id: lineId },
+        data: { received: linea.received + dto.quantity },
+      });
+      return matId;
+    });
+
+    // Fuera de la transacción: lee la última compra, que recién ahora existe.
+    await this.expenses.recalcularPrecioDelRollo(organizationId, materialId);
+    return this.get(organizationId, id);
+  }
+
   /** Anular un abono: la plata vuelve a la caja y la fila queda en el historial. */
   async voidPayment(organizationId: string, id: string, paymentId: string, dto: PurchaseVoidDto) {
     await this.mia(organizationId, id);
@@ -366,6 +463,16 @@ export class PurchaseInvoicesController {
     return this.service.addPayment(user.organizationId, id, dto);
   }
 
+  @Post(':id/lines/:lineId/receive')
+  receive(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+    @Body(new ZodValidationPipe(PurchaseReceiveSchema)) dto: PurchaseReceiveDto,
+  ) {
+    return this.service.receive(user.organizationId, id, lineId, dto);
+  }
+
   @Post(':id/payments/:paymentId/void')
   voidPayment(
     @CurrentUser() user: AuthUser,
@@ -378,6 +485,7 @@ export class PurchaseInvoicesController {
 }
 
 @Module({
+  imports: [ExpensesModule],
   controllers: [PurchaseInvoicesController],
   providers: [PurchaseInvoicesService],
   exports: [PurchaseInvoicesService],

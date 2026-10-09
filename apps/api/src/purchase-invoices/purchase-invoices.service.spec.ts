@@ -38,7 +38,6 @@ function makePrisma(factura?: Record<string, unknown>) {
   });
   return {
     client: tabla(FILAS.client),
-    material: tabla(FILAS.material),
     printer: tabla(FILAS.printer),
     counterparty: tabla(FILAS.counterparty),
     cashAccount: tabla(FILAS.cashAccount),
@@ -51,7 +50,12 @@ function makePrisma(factura?: Record<string, unknown>) {
       update: jest.fn(() => Promise.resolve(FACTURA_VACIA)),
       delete: jest.fn(() => Promise.resolve({})),
     },
-    purchaseInvoiceLine: { deleteMany: jest.fn() },
+    purchaseInvoiceLine: { deleteMany: jest.fn(), update: jest.fn() },
+    material: {
+      ...tabla(FILAS.material),
+      create: jest.fn((_: unknown) => Promise.resolve({ id: 'mat-nuevo' })),
+    },
+    expense: { create: jest.fn() },
     purchaseInvoicePayment: { findFirst: jest.fn(() => Promise.resolve(null)), create: jest.fn(), update: jest.fn() },
   };
 }
@@ -89,8 +93,11 @@ const linea = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const servicio = (p: ReturnType<typeof makePrisma>) =>
-  new PurchaseInvoicesService(conTransaccion(p) as never);
+/** El recálculo del precio del rollo: lo suyo se prueba en Gastos. */
+const expensesFalso = () => ({ recalcularPrecioDelRollo: jest.fn() });
+
+const servicio = (p: ReturnType<typeof makePrisma>, exp = expensesFalso()) =>
+  new PurchaseInvoicesService(conTransaccion(p) as never, exp as never);
 const ALTA = { date: '2026-10-09', lines: [{ materialId: 'mat-mio', quantity: 2, unitPrice: 25 }] };
 
 /**
@@ -253,5 +260,127 @@ describe('PurchaseInvoicesService — las cuentas que devuelve', () => {
     expect(f.pagado).toBe(20); // el anulado no cuenta
     expect(f.saldo).toBe(40);
     expect(f.status).toEqual({ pago: 'PARCIAL', mercaderia: 'SIN_RECIBIR' });
+  });
+});
+
+/**
+ * RECIBIR: la mercadería entra al inventario. El dueño pidió **recepción
+ * parcial** (pedís 10, llegan 6), así que una línea se recibe de a tandas.
+ */
+describe('PurchaseInvoicesService — recibir', () => {
+  const conLinea = (over: Record<string, unknown> = {}) =>
+    makePrisma({ ...FACTURA_VACIA, supplierId: 'prov-mio', lines: [linea({ quantity: 10, unitPrice: 7, ...over })] });
+
+  it('recibir 6 de 10 crea el gasto por 42 y sube lo recibido a 6', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 6, date: '2026-10-09' } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.amount).toBe(42); // 6 × 7, NO los 70 de la línea entera
+    expect(gasto.quantity).toBe(6);
+    expect(gasto.materialId).toBe('mat-mio');
+    expect(p.purchaseInvoiceLine.update).toHaveBeenCalledWith({
+      where: { id: 'l1' },
+      data: { received: 6 },
+    });
+  });
+
+  /**
+   * ⚠️ **La marca que impide la doble carga.** Sin ella, el gasto movería la
+   * caja además de los abonos.
+   */
+  it('el gasto nace MARCADO con su línea de factura', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    expect(p.expense.create.mock.calls[0][0].data.purchaseInvoiceLineId).toBe('l1');
+  });
+
+  it('recibir más de lo que falta → 400 y no escribe nada', async () => {
+    const p = conLinea({ received: 8 });
+
+    await expect(servicio(p).receive(ORG, 'f1', 'l1', { quantity: 3 } as never)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(p.expense.create).not.toHaveBeenCalled();
+  });
+
+  // El hermano: lo que SÍ falta se recibe.
+  it('…y recibir exactamente lo que falta sí se puede', async () => {
+    const p = conLinea({ received: 8 });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 2 } as never);
+
+    expect(p.purchaseInvoiceLine.update.mock.calls[0][0].data.received).toBe(10);
+  });
+
+  it('una línea ya completa no se recibe otra vez', async () => {
+    const p = conLinea({ received: 10 });
+    await expect(servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('una línea de OTRA factura → 404', async () => {
+    const p = conLinea();
+    await expect(servicio(p).receive(ORG, 'f1', 'l-ajena', { quantity: 1 } as never)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('una factura anulada no recibe', async () => {
+    const p = makePrisma({ ...FACTURA_VACIA, voidedAt: new Date(), lines: [linea()] });
+    await expect(servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  /** Un color que nunca compraste no tiene ficha hasta que llega. */
+  it('una línea con nombre nuevo CREA la ficha y le enlaza el gasto', async () => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      lines: [linea({ materialId: null, material: null, nombreNuevo: 'PLA Turquesa', quantity: 2, unitPrice: 19 })],
+    });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 2 } as never);
+
+    expect((p.material.create.mock.calls[0][0] as { data: unknown }).data).toMatchObject({
+      organizationId: ORG,
+      name: 'PLA Turquesa',
+      rollPrice: 19,
+    });
+    expect(p.expense.create.mock.calls[0][0].data.materialId).toBe('mat-nuevo');
+  });
+
+  it('una impresora recibida es inversión, no consumible', async () => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      lines: [linea({ materialId: null, material: null, printerId: 'imp-mia', printer: { id: 'imp-mia', name: 'A1' }, quantity: 1, unitPrice: 400 })],
+    });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.isInvestment).toBe(true);
+    expect(gasto.category).toBe('EQUIPMENT');
+    expect(gasto.printerId).toBe('imp-mia');
+  });
+
+  /** La misma regla que una compra directa: dos verdades serían una de más. */
+  it('el precio del rollo lo recalcula el servicio de Gastos, no este', async () => {
+    const p = conLinea();
+    const exp = expensesFalso();
+
+    await servicio(p, exp).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    expect(exp.recalcularPrecioDelRollo).toHaveBeenCalledWith(ORG, 'mat-mio');
+  });
+
+  it('el proveedor de la factura queda en el gasto', async () => {
+    const p = conLinea();
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+    expect(p.expense.create.mock.calls[0][0].data.providerId).toBe('prov-mio');
   });
 });
