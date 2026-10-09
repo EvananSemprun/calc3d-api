@@ -52,6 +52,9 @@ function makePrisma() {
     },
     loanPayment: { ...vacio },
     loan: { ...vacio },
+    // Sin facturas de compra: lo suyo se prueba en `purchase-invoice.spec.ts`
+    // (el motor) y en el test de la doble carga de `cash.spec.ts`.
+    purchaseInvoicePayment: { findMany: jest.fn().mockResolvedValue([]) },
     counterparty: {
       findFirst: jest.fn().mockResolvedValue({ id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER' }),
       // La lista completa: `idPagador` la necesita para saber a quién se le
@@ -959,6 +962,7 @@ function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
     cashAccount: delegado('cashAccount'),
     cashReconciliation: delegado('cashReconciliation'),
     counterparty: delegado('counterparty'),
+    purchaseInvoicePayment: delegado('purchaseInvoicePayment'),
     settings: delegado('settings'),
   };
 

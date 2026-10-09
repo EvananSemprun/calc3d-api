@@ -6,6 +6,7 @@ const vacio = (): CashLedger => ({
   orderPayments: [],
   expenses: [],
   loanPayments: [],
+  purchasePayments: [],
   movements: [],
 });
 
@@ -188,6 +189,7 @@ const completo = (): CashLedger => ({
     { id: 'cuota-1', date: '2026-09-08', amount: 50, payer: null, refundable: true },
     { id: 'cuota-2', date: '2026-09-09', amount: 60, payer: 'OWNER', refundable: true },
   ],
+  purchasePayments: [],
   movements: [
     { id: 'mov-1', date: '2026-09-10', amount: 200, kind: 'CONTRIBUTION', refundable: true },
     { id: 'mov-2', date: '2026-09-11', amount: 500, kind: 'CONTRIBUTION', refundable: false },
@@ -404,5 +406,145 @@ describe('businessCash — los filtros que nadie estaba mirando', () => {
     expect(c.debtRepayments).toBe(50);
     expect(c.ownerDraws).toBe(0);
     expect(c.balance).toBe(-50);
+  });
+});
+
+/**
+ * ⚠️ **LA INVARIANTE DE LAS FACTURAS DE COMPRA.**
+ *
+ * Los abonos son la PLATA; la recepción es la MERCADERÍA. Si las dos movieran
+ * la caja, abonar $50 y después recibir esa misma compra bajaría el saldo
+ * $100: la doble carga que descuadraba la hoja del Excel.
+ *
+ * Los números van PUESTOS A MANO. Derivarlos del mismo motor haría pasar el
+ * test con y sin la protección.
+ */
+describe('facturas de compra: la plata se cuenta UNA vez', () => {
+  it('abonar $50 baja el saldo $50', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 50, payer: null, refundable: true, filamentShare: 1 },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(50);
+    expect(c.balance).toBe(150);
+  });
+
+  it('…y recibir después esa compra NO lo vuelve a bajar: sigue en 150', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 50, payer: null, refundable: true, filamentShare: 1 },
+    ];
+    // La mercadería llega: nace el gasto, marcado como nacido de la factura.
+    l.expenses = [
+      {
+        date: '2026-10-09',
+        amount: 50,
+        payer: null,
+        isInvestment: false,
+        isFilament: true,
+        refundable: true,
+        fromInvoice: true,
+      },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(50); // el abono, no el abono + el gasto
+    expect(c.balance).toBe(150); // ⚠️ si fueran 100, es la doble carga
+  });
+
+  // El hermano alcanzable: el MISMO gasto sin la marca sí mueve la caja, que es
+  // lo que pasa con una compra cargada directo.
+  it('el mismo gasto SIN venir de una factura sí baja el saldo', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    l.expenses = [
+      { date: '2026-10-09', amount: 50, payer: null, isInvestment: false, isFilament: true, refundable: true },
+    ];
+
+    expect(businessCash(l).balance).toBe(150);
+  });
+
+  it('una impresora recibida por factura tampoco se cuenta dos veces', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 900 }];
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 400, payer: null, refundable: true, filamentShare: 0 },
+    ];
+    l.expenses = [
+      {
+        date: '2026-10-09',
+        amount: 400,
+        payer: null,
+        isInvestment: true,
+        isFilament: false,
+        refundable: true,
+        fromInvoice: true,
+      },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.equipment).toBe(400);
+    expect(c.balance).toBe(500);
+  });
+
+  /** Mitad filamento y mitad impresora: el prorrateo parte el abono. */
+  it('una factura mixta reparte el abono entre filamento y equipo', () => {
+    const l = vacio();
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 100, payer: null, refundable: true, filamentShare: 0.25 },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(25);
+    expect(c.equipment).toBe(75);
+    expect(c.balance).toBe(-100);
+  });
+
+  /**
+   * Un abono que puso el dueño de su bolsillo no baja la caja: es gasto Y
+   * aporte a la vez, igual que una compra suya. Lo que deja es la deuda.
+   */
+  it('un abono que puso el propietario no mueve el saldo, pero sí la deuda', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 50, payer: 'OWNER', refundable: true, filamentShare: 1 },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(50);
+    expect(c.contributionsRefundable).toBe(50);
+    expect(c.balance).toBe(200);
+  });
+
+  it('lo que abona el prestamista no toca la caja', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 50, payer: 'EXTERNAL_LENDER', refundable: true, filamentShare: 1 },
+    ];
+
+    expect(businessCash(l).balance).toBe(200);
+  });
+
+  it('el desglose de una línea suma lo mismo que la línea', () => {
+    const l = vacio();
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 30, payer: null, refundable: true, filamentShare: 1, id: 'ab-1' },
+    ];
+
+    const detalle = cashEntries(l).filter((e) => e.category === 'filament');
+
+    expect(detalle.map((e) => e.amount)).toEqual([30]);
+    expect(detalle[0].id).toBe('ab-1');
   });
 });

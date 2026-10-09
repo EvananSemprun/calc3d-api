@@ -59,6 +59,14 @@ export interface CashLedger {
     amount: number;
     /** `null` = la caja. Ver `PayerKind`. */
     payer: PayerKind | null;
+    /**
+     * Nació de una factura de compra, así que **su plata ya se contó** por el
+     * lado de los abonos. No mueve la caja: solo existe como mercadería.
+     *
+     * ⚠️ Sin esto, abonar $50 y después recibir la compra de $50 bajaría el
+     * saldo $100 — la doble carga que descuadraba la hoja del Excel.
+     */
+    fromInvoice?: boolean;
     isInvestment: boolean;
     /** Compra de filamento (la hoja la muestra aparte de los gastos generales). */
     isFilament: boolean;
@@ -71,6 +79,31 @@ export interface CashLedger {
     amount: number;
     payer: PayerKind | null;
     refundable: boolean;
+    id?: string;
+  }[];
+  /**
+   * ABONOS A FACTURAS DE COMPRA: **esto es lo que mueve la plata**. La
+   * mercadería entra después, al recibirla, y ese gasto viene marcado con
+   * `fromInvoice` justamente para no contarla dos veces.
+   */
+  purchasePayments: {
+    date: Fecha;
+    amount: number;
+    /** `null` = la caja. Si no, el negocio se lo debe a esa contraparte. */
+    payer: PayerKind | null;
+    /** Si lo puso una persona: ¿se le devuelve, o fue capital? */
+    refundable: boolean;
+    /**
+     * Qué fracción de SU factura es filamento (0..1); el resto, equipo.
+     *
+     * ⚠️ Es una **convención de prorrateo, no un hecho**: un abono de $20
+     * contra una factura de dos filamentos y una impresora no "fue" a una
+     * línea concreta. Se reparte a prorrata para que la línea "Filamento
+     * comprado" siga queriendo decir *todo el filamento que compraste*, venga
+     * de una factura o de una compra directa. Con facturas de una sola cosa
+     * —lo normal— el reparto es exacto.
+     */
+    filamentShare: number;
     id?: string;
   }[];
   movements: {
@@ -155,6 +188,8 @@ export interface CashEntry {
  * front, en el reporte de Excel— el detalle y el total van a divergir el día
  * que una de las dos cambie, y la pantalla se contradice a sí misma.
  */
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
   const hasta = until?.slice(0, 10);
   const vale = (d: Fecha) => !hasta || d.slice(0, 10) <= hasta;
@@ -169,8 +204,11 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
   // viven en el financiamiento.
   // Lo que paga el prestamista nunca toca la caja, y los equipos de la
   // contraparte viven en el financiamiento.
+  // Un gasto nacido de una factura NO mueve la caja: su plata ya se contó al
+  // abonar. Sigue existiendo como mercadería (inventario, precio del rollo,
+  // análisis), pero acá no suma.
   const operativo = (e: CashLedger['expenses'][number]) =>
-    !e.isInvestment && e.payer !== 'EXTERNAL_LENDER';
+    !e.isInvestment && e.payer !== 'EXTERNAL_LENDER' && !e.fromInvoice;
   const deLaContraparte = (e: CashLedger['expenses'][number]) =>
     operativo(e) && generaObligacion(e.payer);
 
@@ -185,7 +223,7 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     // anulan en el saldo. Dejar uno solo cambiaría `balance`.
     if (operativo(e) && !e.isFilament) push('expenses', e);
     if (operativo(e) && e.isFilament) push('filament', e);
-    if (e.isInvestment && e.payer == null) push('equipment', e);
+    if (e.isInvestment && e.payer == null && !e.fromInvoice) push('equipment', e);
     if (deLaContraparte(e)) push(e.refundable ? 'contributionsRefundable' : 'contributionsCapital', e);
   }
 
@@ -200,6 +238,22 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     // id, porque son el mismo movimiento visto por sus dos mitades.
     push('debtRepayments', { date: m.date, id: m.id, amount: Math.min(m.amount, m.applied ?? 0) });
     push('ownerDraws', { date: m.date, id: m.id, amount: Math.max(0, m.amount - (m.applied ?? 0)) });
+  }
+
+  // Los abonos: acá SÍ sale la plata. Se reparten entre filamento y equipo a
+  // prorrata de su factura, y si los puso una persona emiten además el aporte
+  // —el mismo doble asiento que un gasto de su bolsillo, que se anula en el
+  // saldo y deja la deuda.
+  for (const a of ledger.purchasePayments) {
+    if (!vale(a.date)) continue;
+    if (a.payer === 'EXTERNAL_LENDER') continue; // lo del prestamista no toca la caja
+    const share = Math.min(Math.max(a.filamentShare, 0), 1);
+    const enFilamento = round2(a.amount * share);
+    push('filament', { ...a, amount: enFilamento });
+    push('equipment', { ...a, amount: round2(a.amount - enFilamento) });
+    if (generaObligacion(a.payer)) {
+      push(a.refundable ? 'contributionsRefundable' : 'contributionsCapital', a);
+    }
   }
 
   for (const c of ledger.loanPayments) {
@@ -247,4 +301,3 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
   };
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;

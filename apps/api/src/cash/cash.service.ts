@@ -61,6 +61,31 @@ const tipoPagador = (
 };
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
+/**
+ * Qué fracción de una factura es filamento. El resto es equipo.
+ *
+ * ⚠️ Es una **convención de prorrateo**: un abono no "fue" a una línea
+ * concreta. Se reparte así para que "Filamento comprado" siga queriendo decir
+ * todo el filamento que compraste, venga de una factura o de una compra
+ * directa. Con facturas de una sola cosa —lo normal— es exacto.
+ *
+ * Una factura sin líneas (recién creada) cuenta como filamento: es el caso de
+ * lejos más común y deja el abono en una línea con sentido en vez de en
+ * "equipos".
+ */
+function proporcionDeFilamento(
+  lineas: { quantity: number; unitPrice: unknown; printerId: string | null }[],
+): number {
+  let total = 0;
+  let deFilamento = 0;
+  for (const l of lineas) {
+    const monto = Math.max(l.quantity, 0) * Math.max(n(l.unitPrice), 0);
+    total += monto;
+    if (l.printerId == null) deFilamento += monto;
+  }
+  return total > 0 ? deFilamento / total : 1;
+}
+
 /** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */
 interface EtiquetaAsiento {
   label: string;
@@ -111,7 +136,7 @@ export class CashService {
   /** Todos los datos crudos, una sola vez. */
   private async datos(organizationId: string) {
     const where = { organizationId };
-    const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes] =
+    const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes, abonosDeCompra] =
       await Promise.all([
         // El desplegable necesita además el id (para el join con la etiqueta),
         // el texto de cada fila y su origen (la insignia "Importado").
@@ -141,6 +166,13 @@ export class CashService {
         // Hacen falta para saber A QUIÉN se le debe cada fila, no solo de qué
         // TIPO era quien pagó. Ver `idPagador`.
         this.prisma.counterparty.findMany({ where }),
+        // Los abonos a facturas son lo que mueve la plata de una compra
+        // encargada. Vienen con las líneas de SU factura porque el reparto
+        // entre filamento y equipo sale de ahí.
+        this.prisma.purchaseInvoicePayment.findMany({
+          where: { organizationId, voidedAt: null, invoice: { voidedAt: null } },
+          include: { invoice: { select: { lines: { select: { quantity: true, unitPrice: true, printerId: true } } } } },
+        }),
       ]);
 
     // Lo aplicado a CADA obligación y lo aplicado POR cada pago.
@@ -165,6 +197,16 @@ export class CashService {
         isInvestment: g.isInvestment,
         isFilament: g.materialId != null,
         refundable: g.refundable,
+        // Su plata ya se contó al abonar la factura.
+        fromInvoice: g.purchaseInvoiceLineId != null,
+      })),
+      purchasePayments: abonosDeCompra.map((a) => ({
+        id: a.id,
+        date: dia(a.date),
+        amount: n(a.amount),
+        payer: tipoPagador(a, contrapartes),
+        refundable: true,
+        filamentShare: proporcionDeFilamento(a.invoice.lines),
       })),
       loanPayments: cuotas.map((c) => ({
         id: c.id,
@@ -185,7 +227,7 @@ export class CashService {
 
     return {
       ledger, ventas, abonos, gastos, cuotas, movimientos, prestamos, cuentas, conciliaciones,
-      contrapartes, porObligacion, porPago,
+      contrapartes, abonosDeCompra, porObligacion, porPago,
       order: (settings?.debtApplicationOrder ?? 'OLDEST_FIRST') as ApplicationOrder,
     };
   }
