@@ -7,7 +7,6 @@ import {
   type ExpenseCreateDto,
   type ExpenseUpdateDto,
   type ExpenseWithDefinitionDto,
-  type PaidByDto,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -38,18 +37,6 @@ interface CatalogDelegate {
 /** El único campo de referencia que puede escribir un gasto sobre cada tipo de ficha: su precio. */
 const PRICE_FIELD = { material: 'rollPrice', printer: 'price', component: 'packagePrice' } as const;
 
-/**
- * El tipo de contraparte traducido al enum viejo. Es el INVERSO de `pagador()`
- * en `cash.service.ts`, y existe por el mismo motivo: mientras `paidBy` y
- * `counterpartyId` conviven, Caja sigue leyendo el enum. Si el gasto guardara
- * solo la contraparte, el dinero que puso el dueño no aparecería en la caja
- * hasta la migración 2.
- *
- * ⚠️ Muere con la migración 2, junto con `paidBy`.
- */
-const enumDe = (kind: 'OWNER' | 'PARTNER' | 'EXTERNAL_LENDER'): PaidByDto =>
-  kind === 'EXTERNAL_LENDER' ? 'LOAN' : 'OWNER';
-
 @Injectable()
 export class ExpensesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -61,55 +48,6 @@ export class ExpensesService {
     provider: { select: { id: true, name: true } },
     counterparty: { select: { id: true, name: true, kind: true } },
   };
-
-  /**
-   * QUIÉN pagó, resuelto en UN solo lugar y devuelto SIEMPRE como el par
-   * completo. Que `paidBy` y `counterpartyId` puedan decir cosas distintas
-   * sobre el mismo gasto es el único riesgo real de que convivan: Caja lee el
-   * enum y la pantalla lee la contraparte, así que un gasto desparejo se vería
-   * de una forma y se contaría de otra.
-   *
-   * Las dos direcciones no son simétricas y no pueden serlo:
-   * - Con `counterpartyId` el tipo sale de la contraparte: es un dato, no una
-   *   suposición. Por eso MANDA cuando vienen los dos.
-   * - Con `paidBy` solo —el panel viejo, que sigue vivo entre el deploy de la
-   *   API y el del panel— hay que elegir una contraparte. Se usa la misma regla
-   *   que `backfill-pagadores.mjs`: la propietaria por defecto y el único
-   *   prestamista. Si no hay a quién apuntar queda en `null` y manda el enum,
-   *   que es lo que Caja lee hoy.
-   *
-   * ⚠️ Muere con la migración 2: ahí `paidBy` desaparece y queda la primera rama.
-   */
-  private async quienPago(
-    organizationId: string,
-    dto: { counterpartyId?: string | null; paidBy?: PaidByDto },
-  ): Promise<{ counterpartyId: string | null; paidBy: PaidByDto } | undefined> {
-    if (dto.counterpartyId !== undefined) {
-      if (!dto.counterpartyId) return { counterpartyId: null, paidBy: 'BUSINESS' };
-      // La contraparte viaja en el body: sin este filtro por organización, el id
-      // de otro negocio ataría el gasto —y la deuda que genera— a alguien de afuera.
-      const cp = await this.prisma.counterparty.findFirst({
-        where: { id: dto.counterpartyId, organizationId },
-      });
-      if (!cp) throw new NotFoundException('No existe esa contraparte');
-      return { counterpartyId: cp.id, paidBy: enumDe(cp.kind) };
-    }
-
-    if (!dto.paidBy) return undefined;
-    if (dto.paidBy === 'BUSINESS') return { counterpartyId: null, paidBy: 'BUSINESS' };
-
-    const candidatas = await this.prisma.counterparty.findMany({
-      where: {
-        organizationId,
-        kind: dto.paidBy === 'LOAN' ? 'EXTERNAL_LENDER' : { in: ['OWNER', 'PARTNER'] },
-      },
-      orderBy: [{ isDefault: 'desc' }, { active: 'desc' }, { createdAt: 'asc' }],
-    });
-    // Con dos prestamistas, cuál de los dos puso la plata no se adivina: queda
-    // en `null` y lo dice el enum, igual que antes de esta pantalla.
-    const elegida = dto.paidBy === 'LOAN' && candidatas.length !== 1 ? null : candidatas[0];
-    return { counterpartyId: elegida?.id ?? null, paidBy: dto.paidBy };
-  }
 
   list(organizationId: string, from?: string, to?: string) {
     return this.prisma.expense.findMany({
@@ -162,6 +100,30 @@ export class ExpensesService {
       : { providerId: null };
   }
 
+  /**
+   * QUIÉN pagó, validado contra el directorio de contrapartes.
+   *
+   * ⚠️ `counterpartyId` viaja en el body: sin el filtro por organización, el
+   * id de otro negocio ataría el gasto —y la deuda que genera— a alguien de
+   * afuera.
+   *
+   * Devuelve `undefined` cuando el DTO no habla del tema (un PATCH parcial),
+   * para no pisar la contraparte que ya tenía.
+   */
+  private async quienPago(
+    organizationId: string,
+    dto: { counterpartyId?: string | null },
+  ): Promise<{ counterpartyId: string | null } | undefined> {
+    if (dto.counterpartyId === undefined) return undefined;
+    if (!dto.counterpartyId) return { counterpartyId: null };
+
+    const cp = await this.prisma.counterparty.findFirst({
+      where: { id: dto.counterpartyId, organizationId },
+    });
+    if (!cp) throw new NotFoundException('No existe esa contraparte');
+    return { counterpartyId: cp.id };
+  }
+
   async create(organizationId: string, dto: ExpenseCreateDto) {
     const quien = await this.quienPago(organizationId, dto);
     const proveedor = await this.resolverProveedor(organizationId, dto);
@@ -182,7 +144,7 @@ export class ExpensesService {
         campaignId: dto.campaignId || null,
         rate: dto.rate ?? null,
         currencyCode: dto.currencyCode ?? null,
-        ...(quien ?? { paidBy: dto.paidBy }),
+        ...quien,
       },
       include: this.linkInclude,
     });
@@ -283,7 +245,7 @@ export class ExpensesService {
           isInvestment: expense.isInvestment,
           quantity: expense.quantity ?? null,
           ...(proveedor ?? { providerId: null }),
-          ...(quien ?? { paidBy: expense.paidBy }),
+          ...quien,
           [linkField]: linkId,
         },
         include: this.linkInclude,

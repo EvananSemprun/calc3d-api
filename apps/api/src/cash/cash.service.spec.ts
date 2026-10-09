@@ -32,7 +32,7 @@ function makePrisma() {
           id: 'g1',
           date: new Date('2026-09-23'),
           amount: '20',
-          paidBy: 'OWNER',
+          counterpartyId: 'cp1',
           isInvestment: false,
           category: 'CONSUMABLE',
           materialId: 'm1',
@@ -42,7 +42,7 @@ function makePrisma() {
           id: 'g2',
           date: new Date('2026-01-02'),
           amount: '615',
-          paidBy: 'OWNER',
+          counterpartyId: 'cp1',
           isInvestment: true,
           category: 'EQUIPMENT',
           materialId: null,
@@ -992,14 +992,14 @@ function tablasCompletas(org = ORG): Tablas {
       { id: 'ab1', organizationId: org, date: new Date('2026-09-03'), amount: '30', note: null, source: 'MANUAL' },
     ],
     expense: [
-      { id: 'g1', organizationId: org, date: new Date('2026-09-02'), amount: '10', paidBy: 'BUSINESS', isInvestment: false, category: 'UTILITIES', materialId: null, refundable: false, description: 'Luz de agosto', source: 'MANUAL' },
-      { id: 'g2', organizationId: org, date: new Date('2026-09-04'), amount: '25', paidBy: 'BUSINESS', isInvestment: false, category: 'MATERIAL', materialId: 'm1', refundable: false, description: 'Rollo PLA negro', source: 'EXCEL_IMPORT' },
-      { id: 'g3', organizationId: org, date: new Date('2026-09-06'), amount: '600', paidBy: 'BUSINESS', isInvestment: true, category: 'EQUIPMENT', materialId: null, refundable: true, description: 'Impresora nueva', source: 'MANUAL' },
+      { id: 'g1', organizationId: org, date: new Date('2026-09-02'), amount: '10', counterpartyId: null, isInvestment: false, category: 'UTILITIES', materialId: null, refundable: false, description: 'Luz de agosto', source: 'MANUAL' },
+      { id: 'g2', organizationId: org, date: new Date('2026-09-04'), amount: '25', counterpartyId: null, isInvestment: false, category: 'MATERIAL', materialId: 'm1', refundable: false, description: 'Rollo PLA negro', source: 'EXCEL_IMPORT' },
+      { id: 'g3', organizationId: org, date: new Date('2026-09-06'), amount: '600', counterpartyId: null, isInvestment: true, category: 'EQUIPMENT', materialId: null, refundable: true, description: 'Impresora nueva', source: 'MANUAL' },
       // Lo pagó la contraparte: es gasto Y aporte a la vez (dos asientos).
-      { id: 'g4', organizationId: org, date: new Date('2026-09-08'), amount: '40', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta y espátulas', source: 'MANUAL' },
+      { id: 'g4', organizationId: org, date: new Date('2026-09-08'), amount: '40', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta y espátulas', source: 'MANUAL' },
     ],
     loanPayment: [
-      { id: 'c1', organizationId: org, date: new Date('2026-09-09'), amount: '15', paidBy: 'BUSINESS', refundable: false, reference: 'REF-0091', source: 'MANUAL' },
+      { id: 'c1', organizationId: org, date: new Date('2026-09-09'), amount: '15', counterpartyId: null, refundable: false, reference: 'REF-0091', source: 'MANUAL' },
     ],
     ownerMovement: [
       { id: 'mv1', organizationId: org, date: new Date('2026-09-10'), kind: 'CONTRIBUTION', amount: '200', concept: 'Capital inicial', note: null, counterpartyId: 'cp1', refundable: false, source: 'MANUAL', cashReconciliationId: null },
@@ -1269,14 +1269,12 @@ describe('Caja — la deuda destino del faltante', () => {
       { id: 'v-B', organizationId: OTHER_ORG, date: new Date('2026-09-01'), amount: '100', kind: 'COUNTER', note: null, source: 'MANUAL' },
     ],
     expense: [
-      { id: 'g-vieja', organizationId: ORG, date: new Date('2026-08-01'), amount: '30', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta', source: 'MANUAL' },
-      { id: 'g-nueva', organizationId: ORG, date: new Date('2026-09-20'), amount: '50', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Tornillos', source: 'MANUAL' },
-      { id: 'g-futura', organizationId: ORG, date: new Date('2026-10-20'), amount: '70', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Boquillas', source: 'MANUAL' },
-      { id: 'g-ajena', organizationId: OTHER_ORG, date: new Date('2026-08-10'), amount: '40', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Gasto del otro negocio', source: 'MANUAL' },
-      // Lo puso la SOCIA: es deuda con ella, no con el propietario. `paidBy`
-      // dice OWNER porque el enum no distingue socios — por eso filtrar por él
-      // mezclaba los dos bolsillos.
-      { id: 'g-socia', organizationId: ORG, date: new Date('2026-08-02'), amount: '40', paidBy: 'OWNER', counterpartyId: 'cp2', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Filtro', source: 'MANUAL' },
+      { id: 'g-vieja', organizationId: ORG, date: new Date('2026-08-01'), amount: '30', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta', source: 'MANUAL' },
+      { id: 'g-nueva', organizationId: ORG, date: new Date('2026-09-20'), amount: '50', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Tornillos', source: 'MANUAL' },
+      { id: 'g-futura', organizationId: ORG, date: new Date('2026-10-20'), amount: '70', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Boquillas', source: 'MANUAL' },
+      { id: 'g-ajena', organizationId: OTHER_ORG, date: new Date('2026-08-10'), amount: '40', counterpartyId: 'cp-B', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Gasto del otro negocio', source: 'MANUAL' },
+      // Lo puso la SOCIA: es deuda con ella, no con el propietario.
+      { id: 'g-socia', organizationId: ORG, date: new Date('2026-08-02'), amount: '40', counterpartyId: 'cp2', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Filtro', source: 'MANUAL' },
     ],
     ownerMovement: [
       { id: 'mv-cp2', organizationId: ORG, date: new Date('2026-08-05'), kind: 'CONTRIBUTION', amount: '100', concept: 'Aporte de la socia', note: null, counterpartyId: 'cp2', refundable: true, source: 'MANUAL', cashReconciliationId: null },
@@ -1470,9 +1468,9 @@ describe('Caja — la deuda destino del faltante', () => {
 
       // g-futura es posterior al conteo; mv-cp2 y g-socia son de la socia: el
       // servidor las va a ignorar, así que la pantalla tampoco puede ofrecerlas.
-      // ⚠️ g-socia tiene `paidBy = OWNER` (el enum no distingue socios): si el
-      // filtro mirara el enum en vez de la contraparte, entraría acá y el
-      // faltante de la cuenta del propietario se iría a cancelar deuda de ella.
+      // ⚠️ g-socia es la prueba de que el filtro mira la CONTRAPARTE: si
+      // tomara cualquier gasto puesto por alguien, el faltante de la cuenta
+      // del propietario se iría a cancelar deuda de ella.
       expect(r.obligations.map((o) => o.sourceId)).toEqual(['g-vieja', 'g-nueva']);
       expect(r.differenceUsd).toBe(-80);
       expect(r.kind).toBe('SHORT');
@@ -1553,22 +1551,20 @@ describe('La deuda destino muere en el PIPE, no en el servicio', () => {
 /**
  * A QUIÉN se le debe cada gasto, no solo de qué tipo era quien lo pagó.
  *
- * Filtrar las obligaciones por `paidBy === 'OWNER'` no mira a quién se le está
+ * Un filtro que solo mirara "lo puso una persona" no mira a QUIÉN se le está
  * preguntando: con un socio, los gastos de los dos se mezclan y cada uno ve
- * como propia la deuda del otro. Con una sola contraparte propietaria el error
- * es invisible — y la pantalla de Gastos ya deja elegir socio, así que es
- * alcanzable.
+ * como propia la deuda del otro. Con una sola contraparte el error es
+ * invisible — y la pantalla de Gastos ya deja elegir socio.
  */
 describe('CashService — a quién se le debe', () => {
   const DUENO = { id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER', isDefault: true };
   const SOCIA = { id: 'cp2', name: 'Socia', kind: 'PARTNER', isDefault: false };
   const EDWIN = { id: 'cp3', name: 'Señor Edwin', kind: 'EXTERNAL_LENDER', isDefault: false };
 
-  const gasto = (id: string, counterpartyId: string | null, paidBy = 'OWNER') => ({
+  const gasto = (id: string, counterpartyId: string | null) => ({
     id,
     date: new Date('2026-09-23'),
     amount: '50',
-    paidBy,
     counterpartyId,
     isInvestment: false,
     category: 'CONSUMABLE',
@@ -1602,12 +1598,12 @@ describe('CashService — a quién se le debe', () => {
     expect(await deudasDelDueno([gasto('g-dueno', DUENO.id)])).toEqual(['g-dueno']);
   });
 
-  it('un gasto sin migrar (solo el enum) sigue contando como del propietario', async () => {
-    expect(await deudasDelDueno([gasto('g-vieja', null)])).toEqual(['g-vieja']);
+  it('un gasto que puso la CAJA no es deuda con nadie', async () => {
+    expect(await deudasDelDueno([gasto('g-caja', null)])).toEqual([]);
   });
 
   it('lo que pagó el prestamista tampoco es deuda con el propietario', async () => {
-    expect(await deudasDelDueno([gasto('g-edwin', EDWIN.id, 'LOAN')])).toEqual([]);
+    expect(await deudasDelDueno([gasto('g-edwin', EDWIN.id)])).toEqual([]);
   });
 
   /**

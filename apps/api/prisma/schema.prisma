@@ -45,24 +45,10 @@ enum ExpenseCategory {
   DESIGN
 }
 
-/// QUIÉN PUSO LA PLATA de un gasto o de una cuota (hoja "Caja" del Excel). La
-/// cuenta de Binance mezcla la plata del negocio con la personal; sin este dato
-/// la caja del negocio no se puede reconstruir.
-///  - BUSINESS: salió de la caja del negocio.
-///  - OWNER: lo pagó el propietario de su bolsillo → es un aporte que el
-///    negocio le debe.
-///  - LOAN: se pagó con el préstamo (la P2S). No toca la caja: lo que se debe es
-///    el saldo del préstamo.
-enum PaidBy {
-  BUSINESS
-  OWNER
-  LOAN
-}
-
 /// Movimiento de plata PURA entre el bolsillo del propietario y la caja, que
 /// no es un gasto: sacar plata del negocio para él o meter plata suya sin
 /// comprar nada. Las compras que el propietario paga NO van acá: van como
-/// gasto con `paidBy = OWNER`, o se cargarían dos veces (que es lo que
+/// gasto con su contraparte, o se cargarían dos veces (que es lo que
 /// descuadraba la hoja Caja).
 enum OwnerMovementKind {
   CONTRIBUTION
@@ -484,22 +470,20 @@ model Expense {
   rate         Decimal?  @db.Decimal(18, 6)
   currencyCode String?
 
-  /// Quién lo pagó. Alimenta la caja del negocio y lo que se le debe a la
-  /// contraparte.
-  paidBy PaidBy @default(BUSINESS)
-
-  /// QUIÉN pagó. `null` = la caja del negocio. Reemplaza a `paidBy`, que muere
-  /// en la migración siguiente; conviven solo mientras el backfill traduce.
+  /// QUIÉN PUSO LA PLATA. `null` = la caja del negocio.
   ///
-  /// ⚠️ Esto es lo que arregla el filtro de `obligaciones()`: hoy los gastos se
-  /// filtran por `paidBy === OWNER` sin mirar la contraparte, así que la cuenta
-  /// compartida de un socio derivaría como deudas suyas los gastos del
-  /// propietario.
+  /// La cuenta de Binance mezcla la plata del negocio con la personal; sin este
+  /// dato la caja no se puede reconstruir. Es a quien se le DEBE lo que puso.
+  ///
+  /// ⚠️ Hasta la migración `20261010100000_adios_paidby` esto convivía con un enum `paidBy`
+  /// (BUSINESS/OWNER/LOAN) que no distinguía socios: con dos personas poniendo
+  /// plata, los gastos de ambas se mezclaban y cada una veía como propia la
+  /// deuda de la otra.
   counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
   counterpartyId String?
 
   /// Si lo pagó la contraparte: ¿se le devuelve, o fue aporte de capital?
-  /// Default `true` para no alterar el histórico. Solo se lee con `paidBy = OWNER`.
+  /// Default `true` para no alterar el histórico. Solo se lee si hay contraparte.
   refundable Boolean      @default(true)
   source     RecordSource @default(MANUAL)
 
@@ -1041,20 +1025,15 @@ model LoanPayment {
   /// La referencia del pago (transferencia, "cena", lo que sea): es lo que
   /// permite reconciliar con el banco después.
   reference String?
-  /// Quién puso la plata de la cuota. Si fue el propietario, el negocio se la
-  /// debe a él (baja la deuda con el prestamista y sube la deuda con el
-  /// propietario: el total no cambia). Si fue la caja, no genera deuda con
-  /// nadie.
-  paidBy    PaidBy   @default(BUSINESS)
-
   refundable Boolean      @default(true)
   source     RecordSource @default(MANUAL)
 
   debtApplications DebtApplication[]
 
-  /// QUIÉN aportó la plata. `null` = la caja del negocio. Reemplaza a `paidBy`,
-  /// que muere en la migración siguiente; conviven solo mientras el backfill
-  /// traduce.
+  /// QUIÉN puso la plata de la cuota. `null` = la caja del negocio.
+  ///
+  /// Si la puso una persona, el negocio se la debe a ELLA: baja la deuda con el
+  /// prestamista y sube la deuda con quien pagó, así que el total no cambia.
   counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
   counterpartyId String?
 

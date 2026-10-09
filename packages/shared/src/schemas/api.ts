@@ -452,10 +452,6 @@ export const ExpenseCategorySchema = z.enum([
 ]);
 export type ExpenseCategoryDto = z.infer<typeof ExpenseCategorySchema>;
 
-/** Quién puso la plata: la caja del negocio, el propietario de su bolsillo o el préstamo. */
-export const PaidBySchema = z.enum(['BUSINESS', 'OWNER', 'LOAN']);
-export type PaidByDto = z.infer<typeof PaidBySchema>;
-
 export const ExpenseCreateSchema = z.object({
   date: z.string().min(1, 'La fecha es obligatoria'),
   category: ExpenseCategorySchema.default('OTHER'),
@@ -485,17 +481,7 @@ export const ExpenseCreateSchema = z.object({
   // código con los que se registró (el `amount` SIEMPRE queda en USD base).
   rate: z.number().positive().optional().nullable(),
   currencyCode: z.string().length(3).optional().nullable(),
-  /**
-   * Quién lo pagó. Alimenta la caja y lo que el negocio le debe a la contraparte.
-   *
-   * ⚠️ **Lo reemplaza `counterpartyId` y muere con la migración 2.** Mientras
-   * convivan, el que manda es `counterpartyId`: si viene, el servidor DERIVA
-   * `paidBy` del tipo de la contraparte. Así un cliente viejo (que solo manda
-   * `paidBy`) sigue andando y uno nuevo no puede dejar los dos campos diciendo
-   * cosas distintas sobre el mismo gasto.
-   */
-  paidBy: PaidBySchema.default('BUSINESS'),
-  /** QUIÉN lo pagó. `null` = la caja del negocio. */
+  /** QUIÉN lo pagó. `null` = la caja del negocio, y entonces no se le debe a nadie. */
   counterpartyId: z.string().min(1).optional().nullable(),
 });
 export type ExpenseCreateDto = z.infer<typeof ExpenseCreateSchema>;
@@ -519,7 +505,6 @@ export const ExpenseWithDefinitionSchema = z.object({
     quantity: z.number().int().positive().nullable().optional(),
     providerId: z.string().nullable().optional(),
     providerName: z.string().trim().min(1).optional().nullable(),
-    paidBy: PaidBySchema.default('BUSINESS'),
     counterpartyId: z.string().min(1).optional().nullable(),
   }),
   link: z.object({
@@ -573,8 +558,6 @@ export const LoanPaymentCreateSchema = z.object({
   amount: z.number().positive('El pago tiene que ser mayor que cero'),
   /** Referencia bancaria o lo que sirva para reconciliar después. */
   reference: z.string().optional().nullable(),
-  /** Una cuota la paga la caja o el propietario; "con el préstamo" no tiene sentido acá. */
-  paidBy: z.enum(['BUSINESS', 'OWNER']).default('BUSINESS'),
   /** QUIÉN aportó la plata. `null` = la caja del negocio. */
   counterpartyId: z.string().min(1).optional().nullable(),
   /** De qué cuenta salió, si se sabe. */

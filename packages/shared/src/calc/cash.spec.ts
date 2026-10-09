@@ -335,7 +335,7 @@ describe('cashEntries', () => {
  * La red que faltaba: hasta este refactor, la clasificación solo estaba cubierta
  * por los casos de `businessCash` de arriba, y entre ellos NO había un gasto
  * CORRIENTE pagado con el préstamo (el único que hay es una inversión, que ya
- * queda afuera por `isInvestment`). Sacarle `paidBy !== 'LOAN'` al filtro
+ * queda afuera por `isInvestment`). Sacarle el filtro del prestamista
  * `operativo` no ponía rojo ni un test. Estos lo tapan.
  */
 describe('businessCash — los filtros que nadie estaba mirando', () => {

@@ -90,7 +90,11 @@ export class ReportsService {
       }),
       this.prisma.expense.findMany({
         where: { organizationId },
-        include: { material: true, printer: true, component: true, campaign: true },
+        include: {
+          material: true, printer: true, component: true, campaign: true,
+          // La columna "Pagado por" sale del nombre de la contraparte.
+          counterparty: { select: { name: true } },
+        },
         orderBy: { date: 'asc' },
       }),
       this.prisma.client.findMany({
@@ -256,7 +260,7 @@ export class ReportsService {
         g.quantity ?? '',
         g.isInvestment ? 'Sí' : '',
         g.material?.name ?? g.printer?.name ?? g.component?.name ?? g.campaign?.name ?? '',
-        pagadoPor(caja.counterparty.name)[g.paidBy],
+        pagadoPor(g),
       ]);
     }
     totalizar(hGastos, 4);
@@ -405,7 +409,7 @@ export class ReportsService {
           fecha(new Date(p.date)),
           p.amount,
           p.reference ?? '',
-          pagadoPor(caja.counterparty.name)[p.paidBy],
+          pagadoPor(p),
         ]);
       }
       const pagos = l.payments.map((p) => ({ amount: p.amount }));
@@ -589,8 +593,9 @@ export class ReportsService {
 // ---------- Herramientas de armado ----------
 
 const FORMATO = '"$"#,##0.00';
-const pagadoPor = (nombre: string) =>
-  ({ BUSINESS: 'Negocio', OWNER: nombre, LOAN: 'Préstamo' }) as const;
+/** Quién puso la plata, en palabras. Sin contraparte, la puso la caja. */
+const pagadoPor = (fila: { counterparty?: { name: string } | null }) =>
+  fila.counterparty?.name ?? 'Negocio';
 const fuente = (nombre: string) =>
   ({
     designer: `${nombre} - Diseñador`,

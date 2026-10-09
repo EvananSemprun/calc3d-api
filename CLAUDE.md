@@ -435,10 +435,10 @@ en el repo web: se sobrescribe al sincronizar.
     Reemplaza la cascada de retiros y el "conteo de los lunes". Spec:
     `docs/superpowers/specs/2026-10-05-caja-saas-design.md`; plan:
     `docs/superpowers/plans/2026-10-05-caja-fase-1.md`.
-    - ⚠️ **Quién pagó = `paidBy` (BUSINESS/OWNER/LOAN) en `Expense` y
-      `LoanPayment`.** Una compra que paga la contraparte se anota UNA vez, como
-      gasto con `paidBy: OWNER`; el aporte sale solo. La hoja la anotaba dos
-      veces y eso descuadraba. `OwnerMovement` es SOLO plata pura.
+    - ⚠️ **Quién pagó = `counterpartyId` en `Expense` y `LoanPayment`**
+      (`null` = la caja). Una compra que paga la contraparte se anota UNA vez,
+      como gasto con SU contraparte; el aporte sale solo. La hoja la anotaba
+      dos veces y eso descuadraba. `OwnerMovement` es SOLO plata pura.
     - ⚠️ **Las obligaciones se DERIVAN, no se almacenan.** Una deuda con la
       contraparte ES un gasto suyo, una cuota suya o un aporte reembolsable,
       visto como deuda; su saldo es `monto − aplicaciones`, igual que
@@ -505,10 +505,9 @@ en el repo web: se sobrescribe al sincronizar.
       negocio. Fijado en `common/multi-tenant.audit.spec.ts`.
     - `Settings` gana `reconciliationFrequency`, `reconciliationWeekday` y
       `debtApplicationOrder`. La frecuencia es un RECORDATORIO: no bloquea nada.
-    - **La fase 4 ya NO está pendiente** (2026-10-08): `Expense` y `LoanPayment`
-      llevan `counterpartyId`, `null` = la caja pagó. El enum `paidBy` convive
-      **solo hasta que el backfill corra en producción**; lo borra la migración
-      2, que a propósito **no está commiteada todavía**. Ver "Préstamos" abajo.
+    - **La fase 4 está terminada** (2026-10-10): `Expense` y `LoanPayment`
+      llevan `counterpartyId`, `null` = la caja pagó, y el enum `paidBy`
+      **ya no existe**. Ver "Préstamos" abajo para las dos migraciones.
     - Tests: `cash.spec.ts`, `obligations.spec.ts`, `reconcile.spec.ts` (shared),
       `cash/cash.service.spec.ts` (32) y `common/multi-tenant.audit.spec.ts`.
     - ⚠️ **Multicuenta sigue funcionando solo en estructura**: se registran
@@ -538,10 +537,10 @@ en el repo web: se sobrescribe al sincronizar.
       los tests de `businessCash — los filtros que nadie estaba mirando`. En la
       API ese mismo test SI sirve, pero para otra cosa: que el `filter`, el
       `map` y el join no pierdan ni dupliquen asientos.
-    - Verificacion por mutacion con dientes: sacarle `paidBy === 'BUSINESS'` a
-      `equipment` rompe **2 tests viejos**; sacarle `paidBy !== 'LOAN'` a
-      `operativo` **no rompia ninguno** (el unico gasto LOAN de la suite tenia
-      `isInvestment: true`). Elegir la primera si hay que repetirla.
+    - Verificacion por mutacion con dientes: sacarle el filtro de "lo puso la
+      caja" a `equipment` rompe **2 tests viejos**; sacarle el del prestamista
+      a `operativo` **no rompia ninguno** (el unico gasto del prestamista en la
+      suite tenia `isInvestment: true`). Elegir la primera si hay que repetirla.
     - `Sale` y `Payment` ganaron `source` (migracion `20261008120000`, aditiva).
     - **`prisma/backfill-importado.mjs`** marca `EXCEL_IMPORT` **por la marca
       textual** `"del excel"`, NO por fecha. Dry-run por defecto, `--write`/
@@ -638,15 +637,11 @@ en el repo web: se sobrescribe al sincronizar.
     el campo tal cual llegaba (mass-assignment: podía pisar `rollGrams`,
     `lifetimeHours`, `unitsPerPackage` o incluso `status`/`organizationId` sin
     las reglas de su schema). Regresión: `expenses.service.spec.ts`.
-    ⚠️ **Quién pagó un gasto son DOS campos conviviendo** (2026-10-08, shared
-    0.26.0): `counterpartyId` (lo nuevo) y `paidBy` (el enum, que Caja todavía
-    lee). `quienPago()` los resuelve en UN lugar y devuelve **siempre el par
-    completo**, así que no pueden contradecirse: un gasto desparejo se vería de
-    una forma en la pantalla y se contaría de otra en Caja. No son simétricos:
-    con `counterpartyId` el tipo SALE de la contraparte y manda; con `paidBy`
-    solo —el panel viejo, vivo entre el deploy de la API y el del panel— se
-    completa con la misma regla que `backfill-pagadores.mjs` (la propietaria por
-    defecto, el **único** prestamista; con dos no adivina y deja `null`).
+    ⚠️ **Quién pagó un gasto es `counterpartyId` y nada más** (desde
+    2026-10-10). Entre el 08 y el 10 convivió con el enum `paidBy`, y
+    `quienPago()` los escribía SIEMPRE como par para que no pudieran
+    contradecirse: un gasto desparejo se habría visto de una forma en la
+    pantalla y contado de otra en Caja. Hoy `quienPago()` solo valida.
     `counterpartyId` viaja en el body: se filtra por organización o el id de
     otro negocio ataría el gasto —y su deuda— a alguien de afuera (**404**).
     Regresión: 12 casos en `expenses.service.spec.ts`, con el mock de
@@ -730,18 +725,24 @@ en el repo web: se sobrescribe al sincronizar.
       `payer: PayerKind | null` (`null` = la caja). El motor necesita el **tipo**
       y no el id: lo que decide si un gasto genera deuda es si quien pagó es
       dueño del negocio (se le devuelve) o un prestamista (esa deuda ya vive en
-      el saldo del préstamo). Mientras el enum siga en la base, `cash.service.ts`
-      y `backfill-caja.mjs` traducen en el BORDE con `pagador()`, marcada como
-      puente temporal.
-    - ⚠️ **DOS migraciones, y NO pueden ir en el mismo despliegue.** La 1
-      (`20261009120000`) es puramente aditiva. Entre las dos corre
-      `prisma/backfill-pagadores.mjs`. `migrate deploy` aplica todas las
-      pendientes seguidas al arrancar el contenedor: commitear la 2 junto con la
-      1 borraría `paidBy` antes de que nadie lo tradujera.
+      el saldo del préstamo). **El enum `paidBy` ya no existe** (migración
+      `20261010100000_adios_paidby`, 2026-10-10): el tipo sale de la
+      contraparte y `tipoPagador()` es la única traducción.
+    - ⚠️ **Fueron DOS migraciones que NO podían ir en el mismo despliegue**, y
+      así se hizo: la 1 (`20261009120000`) puramente aditiva, después el
+      backfill contra producción, y la 2 (`20261010100000_adios_paidby`) un día
+      después. `migrate deploy` aplica todas las pendientes seguidas al
+      arrancar el contenedor, así que commitear la 2 junto con la 1 habría
+      borrado `paidBy` antes de que nadie lo tradujera.
+      Antes de aplicar la 2 se verificó contra producción que **no quedara una
+      sola fila incoherente** (`paidBy <> BUSINESS` y sin contraparte): 0.
+      Esa cuenta es el único gate que hay; con una fila, el dato se pierde.
     - El backfill trae **su propio guard**: dentro de la transacción saca la
       foto de las nueve líneas del saldo y de la deuda leyendo por el ENUM,
       traduce, la vuelve a sacar leyendo por la CONTRAPARTE, y si algo se movió
-      un centavo revierte y aborta con código 1.
+      un centavo revierte y aborta con código 1. **Los dos backfills se
+      borraron** al caer el enum (ya no compilan contra el esquema): ver
+      `prisma/LEEME-backfills-de-pagadores.md`.
     - `installmentTarget` reemplaza a `monthlyPayment` en la respuesta: con
       frecuencias, llamarla "mensual" sería mentir. `monthlyLoanPayments`
       **normaliza a mensual antes de sumar** — una cuota semanal de $50 son $217.

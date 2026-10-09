@@ -6,7 +6,7 @@
  * RECONSTRUYE con lo cobrado, lo gastado y quién pagó cada cosa.
  *
  * La regla que evita la doble carga de la hoja: una compra que paga el
- * propietario se anota UNA vez, como gasto con `paidBy = OWNER`. De ahí salen
+ * propietario se anota UNA vez, como gasto con SU contraparte. De ahí salen
  * solos el gasto y el aporte. Solo la plata pura (sacar para él, meter sin
  * comprar nada) es un movimiento aparte.
  *
@@ -27,7 +27,6 @@
  * un detalle que suma distinto que su propio total.
  */
 
-export type PaidBy = 'BUSINESS' | 'OWNER' | 'LOAN';
 
 /**
  * QUIEN PUSO LA PLATA de un asiento, por TIPO de contraparte.

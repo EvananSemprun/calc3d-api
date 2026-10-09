@@ -474,12 +474,10 @@ describe('ExpensesService.createWithDefinition', () => {
 });
 
 /**
- * QUIÉN PAGÓ: la contraparte y el enum viejo conviviendo.
+ * QUIÉN PAGÓ: la contraparte, que es el único campo desde la migración
+ * `20261010100000_adios_paidby`.
  *
- * Lo que se protege acá no es "que se guarde el campo" sino que los DOS campos
- * no puedan decir cosas distintas sobre el mismo gasto: Caja lee `paidBy` y la
- * pantalla lee la contraparte, así que un gasto desparejo se vería de una forma
- * y se contaría de otra.
+ * Antes convivía con un enum `BUSINESS/OWNER/LOAN` que no distinguía socios.
  */
 describe('ExpensesService — quién pagó', () => {
   let prisma: ReturnType<typeof makePrisma>;
@@ -522,76 +520,31 @@ describe('ExpensesService — quién pagó', () => {
     expect(guardado().counterpartyId).toBe('cp-dueno');
   });
 
-  it('la contraparte MANDA sobre el enum que venga en el body', async () => {
-    await service.create(ORG, {
-      ...GASTO,
-      counterpartyId: 'cp-edwin',
-      paidBy: 'BUSINESS', // mentira del cliente: lo puso el prestamista
-    } as any);
-
-    expect(guardado()).toMatchObject({ counterpartyId: 'cp-edwin', paidBy: 'LOAN' });
-  });
-
-  it('un socio también genera deuda: se guarda como OWNER para la caja', async () => {
+  it('un socio también puede poner la plata', async () => {
     await service.create(ORG, { ...GASTO, counterpartyId: 'cp-socio' } as any);
-    expect(guardado()).toMatchObject({ counterpartyId: 'cp-socio', paidBy: 'OWNER' });
+    expect(guardado().counterpartyId).toBe('cp-socio');
   });
 
-  it('sin contraparte (lo puso la caja) el enum queda en BUSINESS', async () => {
-    await service.create(ORG, { ...GASTO, counterpartyId: null, paidBy: 'OWNER' } as any);
-    expect(guardado()).toMatchObject({ counterpartyId: null, paidBy: 'BUSINESS' });
+  it('sin contraparte lo puso la caja y no se le debe a nadie', async () => {
+    await service.create(ORG, { ...GASTO, counterpartyId: null } as any);
+    expect(guardado().counterpartyId).toBeNull();
   });
 
-  /**
-   * El panel VIEJO sigue vivo entre el deploy de la API y el del panel: manda
-   * `paidBy` y no sabe de contrapartes. Se completa con la misma regla que
-   * `backfill-pagadores.mjs`, no con la primera que aparezca.
-   */
-  it('el panel viejo manda OWNER → se ata a la contraparte POR DEFECTO', async () => {
-    await service.create(ORG, { ...GASTO, paidBy: 'OWNER' } as any);
-    expect(guardado()).toMatchObject({ counterpartyId: 'cp-dueno', paidBy: 'OWNER' });
-  });
-
-  it('el panel viejo manda LOAN y hay UN prestamista → se ata a ese', async () => {
-    await service.create(ORG, { ...GASTO, paidBy: 'LOAN' } as any);
-    expect(guardado()).toMatchObject({ counterpartyId: 'cp-edwin', paidBy: 'LOAN' });
-  });
-
-  it('con DOS prestamistas no adivina: counterpartyId null y manda el enum', async () => {
-    conContrapartes(prisma, [
-      ...CONTRAPARTES,
-      { id: 'cp-otro', organizationId: ORG, name: 'Otro', kind: 'EXTERNAL_LENDER', isDefault: false, active: true, createdAt: 4 },
-    ]);
-
-    await service.create(ORG, { ...GASTO, paidBy: 'LOAN' } as any);
-
-    expect(guardado()).toMatchObject({ counterpartyId: null, paidBy: 'LOAN' });
-  });
-
-  it('un PATCH que no habla de quién pagó no toca ninguno de los dos campos', async () => {
+  it('un PATCH que no habla de quién pagó no toca la contraparte', async () => {
     await service.update(ORG, 'e-1', { amount: 99 } as any);
-
-    const data = prisma.expense.update.mock.calls[0][0].data;
-    expect(data).not.toHaveProperty('paidBy');
-    expect(data).not.toHaveProperty('counterpartyId');
+    expect(prisma.expense.update.mock.calls[0][0].data).not.toHaveProperty('counterpartyId');
   });
 
-  it('un PATCH de contraparte escribe los DOS campos, nunca uno solo', async () => {
+  it('un PATCH de contraparte sí la cambia', async () => {
     await service.update(ORG, 'e-1', { counterpartyId: 'cp-edwin' } as any);
-
     expect(prisma.expense.update.mock.calls[0][0].data).toMatchObject({
       counterpartyId: 'cp-edwin',
-      paidBy: 'LOAN',
     });
   });
 
-  it('un PATCH del panel viejo también deja los dos parejos', async () => {
-    await service.update(ORG, 'e-1', { paidBy: 'BUSINESS' } as any);
-
-    expect(prisma.expense.update.mock.calls[0][0].data).toMatchObject({
-      counterpartyId: null,
-      paidBy: 'BUSINESS',
-    });
+  it('un PATCH con contraparte en null se la saca', async () => {
+    await service.update(ORG, 'e-1', { counterpartyId: null } as any);
+    expect(prisma.expense.update.mock.calls[0][0].data).toMatchObject({ counterpartyId: null });
   });
 });
 

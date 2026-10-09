@@ -46,7 +46,13 @@ import { CashService } from '../cash/cash.service';
  * veces. Devolver capital no es un costo.
  */
 const incluir = {
-  payments: { orderBy: { date: 'asc' } },
+  // El NOMBRE de quien puso cada cuota viaja con el pago: sin esto, la
+  // pantalla y el reporte de Excel tendrían que ir a buscarlo por separado y
+  // podrían mostrar cosas distintas sobre el mismo pago.
+  payments: {
+    orderBy: { date: 'asc' },
+    include: { counterparty: { select: { id: true, name: true } } },
+  },
   printer: { select: { id: true, name: true } },
   counterparty: { select: { id: true, name: true, kind: true } },
 } as const;
@@ -70,8 +76,8 @@ type LoanConPagos = {
     date: Date;
     amount: unknown;
     reference: string | null;
-    paidBy: 'BUSINESS' | 'OWNER' | 'LOAN';
     counterpartyId: string | null;
+    counterparty: { id: string; name: string } | null;
     accountId: string | null;
     refundable: boolean;
     source: string;
@@ -89,8 +95,8 @@ function serialize(l: LoanConPagos, now = new Date()) {
     date: p.date.toISOString(),
     amount: Number(p.amount),
     reference: p.reference,
-    paidBy: p.paidBy,
     counterpartyId: p.counterpartyId,
+    counterparty: p.counterparty,
     accountId: p.accountId,
     /** Si el que lo pagó de su bolsillo queda con una deuda a favor. */
     generatesDebt: p.refundable,
@@ -266,7 +272,6 @@ export class LoansService {
         date: new Date(dto.date),
         amount: dto.amount,
         reference: dto.reference ?? null,
-        paidBy: dto.paidBy,
         counterpartyId,
         accountId: dto.accountId ?? null,
         // Solo significa algo si lo puso alguien: si pago la caja, no hay a
@@ -308,12 +313,11 @@ export class LoansService {
   }
 
   /**
-   * Quien aporto la plata del pago. `BUSINESS` es la caja y no lleva
-   * contraparte; cualquier otra cosa se valida contra la organizacion.
+   * Quien aporto la plata del pago. Sin contraparte la puso la caja; con
+   * contraparte se valida contra la organizacion.
    */
   private async pagador(organizationId: string, dto: LoanPaymentCreateDto) {
-    if (dto.paidBy === 'BUSINESS' && !dto.counterpartyId) return null;
-    return this.acreedor(organizationId, dto.counterpartyId);
+    return dto.counterpartyId ? this.acreedor(organizationId, dto.counterpartyId) : null;
   }
 }
 

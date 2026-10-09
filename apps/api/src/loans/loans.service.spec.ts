@@ -87,8 +87,8 @@ const pago = (over: Record<string, unknown> = {}) => ({
   date: d('2026-08-01'),
   amount: 250,
   reference: null,
-  paidBy: 'OWNER',
   counterpartyId: null,
+  counterparty: null,
   accountId: null,
   refundable: true,
   source: 'MANUAL',
@@ -97,7 +97,7 @@ const pago = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const NUEVO_PAGO = { date: '2026-09-01', amount: 100, paidBy: 'BUSINESS' as const, generatesDebt: true };
+const NUEVO_PAGO = { date: '2026-09-01', amount: 100, generatesDebt: true };
 
 describe('LoansService — seguridad', () => {
   it('un acreedor de OTRA organización se rechaza', async () => {
@@ -128,7 +128,7 @@ describe('LoansService — seguridad', () => {
     });
 
     await expect(
-      service(p).addPayment(ORG, 'l1', LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, paidBy: 'OWNER', counterpartyId: 'cp-ajena' })),
+      service(p).addPayment(ORG, 'l1', LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, counterpartyId: 'cp-ajena' })),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(p._tablas.loanPayment).toHaveLength(0);
   });
@@ -208,7 +208,7 @@ describe('LoansService — que un pago genere deuda se PREGUNTA', () => {
     await service(p).addPayment(
       ORG,
       'l1',
-      LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, paidBy: 'OWNER', counterpartyId: 'cp1', generatesDebt: false }),
+      LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, counterpartyId: 'cp1', generatesDebt: false }),
     );
 
     expect(p._tablas.loanPayment[0].refundable).toBe(false);
@@ -220,7 +220,7 @@ describe('LoansService — que un pago genere deuda se PREGUNTA', () => {
     await service(p).addPayment(
       ORG,
       'l1',
-      LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, paidBy: 'OWNER', counterpartyId: 'cp1', generatesDebt: true }),
+      LoanPaymentCreateSchema.parse({ ...NUEVO_PAGO, counterpartyId: 'cp1', generatesDebt: true }),
     );
 
     expect(p._tablas.loanPayment[0].refundable).toBe(true);
