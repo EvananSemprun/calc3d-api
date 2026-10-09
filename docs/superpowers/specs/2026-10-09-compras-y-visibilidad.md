@@ -1,0 +1,213 @@
+# Compras, visibilidad y detalles — spec por fases
+
+**Qué es esto:** el resultado de revisar el estado real de la app el 2026-10-09,
+después de la reestructuración de contrapartes, proveedores y facturas de
+compra. Cada fase se despliega sola.
+
+> ⚠️ **La tienda NO se toca.** Es una feature futura para conectar con una
+> landing de venta (decisión del dueño, 2026-10-09). Tiene 3 productos y 0
+> pedidos; no se desarrolla ni se quita hasta que él lo pida.
+
+> ⚠️ **Comparar proveedores queda para más adelante** (B4). Con un proveedor
+> cargado y 7 gastos con proveedor no hay con qué comparar; el dato aparece
+> solo cuando haya historia.
+
+---
+
+## Decisiones tomadas (cuestionario del 2026-10-09)
+
+| # | Decisión |
+|---|---|
+| A1 | Al encargar algo que no tenés, **la app pregunta si es filamento o impresora**. |
+| A2 | Pagar de más deja **saldo a favor con ese proveedor**, aplicable a otra factura. |
+| A3 | El precio real se informa **al recibir**; la línea conserva lo que pediste. |
+| A5 | Gastos muestra el proveedor: **columna y filtro**. |
+| B1 | El pedido se arma **desde Stock del mes**, con lo que falta. |
+| B2 | Lo que debés por facturas se **muestra al lado del equilibrio, sin entrar en el cálculo**. |
+| B3 | Las entregas atrasadas avisan **en Compras y en el Dashboard**. |
+| B5 | Los proveedores se suman como **tercer bloque de la pantalla Deuda**. |
+| C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
+| C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
+| C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
+
+---
+
+## Fase 1 — Arreglar lo que está roto
+
+Lo primero porque A1 es un defecto vivo en producción desde el 2026-10-09.
+
+### 1.1 Encargar una impresora que todavía no tenés (A1)
+
+Hoy la opción "algo que todavía no tenés" **siempre crea una ficha de
+filamento**: encargar una impresora nueva te crea un rollo llamado
+"Impresora A2". Y una impresora nueva es, por definición, una que no está en el
+catálogo — o sea, el caso normal.
+
+- [ ] `PurchaseInvoiceLine` gana `nuevoTipo` (`MATERIAL` | `PRINTER`), nulable.
+      Migración **aditiva**.
+- [ ] El `refine` del schema exige `nuevoTipo` cuando viene `nombreNuevo`, y lo
+      prohíbe cuando no. Sin eso vuelve la ambigüedad por otra puerta.
+- [ ] Al recibir, se crea `Material` o `Printer` según `nuevoTipo`. Una impresora
+      nace con el precio de la compra; sus horas de vida y consumo quedan en el
+      default y se corrigen desde el catálogo.
+- [ ] El formulario pregunta "¿filamento o impresora?" cuando elegís "algo nuevo".
+- [ ] Regresión: una línea con `nombreNuevo` y sin `nuevoTipo` es 400; recibir
+      una de tipo `PRINTER` crea una impresora y **no** un filamento.
+- [x] ⚠️ Verificado el 2026-10-09: **el bug no alcanzó a hacer daño**. En
+      producción hay 0 líneas con `nombreNuevo`, así que nadie usó ese camino
+      todavía. Las 4 fichas creadas ese día (Naranja, Rosado, Morado, Cyan) son
+      filamentos de verdad, cargados por el camino normal.
+
+### 1.2 El proveedor en Gastos (A5)
+
+Ya hay **7 gastos con proveedor** cargado y la tabla no lo muestra.
+
+- [ ] Columna "Proveedor" en la tabla de escritorio; en las tarjetas del
+      teléfono, debajo de la descripción.
+- [ ] Filtro por proveedor, con las mismas opciones que ya usa el formulario
+      (contactos con tipo Proveedor).
+- [ ] ⚠️ Verificar el ancho a 375 px: la tabla ya está justa.
+
+---
+
+## Fase 2 — Que la factura refleje lo que te cobraron (A3)
+
+Pediste 10 a $7 y te facturan $7.50. Hoy hay que corregir la línea antes de
+recibir, y si ya recibiste algo no se puede.
+
+**Regla:** la línea guarda **lo que pediste**; cada recepción guarda **lo que
+costó**. El total de la factura usa el precio real de lo ya recibido y el
+pedido para lo que falta.
+
+- [ ] `PurchaseReceiveSchema` acepta `unitPrice` opcional. Sin él, se usa el de
+      la línea (el caso normal: llegó a lo pactado).
+- [ ] `invoiceTotals` recibe, por línea, las recepciones con su precio. El total
+      deja de ser `Σ cantidad × precio pedido`.
+- [ ] ⚠️ Tests con números puestos a mano: 6 a $7.50 + 4 pendientes a $7 = 73,
+      no 70 ni 75.
+- [ ] La pantalla avisa cuando el precio informado difiere del pedido: es un
+      dato que cambia el total de la factura, no puede pasar en silencio.
+- [ ] Mutación: ignorar el precio informado y usar el de la línea tiene que
+      tumbar un test.
+
+---
+
+## Fase 3 — Saldo a favor con el proveedor (A2)
+
+Pagaste $100 de una factura de $85. Esos $15 no son un costo de esa compra: son
+plata tuya que el proveedor te debe.
+
+- [ ] Un abono puede marcarse como **tomado del saldo a favor** de ese
+      proveedor, con la factura de origen.
+- [ ] ⚠️ **Un abono tomado del saldo a favor NO mueve la caja.** Esa plata ya
+      salió cuando pagaste de más. Es la misma clase de doble carga que el gasto
+      nacido de una factura, y necesita su test con número clavado.
+- [ ] El saldo a favor **se deriva**: Σ pagado de más − Σ aplicado. Nada
+      guardado que pueda contradecir a sus partes.
+- [ ] La pantalla del proveedor (o de la factura) muestra cuánto tiene a favor.
+- [ ] No se puede aplicar más saldo del que hay, ni de otro proveedor.
+
+---
+
+## Fase 4 — Del faltante al pedido (B1)
+
+La app ya sabe qué colores están agotados o por acabarse; las facturas ya
+existen. Falta el eslabón.
+
+- [ ] Botón en **Stock del mes**: "Armar pedido con lo que falta".
+- [ ] Abre la factura nueva con una línea por cada filamento OUT o LOW, con la
+      cantidad sugerida y el último precio pagado como precio unitario.
+- [ ] Se puede sacar líneas y cambiar cantidades antes de guardar: es una
+      **propuesta**, no un pedido automático.
+- [ ] ⚠️ Un filamento descontinuado no entra en la propuesta aunque esté en cero.
+
+---
+
+## Fase 5 — Ver lo que debés y lo que no llegó
+
+### 5.1 Entregas atrasadas (B3)
+
+`expectedAt` se guarda desde el día uno y **nadie lo mira**.
+
+- [ ] En Compras: la factura con fecha pasada y mercadería pendiente se destaca.
+- [ ] En el Dashboard: un aviso corto con cuántas hay.
+- [ ] Una factura anulada o ya recibida entera **nunca** está atrasada.
+
+### 5.2 Los proveedores en la pantalla Deuda (B5)
+
+Hoy "cuánto debe el negocio" está partido en dos pantallas.
+
+- [ ] Tercer bloque en Deuda: lo que le debés a cada proveedor, derivado de las
+      facturas sin pagar.
+- [ ] La gestión de cada factura sigue en Compras: Deuda solo responde "cuánto".
+- [ ] ⚠️ El total de la pantalla tiene que ser la suma de los tres bloques. Un
+      total que no cuadre con sus partes es peor que no tenerlo.
+
+### 5.3 Lo comprometido, al lado del equilibrio (B2)
+
+- [ ] Junto al punto de equilibrio: "además debés $X de facturas".
+- [ ] ⚠️ **NO entra en el cálculo del equilibrio.** Una factura se paga una vez;
+      meterla entre los costos fijos haría saltar el número mes a mes y lo
+      volvería inútil para decidir precios.
+
+---
+
+## Fase 6 — Que la app te recuerde
+
+### 6.1 Contar el stock al cerrar el mes (C4)
+
+El último conteo es de **septiembre**.
+
+- [ ] Aviso cuando empieza un mes nuevo y el anterior quedó sin contar.
+- [ ] Se puede descartar: un recordatorio que no se puede callar se vuelve ruido
+      y entrena a ignorarlo.
+
+### 6.2 La recepción sugiere el conteo (C5)
+
+- [ ] Al contar, los rollos recibidos ese mes aparecen como punto de partida.
+- [ ] ⚠️ **Sugerir, no escribir.** El conteo es manual a propósito: su valor es
+      que alguien miró el estante. Un conteo autocompletado deja de ser un conteo.
+
+### 6.3 Recordar las lecturas de impresora (C3)
+
+Dos registros desde que existe la pantalla.
+
+- [ ] Aviso cuando pasó mucho desde la última lectura.
+- [ ] ⚠️ Si pasa un tiempo y sigue sin usarse, la conversación es sacarla del
+      menú, no insistir con el aviso.
+
+---
+
+## Fase 7 — Los nombres (C1/C6)
+
+Son cambios de **datos en producción**, sin migración.
+
+- [ ] ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria.**
+      Hoy es "vanan" y la Caja dice "lo que el negocio le debe a vanan".
+- [ ] Reescribir el concepto "Dinero de la caja usado por Vanan
+      (regularizacion)", que se ve en el desglose de Caja.
+- [ ] Los dos son un `UPDATE` de una fila. Se avisa y se espera OK, como todo lo
+      que toca producción.
+
+---
+
+## Lo que NO entra, y por qué
+
+| Qué | Por qué |
+|---|---|
+| **La tienda** | Feature futura para una landing de venta. Congelada por decisión del dueño. |
+| **Comparar proveedores** (B4) | No hay historia todavía: un proveedor y 7 gastos. |
+| **Caja con varios socios** (A4) | Hay un solo propietario. La puerta está abierta (la deuda ya se atribuye bien), falta solo mostrar cada bolsillo por separado. |
+| **Monedas distintas del USD en facturas** | Igual que en el módulo de compras: si hace falta, se suma después. |
+| **Devoluciones al proveedor** | Reemplazado por el saldo a favor (A2), que es lo que de verdad pasa. |
+
+---
+
+## Orden sugerido
+
+1. **Fase 1** — es un bug vivo y un dato que ya cargás y no ves.
+2. **Fase 4** — la que más valor agrega: cierra el circuito stock → pedido → inventario.
+3. **Fase 5** — ver lo que debés y lo que no llegó.
+4. **Fase 2** y **3** — precisión de las facturas, cuando el uso real las pida.
+5. **Fase 6** — los recordatorios.
+6. **Fase 7** — los nombres, en cualquier momento (es un `UPDATE`).
