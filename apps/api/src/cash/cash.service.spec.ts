@@ -54,6 +54,11 @@ function makePrisma() {
     loan: { ...vacio },
     counterparty: {
       findFirst: jest.fn().mockResolvedValue({ id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER' }),
+      // La lista completa: `idPagador` la necesita para saber a quién se le
+      // debe una fila que todavía no tiene `counterpartyId`.
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER', isDefault: true }]),
     },
     cashAccount: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -1268,6 +1273,10 @@ describe('Caja — la deuda destino del faltante', () => {
       { id: 'g-nueva', organizationId: ORG, date: new Date('2026-09-20'), amount: '50', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Tornillos', source: 'MANUAL' },
       { id: 'g-futura', organizationId: ORG, date: new Date('2026-10-20'), amount: '70', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Boquillas', source: 'MANUAL' },
       { id: 'g-ajena', organizationId: OTHER_ORG, date: new Date('2026-08-10'), amount: '40', paidBy: 'OWNER', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Gasto del otro negocio', source: 'MANUAL' },
+      // Lo puso la SOCIA: es deuda con ella, no con el propietario. `paidBy`
+      // dice OWNER porque el enum no distingue socios — por eso filtrar por él
+      // mezclaba los dos bolsillos.
+      { id: 'g-socia', organizationId: ORG, date: new Date('2026-08-02'), amount: '40', paidBy: 'OWNER', counterpartyId: 'cp2', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Filtro', source: 'MANUAL' },
     ],
     ownerMovement: [
       { id: 'mv-cp2', organizationId: ORG, date: new Date('2026-08-05'), kind: 'CONTRIBUTION', amount: '100', concept: 'Aporte de la socia', note: null, counterpartyId: 'cp2', refundable: true, source: 'MANUAL', cashReconciliationId: null },
@@ -1459,8 +1468,11 @@ describe('Caja — la deuda destino del faltante', () => {
     it('ofrece las deudas ELEGIBLES, filtradas como las filtra confirmar', async () => {
       const r = await plan(tablas(), ORG, 'r1');
 
-      // g-futura es posterior al conteo y mv-cp2 es de la socia: el servidor
-      // las va a ignorar, así que la pantalla tampoco puede ofrecerlas.
+      // g-futura es posterior al conteo; mv-cp2 y g-socia son de la socia: el
+      // servidor las va a ignorar, así que la pantalla tampoco puede ofrecerlas.
+      // ⚠️ g-socia tiene `paidBy = OWNER` (el enum no distingue socios): si el
+      // filtro mirara el enum en vez de la contraparte, entraría acá y el
+      // faltante de la cuenta del propietario se iría a cancelar deuda de ella.
       expect(r.obligations.map((o) => o.sourceId)).toEqual(['g-vieja', 'g-nueva']);
       expect(r.differenceUsd).toBe(-80);
       expect(r.kind).toBe('SHORT');
@@ -1535,5 +1547,80 @@ describe('La deuda destino muere en el PIPE, no en el servicio', () => {
 
     if (!query) throw new Error('falta @Query(new ZodValidationPipe(...)) en shortfallPlan');
     expect(query[1].pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+  });
+});
+
+/**
+ * A QUIÉN se le debe cada gasto, no solo de qué tipo era quien lo pagó.
+ *
+ * Filtrar las obligaciones por `paidBy === 'OWNER'` no mira a quién se le está
+ * preguntando: con un socio, los gastos de los dos se mezclan y cada uno ve
+ * como propia la deuda del otro. Con una sola contraparte propietaria el error
+ * es invisible — y la pantalla de Gastos ya deja elegir socio, así que es
+ * alcanzable.
+ */
+describe('CashService — a quién se le debe', () => {
+  const DUENO = { id: 'cp1', name: 'Dueño de prueba', kind: 'OWNER', isDefault: true };
+  const SOCIA = { id: 'cp2', name: 'Socia', kind: 'PARTNER', isDefault: false };
+  const EDWIN = { id: 'cp3', name: 'Señor Edwin', kind: 'EXTERNAL_LENDER', isDefault: false };
+
+  const gasto = (id: string, counterpartyId: string | null, paidBy = 'OWNER') => ({
+    id,
+    date: new Date('2026-09-23'),
+    amount: '50',
+    paidBy,
+    counterpartyId,
+    isInvestment: false,
+    category: 'CONSUMABLE',
+    materialId: null,
+    refundable: true,
+  });
+
+  /** El mock base, con las tres contrapartes y los gastos que se le pasen. */
+  const conGastos = (gastos: ReturnType<typeof gasto>[]) => {
+    const p = makePrisma();
+    p.counterparty.findMany.mockResolvedValue([DUENO, SOCIA, EDWIN]);
+    p.expense.findMany.mockResolvedValue(gastos);
+    return p;
+  };
+  const deudasDelDueno = async (gastos: ReturnType<typeof gasto>[]) =>
+    (await service(conGastos(gastos)).summary(ORG)).obligations.map(
+      (o: { sourceId: string }) => o.sourceId,
+    );
+
+  /**
+   * ⚠️ El gasto de la socia NO se le cuenta al propietario (eso se prueba en
+   * el arnés de conciliación, que pregunta por UNA contraparte) pero tampoco
+   * puede desaparecer: `summary()` recorre todos los bolsillos. Antes se le
+   * atribuía al propietario, que era mentira pero al menos se veía.
+   */
+  it('el gasto de la SOCIA sigue estando en la caja, no se pierde', async () => {
+    expect(await deudasDelDueno([gasto('g-socia', SOCIA.id)])).toEqual(['g-socia']);
+  });
+
+  it('el gasto del PROPIETARIO también', async () => {
+    expect(await deudasDelDueno([gasto('g-dueno', DUENO.id)])).toEqual(['g-dueno']);
+  });
+
+  it('un gasto sin migrar (solo el enum) sigue contando como del propietario', async () => {
+    expect(await deudasDelDueno([gasto('g-vieja', null)])).toEqual(['g-vieja']);
+  });
+
+  it('lo que pagó el prestamista tampoco es deuda con el propietario', async () => {
+    expect(await deudasDelDueno([gasto('g-edwin', EDWIN.id, 'LOAN')])).toEqual([]);
+  });
+
+  /**
+   * El saldo NO se mueve por esto: un gasto de la socia sale de la caja igual
+   * que uno del propietario. Lo que cambia es a quién se le debe.
+   */
+  it('el saldo del negocio es el mismo lo haya puesto el dueño o la socia', async () => {
+    const [conDueno, conSocia] = await Promise.all(
+      [DUENO.id, SOCIA.id].map(async (cp) =>
+        (await service(conGastos([gasto('g', cp)])).summary(ORG)).balance.balance,
+      ),
+    );
+
+    expect(conSocia).toBe(conDueno);
   });
 });

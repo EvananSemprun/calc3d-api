@@ -193,6 +193,7 @@ describe('Aislamiento multi-tenant — Caja', () => {
       debtApplication: filtra([]),
       cashAccount: filtra([]),
       cashReconciliation: filtra([]),
+      counterparty: filtra([]),
       settings: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 

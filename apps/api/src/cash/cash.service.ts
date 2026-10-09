@@ -53,6 +53,27 @@ const n = (x: unknown) => Number(x);
  */
 const pagador = (p: 'BUSINESS' | 'OWNER' | 'LOAN'): PayerKind | null =>
   p === 'BUSINESS' ? null : p === 'OWNER' ? 'OWNER' : 'EXTERNAL_LENDER';
+
+/**
+ * De qué TIPO es quien puso la plata, para el motor.
+ *
+ * La contraparte manda; sin ella —fila anterior al backfill— lo dice el enum.
+ * ⚠️ El tipo sale de la contraparte **directamente** y no pasando por
+ * `idPagador`: si la organización se quedara sin contraparte propietaria, un
+ * gasto con `paidBy = OWNER` caería a `null` y el motor lo contaría como
+ * pagado por la caja. Eso MUEVE el saldo. Acá no hay nada que deducir.
+ */
+const tipoPagador = (
+  fila: { counterpartyId: string | null; paidBy: 'BUSINESS' | 'OWNER' | 'LOAN' },
+  contrapartes: { id: string; kind: string }[],
+): PayerKind | null => {
+  if (!fila.counterpartyId) return pagador(fila.paidBy);
+  const kind = contrapartes.find((c) => c.id === fila.counterpartyId)?.kind;
+  if (kind === 'EXTERNAL_LENDER') return 'EXTERNAL_LENDER';
+  if (kind === 'OWNER' || kind === 'PARTNER') return kind;
+  // Contraparte borrada o de otro tipo: el enum sigue siendo la verdad vieja.
+  return pagador(fila.paidBy);
+};
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */
@@ -105,7 +126,7 @@ export class CashService {
   /** Todos los datos crudos, una sola vez. */
   private async datos(organizationId: string) {
     const where = { organizationId };
-    const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings] =
+    const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes] =
       await Promise.all([
         // El desplegable necesita además el id (para el join con la etiqueta),
         // el texto de cada fila y su origen (la insignia "Importado").
@@ -132,6 +153,9 @@ export class CashService {
           include: { adjustment: { select: { id: true, amount: true, concept: true } } },
         }),
         this.prisma.settings.findUnique({ where: { organizationId } }),
+        // Hacen falta para saber A QUIÉN se le debe cada fila, no solo de qué
+        // TIPO era quien pagó. Ver `idPagador`.
+        this.prisma.counterparty.findMany({ where }),
       ]);
 
     // Lo aplicado a CADA obligación y lo aplicado POR cada pago.
@@ -152,7 +176,7 @@ export class CashService {
         id: g.id,
         date: dia(g.date),
         amount: n(g.amount),
-        payer: pagador(g.paidBy),
+        payer: tipoPagador(g, contrapartes),
         isInvestment: g.isInvestment,
         isFilament: g.materialId != null,
         refundable: g.refundable,
@@ -161,7 +185,7 @@ export class CashService {
         id: c.id,
         date: dia(c.date),
         amount: n(c.amount),
-        payer: pagador(c.paidBy),
+        payer: tipoPagador(c, contrapartes),
         refundable: c.refundable,
       })),
       movements: movimientos.map((m) => ({
@@ -176,9 +200,37 @@ export class CashService {
 
     return {
       ledger, ventas, abonos, gastos, cuotas, movimientos, prestamos, cuentas, conciliaciones,
-      porObligacion, porPago,
+      contrapartes, porObligacion, porPago,
       order: (settings?.debtApplicationOrder ?? 'OLDEST_FIRST') as ApplicationOrder,
     };
+  }
+
+  /**
+   * A QUIÉN se le debe esta fila. `null` = la puso la caja y no se le debe a nadie.
+   *
+   * ⚠️ **PUENTE.** `counterpartyId` manda; si está nulo —una fila anterior al
+   * backfill— se deduce del enum con la MISMA regla que `backfill-pagadores.mjs`:
+   * la propietaria por defecto y el único prestamista. Muere con la migración 2
+   * y queda `fila.counterpartyId` a secas.
+   *
+   * ⚠️ Esto es lo que arregla el filtro de `obligaciones()`: filtrar por
+   * `paidBy === 'OWNER'` NO mira a quién se le está preguntando, así que con un
+   * socio los gastos de los dos se mezclan y cada uno ve como propia la deuda
+   * del otro. Con una sola contraparte propietaria el error es invisible — y la
+   * pantalla de Gastos ya deja elegir socio, así que es alcanzable.
+   */
+  private idPagador(
+    d: Awaited<ReturnType<CashService['datos']>>,
+    fila: { counterpartyId: string | null; paidBy: 'BUSINESS' | 'OWNER' | 'LOAN' },
+  ): string | null {
+    if (fila.counterpartyId) return fila.counterpartyId;
+    if (fila.paidBy === 'BUSINESS') return null;
+    if (fila.paidBy === 'LOAN') {
+      const prestamistas = d.contrapartes.filter((c) => c.kind === 'EXTERNAL_LENDER');
+      return prestamistas.length === 1 ? prestamistas[0].id : null;
+    }
+    const duenos = d.contrapartes.filter((c) => c.kind === 'OWNER' || c.kind === 'PARTNER');
+    return (duenos.find((c) => c.isDefault) ?? duenos[0])?.id ?? null;
   }
 
   /** Las obligaciones de una contraparte, con lo ya aplicado. */
@@ -188,9 +240,15 @@ export class CashService {
     hasta?: string,
   ) {
     const vale = (f: Date) => !hasta || dia(f) <= hasta;
+    // Quien puso la plata es a quien se le debe, sea el dueño, un socio o el
+    // prestamista. No hace falta excluir al prestamista aparte: `summary()`
+    // pregunta por la contraparte PROPIETARIA, así que sus gastos no entran
+    // por el id, y su préstamo se cuenta por el saldo, no por acá.
+    const loPuso = (fila: { counterpartyId: string | null; paidBy: 'BUSINESS' | 'OWNER' | 'LOAN' }) =>
+      this.idPagador(d, fila) === counterpartyId;
     const items: ObligationInput[] = [
       ...d.gastos
-        .filter((g) => g.paidBy === 'OWNER' && g.refundable && vale(g.date))
+        .filter((g) => loPuso(g) && g.refundable && vale(g.date))
         .map((g) => ({
           source: 'EXPENSE' as const,
           sourceId: g.id,
@@ -204,7 +262,7 @@ export class CashService {
           applied: d.porObligacion.get(g.id) ?? 0,
         })),
       ...d.cuotas
-        .filter((c) => c.paidBy === 'OWNER' && c.refundable && vale(c.date))
+        .filter((c) => loPuso(c) && c.refundable && vale(c.date))
         .map((c) => ({
           source: 'LOAN_PAYMENT' as const,
           sourceId: c.id,
@@ -457,12 +515,30 @@ export class CashService {
   async summary(organizationId: string) {
     const cp = await this.defaultCounterparty(organizationId);
     const d = await this.datos(organizationId);
-    const deudas = this.obligaciones(d, cp.id);
+
+    /**
+     * La deuda de TODOS los que ponen plata de su bolsillo, no solo la de la
+     * contraparte por defecto.
+     *
+     * ⚠️ Sin esto, un gasto que el dueño le atribuya a un socio desde la
+     * pantalla de Gastos **desaparecería de Caja**: ya no se le cuenta al
+     * propietario (que es lo correcto) y nadie más lo pregunta. Antes se le
+     * atribuía al propietario, que era mentira pero al menos se veía.
+     *
+     * ⚠️ El encabezado sigue nombrando SOLO a la contraparte por defecto. Con
+     * un socio real hay que mostrar la deuda de cada uno por separado; hoy no
+     * hay ninguno, así que el total y las filas son exactamente los mismos.
+     */
+    const deTodos = d.contrapartes.filter((c) => c.kind === 'OWNER' || c.kind === 'PARTNER');
+    const deudas = deTodos.length
+      ? deTodos.flatMap((c) => this.obligaciones(d, c.id))
+      : this.obligaciones(d, cp.id);
+    const bolsillos = new Set(deTodos.length ? deTodos.map((c) => c.id) : [cp.id]);
 
     const financing = ownerFinancing({
       obligations: deudas,
       paymentsTotal: d.movimientos
-        .filter((m) => m.counterpartyId === cp.id && m.kind === 'WITHDRAWAL')
+        .filter((m) => m.counterpartyId && bolsillos.has(m.counterpartyId) && m.kind === 'WITHDRAWAL')
         .reduce((s, m) => s + n(m.amount), 0),
       lenderBalance: d.prestamos.reduce(
         (s, l) => s + loanBalance(n(l.principal), l.payments.map((p) => ({ amount: n(p.amount) }))),
