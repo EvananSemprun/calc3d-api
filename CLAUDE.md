@@ -653,6 +653,27 @@ en el repo web: se sobrescribe al sincronizar.
     contrapartes filtrando por TODAS las claves del `where` y aplicando el
     `orderBy` de verdad. Las dos mutaciones (sacar el filtro por organización,
     sacar el `orderBy`) **tumban un test cada una**. Muere con la migración 2.
+    ⚠️ **Caja ya lee A QUIÉN se le debe, no solo de qué tipo era quien pagó**
+    (2026-10-08). `idPagador()` en `cash.service.ts` resuelve la contraparte de
+    cada fila (`counterpartyId` manda; si está nulo, la regla del backfill) y
+    `obligaciones()` filtra por ella. Antes filtraba por `paidBy === 'OWNER'`
+    **sin mirar a quién se le pregunta**: con un socio, los gastos de los dos
+    se mezclaban y cada uno veía como propia la deuda del otro. Con una sola
+    contraparte el error es invisible — y la pantalla de Gastos ya deja elegir
+    socio, así que pasó a ser alcanzable. El **tipo** para el motor
+    (`tipoPagador`) sale de la contraparte directamente y NO pasa por
+    `idPagador`: sin contraparte propietaria, deducir por id daría `null` y el
+    motor contaría el gasto como pagado por la caja — eso MUEVE el saldo.
+    ⚠️ Y `summary()` recorre **todos los bolsillos** (OWNER + PARTNER), no solo
+    la contraparte por defecto: si no, el gasto atribuido a un socio
+    **desaparecería de Caja** — ya no se le cuenta al propietario (correcto) y
+    nadie más lo preguntaba. **El encabezado todavía nombra solo a la
+    contraparte por defecto**: con un socio real falta mostrar la deuda de cada
+    uno por separado. Hoy no hay ninguno, así que el total y las filas son los
+    mismos. Las tres mutaciones (filtrar por el enum, ignorar `counterpartyId`,
+    volver a preguntar solo por la contraparte por defecto) tumban 7, 4 y 1
+    tests. **Verificado contra la base real: las 10 líneas del saldo,
+    `owedToOwner` 1130.69, `owedToLender` 750 y las 18 obligaciones, idénticas.**
   - **Combobox creatable + listas administradas** (`catalog-options/`): la marca, el
     tipo y el color del **filamento** viven en una **lista administrada aparte**:
     tabla `CatalogOption` (por org, `kind` = MATERIAL_BRAND/MATERIAL_TYPE/
