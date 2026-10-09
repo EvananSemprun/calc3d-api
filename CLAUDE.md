@@ -144,10 +144,11 @@ en el repo web: se sobrescribe al sincronizar.
         del tiempo. Se lee con `businessDateKey`. Leerla con `toISOString()` la
         corre **un día para adelante** desde las 20:00 de Caracas.
 
-      Los dos backfill de `apps/api/prisma/` son el ejemplo vivo:
-      `backfill-caja.mjs` usa `toISOString` (toca `date`) y
-      `backfill-importado.mjs` usa `businessDateKey` (toca `createdAt`).
-      **Los dos están bien. "Unificar el helper" rompe uno de los dos.**
+      El ejemplo vivo: `cash.service.ts` lee `Expense.date` con `toISOString`
+      (fecha de negocio) y `backfill-importado.mjs` lee `createdAt` con
+      `businessDateKey` (instante real). **Los dos están bien. "Unificar el
+      helper" rompe uno de los dos.** (El tercer caso, `backfill-caja.mjs`, se
+      borró al caer el enum `paidBy`; vive en el historial.)
     - `Quote.code` = correlativo por organización (max+1, igual que `Order`); cada
       versión duplicada toma el suyo. Los presupuestos previos se numeraron en la
       migración; sin correlativo el documento sale como `S/N-{año}`.
@@ -505,7 +506,9 @@ en el repo web: se sobrescribe al sincronizar.
       negocio. Fijado en `common/multi-tenant.audit.spec.ts`.
     - `Settings` gana `reconciliationFrequency`, `reconciliationWeekday` y
       `debtApplicationOrder`. La frecuencia es un RECORDATORIO: no bloquea nada.
-    - **La fase 4 está terminada** (2026-10-10): `Expense` y `LoanPayment`
+    - **La fase 4 está terminada** (aplicada en producción el 2026-10-09;
+      ⚠️ la migración se llama `20261010100000_adios_paidby`, con fecha del día
+      siguiente, para quedar DESPUÉS de las del 09 sin ambigüedad): `Expense` y `LoanPayment`
       llevan `counterpartyId`, `null` = la caja pagó, y el enum `paidBy`
       **ya no existe**. Ver "Préstamos" abajo para las dos migraciones.
     - Tests: `cash.spec.ts`, `obligations.spec.ts`, `reconcile.spec.ts` (shared),
@@ -656,10 +659,9 @@ en el repo web: se sobrescribe al sincronizar.
     pantalla y contado de otra en Caja. Hoy `quienPago()` solo valida.
     `counterpartyId` viaja en el body: se filtra por organización o el id de
     otro negocio ataría el gasto —y su deuda— a alguien de afuera (**404**).
-    Regresión: 12 casos en `expenses.service.spec.ts`, con el mock de
-    contrapartes filtrando por TODAS las claves del `where` y aplicando el
-    `orderBy` de verdad. Las dos mutaciones (sacar el filtro por organización,
-    sacar el `orderBy`) **tumban un test cada una**. Muere con la migración 2.
+    Regresión en `expenses.service.spec.ts`; la mutación que saca el filtro por
+    organización tumba un test. ⚠️ De los 12 casos originales quedan 7: los
+    cinco que probaban la convivencia con el enum se fueron con él.
     ⚠️ **El proveedor de un gasto es un CONTACTO del directorio** desde la
     migración `20261009180000_proveedores_al_directorio`. Había dos formas de
     registrar un proveedor que no se hablaban: la tabla `Provider` (nombre y
@@ -789,13 +791,13 @@ en el repo web: se sobrescribe al sincronizar.
       aplicada, backfill corrido, y las 4 cifras de Caja, las 9 líneas del saldo,
       el saldo del préstamo y las 19 obligaciones **idénticas** antes y después.
       Lo único que cambia es que el acreedor se completa.
-    - ⚠️ **El prestamista nace con el nombre EQUIVOCADO y hay que renombrarlo a
-      mano.** `backfill-caja.mjs` lo creó con `loan.name` ("Deuda impresora
-      P2S") porque no tenía de dónde sacar el nombre real: eso es el concepto de
-      la deuda, no quién prestó la plata. El acreedor real es **Señor Edwin**
-      (dicho por el dueño el 2026-10-08). Es un `UPDATE` de una fila y **no hace
-      falta tocar la base**: se edita desde Configuración → Caja →
-      Contrapartes, que ya está en producción desde que salió Caja.
+    - ⚠️ **El prestamista nació con el nombre EQUIVOCADO.** El backfill de Caja
+      lo creó con `loan.name` ("Deuda impresora P2S") porque no tenía de dónde
+      sacar el nombre real: eso es el concepto de la deuda, no quién prestó la
+      plata. El acreedor real es **Señor Edwin**, y el dueño lo renombró en
+      producción el 2026-10-09 desde Configuración → Caja → Contrapartes — sin
+      tocar la base. Si alguna vez se monta otra organización, el prestamista
+      va a nacer igual de mal: el backfill no puede adivinarlo.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
     con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,
