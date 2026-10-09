@@ -53,7 +53,7 @@ function makePrisma(factura?: Record<string, unknown>) {
     purchaseInvoiceLine: { deleteMany: jest.fn(), update: jest.fn() },
     material: {
       ...tabla(FILAS.material),
-      create: jest.fn((_: unknown) => Promise.resolve({ id: 'mat-nuevo' })),
+      create: jest.fn(() => Promise.resolve({ id: 'mat-nuevo' })) as jest.Mock,
     },
     expense: { create: jest.fn() },
     purchaseInvoicePayment: { findFirst: jest.fn(() => Promise.resolve(null)), create: jest.fn(), update: jest.fn() },

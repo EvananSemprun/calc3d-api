@@ -345,7 +345,7 @@ export class PurchaseInvoicesService {
       // Una ficha que nace acá: el color que nunca compraste no existía hasta
       // que llegó. Marca, tipo y gramos se corrigen después desde la ficha.
       let matId = linea.materialId;
-      let impId = linea.printerId;
+      const impId = linea.printerId;
       if (!matId && !impId && linea.nombreNuevo) {
         if (linea.printerId === null && linea.materialId === null) {
           const nueva = await tx.material.create({
