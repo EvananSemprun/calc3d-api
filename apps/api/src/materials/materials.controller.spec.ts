@@ -65,19 +65,26 @@ describe('MaterialsController', () => {
     expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(':id');
   });
 
-  it('corregir la ficha solo acepta nombre y color: el precio sale de la compra', () => {
+  /**
+   * ⚠️ Marca y tipo SÍ se corrigen (2026-10-09): un rollo cargado como "PLA
+   * mate" que resultó ser otra cosa no tenía arreglo. Los **gramos** siguen
+   * afuera porque reescriben el costo por gramo de todas sus compras pasadas,
+   * y el precio porque sale SIEMPRE de la última compra. El servicio pasa el
+   * DTO entero a Prisma, así que el pipe es lo único que los detiene.
+   */
+  it('corregir la ficha acepta nombre, color, marca y tipo — nada más', () => {
     const dto = pipeDe('update').transform({
       name: ' PLA Negro ',
       color: 'Negro',
-      rollPrice: 1,
-      rollGrams: 250,
       brand: 'Otra',
       type: 'PETG',
+      rollPrice: 1,
+      rollGrams: 250,
       status: 'DISCONTINUED',
       organizationId: 'org-B',
     });
 
-    expect(dto).toEqual({ name: 'PLA Negro', color: 'Negro' });
+    expect(dto).toEqual({ name: 'PLA Negro', color: 'Negro', brand: 'Otra', type: 'PETG' });
   });
 
   it('corregir con el nombre en blanco es 400', () => {

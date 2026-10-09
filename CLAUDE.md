@@ -698,6 +698,17 @@ en el repo web: se sobrescribe al sincronizar.
     volver a preguntar solo por la contraparte por defecto) tumban 7, 4 y 1
     tests. **Verificado contra la base real: las 10 líneas del saldo,
     `owedToOwner` 1130.69, `owedToLender` 750 y las 18 obligaciones, idénticas.**
+  - ⚠️ **`GET /catalog-options` devuelve la lista administrada UNIDA a lo que
+    de verdad se usa** en las fichas (2026-10-09). Las dos divergían: el
+    importador del Excel escribió marcas, tipos y colores directo en `Material`
+    sin registrarlos, así que el desplegable **no ofrecía tipos que el dueño ya
+    usa** (vivo: "PLA PURE" en dos rollos) — los volvía a tipear y aparecían
+    variantes que rompen el agrupado del análisis. Lo que está en uso pero no
+    registrado viaja con **`id: null`**: se elige, pero no se borra (no hay
+    fila que borrar y el valor lo usa una ficha). Dedup sin distinguir
+    mayúsculas. 8 regresiones, con el mock filtrando por organización y
+    aplicando el `distinct`; las tres mutaciones (sacar la organización, sacar
+    el `toLowerCase`, no agregar los en uso) tumban 4, 2 y 4 tests.
   - **Combobox creatable + listas administradas** (`catalog-options/`): la marca, el
     tipo y el color del **filamento** viven en una **lista administrada aparte**:
     tabla `CatalogOption` (por org, `kind` = MATERIAL_BRAND/MATERIAL_TYPE/
@@ -1001,9 +1012,15 @@ en el repo web: se sobrescribe al sincronizar.
     Spec: `docs/superpowers/specs/2026-09-13-estado-material-design.md`.
   - **Sin página Materiales** (2026-09-14, shared 0.15.0) — la ficha se maneja
     desde Stock del mes. **No hay `POST /materials`**: una ficha nace de una compra
-    en Gastos. `PATCH /materials/:id` valida con `MaterialCorrectionSchema` (SOLO
-    `name` y `color`, decisión del dueño; marca, tipo, gramos y precio quedan como
-    nacieron). ⚠️ **El precio del filamento sale SOLO de la compra**: en
+    en Gastos. `PATCH /materials/:id` valida con `MaterialCorrectionSchema`:
+    `name`, `color`, **`brand` y `type`**. ⚠️ Marca y tipo entraron el
+    2026-10-09 **revirtiendo** la decisión del dueño del 2026-09-14 de dejarlos
+    como nacieron: sin eso, un rollo cargado como "PLA mate" que resultó ser
+    otra cosa no tenía arreglo. Corregirlos **reagrupa el análisis**, que es
+    para lo que sirve. **Los gramos y el precio siguen afuera**: los gramos
+    reescriben el costo por gramo de todas las compras pasadas de esa ficha, y
+    el precio sale SIEMPRE de la última compra. El servicio pasa el DTO entero
+    a Prisma, así que **el schema es lo único que los detiene** — hay test. ⚠️ **El precio del filamento sale SOLO de la compra**: en
     `createWithDefinition`, `kind: 'material'` exige `quantity ≥ 1` (400 "Indicá
     cuántos rollos compraste"), ignora `referenceField` (sin 400: un panel viejo lo
     manda) y pisa `data.rollPrice` con `purchaseCostPerRoll`. `DELETE /materials/:id`

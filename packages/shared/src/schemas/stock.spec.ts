@@ -88,23 +88,39 @@ describe('MaterialStatusUpdateSchema', () => {
 });
 
 /**
- * Corregir una ficha (2026-09-14): solo nombre y color, para tipeos. El precio
- * sale de la compra; marca, tipo y gramos quedan como nacieron.
+ * Corregir una ficha: nombre, color, marca y tipo (los dos últimos desde el
+ * 2026-10-09). El precio sale de la compra y los gramos quedan como nacieron.
  */
 describe('MaterialCorrectionSchema', () => {
-  it('solo deja nombre y color: el precio y el resto se descartan', () => {
+  it('deja nombre, color, marca y tipo; lo demás se descarta', () => {
     const r = MaterialCorrectionSchema.parse({
       name: ' PLA Negro ',
       color: ' Negro ',
+      brand: ' Bambu Lab ',
+      type: ' PETG ',
       rollPrice: 1,
       rollGrams: 250,
-      brand: 'Otra',
-      type: 'PETG',
       status: 'DISCONTINUED',
       organizationId: 'org-B',
     });
 
-    expect(r).toEqual({ name: 'PLA Negro', color: 'Negro' });
+    expect(r).toEqual({ name: 'PLA Negro', color: 'Negro', brand: 'Bambu Lab', type: 'PETG' });
+  });
+
+  /**
+   * ⚠️ Los gramos reescriben el costo POR GRAMO de todas las compras pasadas de
+   * esa ficha. Que el schema los descarte es lo único que lo impide: el
+   * servicio pasa el DTO entero a Prisma.
+   */
+  it('los gramos del rollo NO se pueden corregir, aunque vengan en el body', () => {
+    expect(MaterialCorrectionSchema.parse({ rollGrams: 250 })).toEqual({});
+  });
+
+  it('marca y tipo vacíos quedan sin marca y sin tipo', () => {
+    expect(MaterialCorrectionSchema.parse({ brand: '', type: '  ' })).toEqual({
+      brand: null,
+      type: null,
+    });
   });
 
   it('un nombre en blanco no vale', () => {

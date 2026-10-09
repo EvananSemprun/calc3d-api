@@ -17,19 +17,31 @@ export const MaterialStatusUpdateSchema = z.object({ status: MaterialStatusSchem
 export type MaterialStatusUpdateDto = z.infer<typeof MaterialStatusUpdateSchema>;
 
 /**
- * Corregir una ficha (`PATCH /materials/:id`, 2026-09-14). Solo nombre y color:
- * es para arreglar tipeos. El precio del rollo sale SIEMPRE de la compra y
- * marca, tipo y gramos quedan como nacieron (decisión del dueño). Lo que no está
- * acá se descarta, como en el resto de los schemas.
+ * Corregir una ficha (`PATCH /materials/:id`). Nombre, color, **marca y tipo**.
+ *
+ * ⚠️ Marca y tipo entraron el 2026-10-09, revirtiendo la decisión del
+ * 2026-09-14 de dejarlos como nacieron: sin eso, un rollo cargado como "PLA
+ * mate" que resultó ser otra cosa no tenía arreglo. Corregirlos **reagrupa el
+ * análisis** por marca y por tipo, que es justamente para lo que sirve.
+ *
+ * ⚠️ **Los gramos del rollo NO se pueden corregir acá, y es a propósito**: el
+ * costo POR GRAMO de todas las compras pasadas de esa ficha se calcula con
+ * ellos, así que cambiarlos reescribe el histórico. El precio del rollo
+ * tampoco: sale SIEMPRE de la compra. Lo que no está acá se descarta, como en
+ * el resto de los schemas.
  */
+const textoOpcional = z
+  .string()
+  .trim()
+  .nullable()
+  .optional()
+  .transform((v) => (v === '' ? null : v));
+
 export const MaterialCorrectionSchema = z.object({
   name: z.string().trim().min(1, 'El nombre es obligatorio').optional(),
-  color: z
-    .string()
-    .trim()
-    .nullable()
-    .optional()
-    .transform((v) => (v === '' ? null : v)),
+  color: textoOpcional,
+  brand: textoOpcional,
+  type: textoOpcional,
 });
 export type MaterialCorrectionDto = z.infer<typeof MaterialCorrectionSchema>;
 

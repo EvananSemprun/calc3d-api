@@ -222,7 +222,14 @@ export const CatalogOptionUpdateSchema = z.object({
 export type CatalogOptionUpdateDto = z.infer<typeof CatalogOptionUpdateSchema>;
 
 export interface CatalogOptionView {
-  id: string;
+  /**
+   * `null` = el valor está EN USO en alguna ficha pero no es una fila de la
+   * lista administrada (típico de lo que entró por el importador del Excel).
+   * Se ofrece igual —si no, el desplegable escondería los tipos que ya usás y
+   * los volverías a tipear, creando variantes— pero no se puede borrar: no hay
+   * fila que borrar, y el valor lo sigue usando una ficha.
+   */
+  id: string | null;
   kind: CatalogOptionKind;
   value: string;
 }

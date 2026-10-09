@@ -25,7 +25,13 @@ export class MaterialsController {
     return this.service.list(user.organizationId);
   }
 
-  /** Corregir tipeos: solo nombre y color. El precio no se toca a mano. */
+  /**
+   * Corregir la ficha: nombre, color, marca y tipo.
+   *
+   * ⚠️ Los **gramos del rollo** y el **precio** quedan afuera a propósito: los
+   * gramos reescriben el costo por gramo de todas las compras pasadas, y el
+   * precio sale SIEMPRE de la última compra.
+   */
   @Patch(':id')
   update(
     @CurrentUser() user: AuthUser,
