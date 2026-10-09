@@ -21,7 +21,6 @@ export class BackupService {
       printers,
       components,
       clients,
-      providers,
       sales,
       expenses,
       orders,
@@ -32,8 +31,9 @@ export class BackupService {
       this.prisma.material.findMany({ where: { organizationId } }),
       this.prisma.printer.findMany({ where: { organizationId } }),
       this.prisma.component.findMany({ where: { organizationId } }),
+      // Los proveedores viajan acá adentro desde 2026-10-09: son contactos
+      // con `type = SUPPLIER`, no una tabla aparte.
       this.prisma.client.findMany({ where: { organizationId } }),
-      this.prisma.provider.findMany({ where: { organizationId } }),
       this.prisma.sale.findMany({ where: { organizationId } }),
       this.prisma.expense.findMany({ where: { organizationId } }),
       this.prisma.order.findMany({ where: { organizationId }, include: { payments: true } }),
@@ -51,7 +51,6 @@ export class BackupService {
         printers,
         components,
         clients,
-        providers,
         sales,
         expenses,
         orders,

@@ -13,6 +13,7 @@ function makePrisma() {
     },
     material: { update: jest.fn(), updateMany: jest.fn() },
     counterparty: { findFirst: jest.fn(), findMany: jest.fn() },
+    client: { findFirst: jest.fn(), create: jest.fn() },
   };
 }
 
@@ -591,5 +592,101 @@ describe('ExpensesService — quién pagó', () => {
       counterpartyId: null,
       paidBy: 'BUSINESS',
     });
+  });
+});
+
+/**
+ * EL PROVEEDOR, que desde 2026-10-09 es un contacto del directorio.
+ *
+ * Antes era una tabla aparte con su propia página, y el id del body se
+ * escribía CRUDO: con el de otro negocio, el nombre de SU contacto salía a la
+ * vista en Compras de filamento y en la hoja de Gastos del Excel.
+ */
+describe('ExpensesService — el proveedor', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+  let service: ExpensesService;
+
+  const GASTO = {
+    date: '2026-10-09',
+    category: 'CONSUMABLE',
+    description: 'Rollo',
+    amount: 20,
+    isInvestment: false,
+  };
+  const CONTACTOS = [
+    { id: 'ct-strato', organizationId: ORG, name: 'StratoFill', type: 'SUPPLIER' },
+    { id: 'ct-cliente', organizationId: ORG, name: 'Daelis Rivero', type: 'CLIENT' },
+    { id: 'ct-ajeno', organizationId: OTRA_ORG, name: 'Proveedor ajeno', type: 'SUPPLIER' },
+  ];
+  const guardado = () => prisma.expense.create.mock.calls[0][0].data;
+
+  /** Modela la base: filtra por TODAS las claves, incluido el `equals/insensitive`. */
+  const coincideContacto = (fila: any, where: Record<string, any>) =>
+    Object.entries(where).every(([k, v]) =>
+      v && typeof v === 'object' && 'equals' in v
+        ? String(fila[k]).toLowerCase() === String(v.equals).toLowerCase()
+        : fila[k] === v,
+    );
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    conContrapartes(prisma);
+    prisma.expense.create.mockResolvedValue({ id: 'e-1' });
+    prisma.expense.update.mockResolvedValue({ id: 'e-1' });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.client.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(CONTACTOS.find((c) => coincideContacto(c, where)) ?? null),
+    );
+    prisma.client.create.mockImplementation(({ data }: any) =>
+      Promise.resolve({ id: 'ct-nuevo', ...data }),
+    );
+    service = new ExpensesService(prisma as any);
+  });
+
+  it('un proveedor de OTRA organización → 404 y no escribe nada', async () => {
+    await expect(
+      service.create(ORG, { ...GASTO, providerId: 'ct-ajeno' } as any),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.expense.create).not.toHaveBeenCalled();
+  });
+
+  // El hermano alcanzable: sin esto, lo de arriba pasaría con un servicio que
+  // rechazara SIEMPRE.
+  it('un proveedor de MI organización sí se guarda', async () => {
+    await service.create(ORG, { ...GASTO, providerId: 'ct-strato' } as any);
+    expect(guardado().providerId).toBe('ct-strato');
+  });
+
+  it('un contacto que NO es proveedor tampoco sirve', async () => {
+    await expect(
+      service.create(ORG, { ...GASTO, providerId: 'ct-cliente' } as any),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('un nombre nuevo crea el contacto como proveedor y lo enlaza', async () => {
+    await service.create(ORG, { ...GASTO, providerName: 'Filaven' } as any);
+
+    expect(prisma.client.create).toHaveBeenCalledWith({
+      data: { organizationId: ORG, name: 'Filaven', type: 'SUPPLIER' },
+    });
+    expect(guardado().providerId).toBe('ct-nuevo');
+  });
+
+  /** Si no, "StratoFill" y "stratofill" terminan siendo dos proveedores. */
+  it('un nombre que ya existe con otras mayúsculas REUSA el contacto', async () => {
+    await service.create(ORG, { ...GASTO, providerName: '  stratofill ' } as any);
+
+    expect(prisma.client.create).not.toHaveBeenCalled();
+    expect(guardado().providerId).toBe('ct-strato');
+  });
+
+  it('un PATCH que no habla del proveedor no lo toca', async () => {
+    await service.update(ORG, 'e-1', { amount: 5 } as any);
+    expect(prisma.expense.update.mock.calls[0][0].data).not.toHaveProperty('providerId');
+  });
+
+  it('un PATCH con proveedor en null se lo saca', async () => {
+    await service.update(ORG, 'e-1', { providerId: null } as any);
+    expect(prisma.expense.update.mock.calls[0][0].data).toMatchObject({ providerId: null });
   });
 });

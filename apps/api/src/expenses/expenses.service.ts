@@ -119,8 +119,52 @@ export class ExpensesService {
     });
   }
 
+  /**
+   * EL PROVEEDOR, resuelto contra el directorio.
+   *
+   * ⚠️ `providerId` viaja en el body y hasta 2026-10-09 se escribía CRUDO. Con
+   * el id de otro negocio, el nombre de SU contacto salía a la vista en
+   * Compras de filamento y en la hoja de Gastos del Excel. Por eso el
+   * `findFirst` con la organización.
+   *
+   * `providerName` es el alta al vuelo: si el proveedor todavía no existe se
+   * crea como contacto en vez de cortarte el formulario para mandarte al
+   * directorio. Se busca por nombre sin distinguir mayúsculas para no terminar
+   * con "StratoFill" y "stratofill" como dos proveedores distintos.
+   */
+  private async resolverProveedor(
+    organizationId: string,
+    dto: { providerId?: string | null; providerName?: string | null },
+  ): Promise<{ providerId: string | null } | undefined> {
+    if (dto.providerId) {
+      const cp = await this.prisma.client.findFirst({
+        where: { id: dto.providerId, organizationId, type: 'SUPPLIER' },
+      });
+      if (!cp) throw new NotFoundException('No existe ese proveedor');
+      return { providerId: cp.id };
+    }
+
+    const nombre = dto.providerName?.trim();
+    if (nombre) {
+      const existente = await this.prisma.client.findFirst({
+        where: { organizationId, type: 'SUPPLIER', name: { equals: nombre, mode: 'insensitive' } },
+      });
+      if (existente) return { providerId: existente.id };
+      const creado = await this.prisma.client.create({
+        data: { organizationId, name: nombre, type: 'SUPPLIER' },
+      });
+      return { providerId: creado.id };
+    }
+
+    // `null` explícito = sacarle el proveedor; ausente = no tocarlo.
+    return dto.providerId === undefined && dto.providerName === undefined
+      ? undefined
+      : { providerId: null };
+  }
+
   async create(organizationId: string, dto: ExpenseCreateDto) {
     const quien = await this.quienPago(organizationId, dto);
+    const proveedor = await this.resolverProveedor(organizationId, dto);
     const gasto = await this.prisma.expense.create({
       data: {
         organizationId,
@@ -131,7 +175,7 @@ export class ExpensesService {
         isInvestment: dto.isInvestment,
         quantity: dto.quantity ?? null,
         endDate: dto.endDate ? new Date(dto.endDate) : null,
-        providerId: dto.providerId || null,
+        ...(proveedor ?? { providerId: null }),
         materialId: dto.materialId || null,
         printerId: dto.printerId || null,
         componentId: dto.componentId || null,
@@ -188,6 +232,7 @@ export class ExpensesService {
     // Fuera de la transacción a propósito: solo LEE, y resolver la contraparte
     // adentro alargaría la transacción sin ganar nada.
     const quien = await this.quienPago(organizationId, expense);
+    const proveedor = await this.resolverProveedor(organizationId, expense);
 
     return this.prisma.$transaction(async (tx) => {
       const model = (tx as unknown as Record<string, CatalogDelegate>)[link.kind];
@@ -237,7 +282,7 @@ export class ExpensesService {
           amount: expense.amount,
           isInvestment: expense.isInvestment,
           quantity: expense.quantity ?? null,
-          providerId: expense.providerId || null,
+          ...(proveedor ?? { providerId: null }),
           ...(quien ?? { paidBy: expense.paidBy }),
           [linkField]: linkId,
         },
@@ -249,6 +294,7 @@ export class ExpensesService {
   async update(organizationId: string, id: string, dto: ExpenseUpdateDto) {
     await this.ensureOwned(organizationId, id);
     const quien = await this.quienPago(organizationId, dto);
+    const proveedor = await this.resolverProveedor(organizationId, dto);
     return this.prisma.expense.update({
       where: { id },
       data: {
@@ -259,7 +305,7 @@ export class ExpensesService {
         ...(dto.isInvestment != null && { isInvestment: dto.isInvestment }),
         ...(dto.quantity !== undefined && { quantity: dto.quantity ?? null }),
         ...(dto.endDate !== undefined && { endDate: dto.endDate ? new Date(dto.endDate) : null }),
-        ...(dto.providerId !== undefined && { providerId: dto.providerId || null }),
+        ...proveedor,
         ...(dto.materialId !== undefined && { materialId: dto.materialId || null }),
         ...(dto.printerId !== undefined && { printerId: dto.printerId || null }),
         ...(dto.componentId !== undefined && { componentId: dto.componentId || null }),

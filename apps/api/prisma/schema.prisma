@@ -127,7 +127,6 @@ model Organization {
   printers        Printer[]
   components      Component[]
   clients         Client[]
-  providers       Provider[]
   sales           Sale[]
   expenses        Expense[]
   exchangeRates   ExchangeRate[]
@@ -402,22 +401,11 @@ model Client {
   sales          Sale[]
   orders         Order[]
   storeRequests  StoreRequest[]
+  /// Los gastos en los que este contacto es el proveedor.
+  expensesAsProvider Expense[] @relation("GastosDelProveedor")
 
   @@index([organizationId])
   @@index([organizationId, type])
-}
-
-// Proveedor de cualquier gasto (tienda, marca, mayorista…). Enlace OPCIONAL.
-model Provider {
-  id             String       @id @default(cuid())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId String
-  name           String
-  contact        String?
-  createdAt      DateTime     @default(now())
-  expenses       Expense[]
-
-  @@index([organizationId])
 }
 
 // Un presupuesto guarda un SNAPSHOT del CalcInput y de los totales calculados,
@@ -480,8 +468,13 @@ model Expense {
   component   Component? @relation(fields: [componentId], references: [id], onDelete: SetNull)
   componentId String?
 
-  // Proveedor opcional (independiente del enlace de catálogo).
-  provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  /// A QUIÉN le compraste. Es un contacto del directorio, no una tabla aparte.
+  ///
+  /// ⚠️ Hasta 2026-10-09 apuntaba a una tabla `Provider` propia, con nombre y
+  /// teléfono y nada más, y el directorio tenía su propio tipo "Proveedor":
+  /// dos lugares para la misma cosa que no se hablaban. La migración copió la
+  /// única fila CONSERVANDO SU id, así que ninguna llave quedó colgando.
+  provider   Client? @relation("GastosDelProveedor", fields: [providerId], references: [id], onDelete: SetNull)
   providerId String?
 
   // Publicidad (Fase 1): un gasto ADVERTISING puede enlazar a una campaña. La tasa

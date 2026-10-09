@@ -12,7 +12,6 @@ import { PrintersModule } from './printers/printers.module';
 import { ComponentsModule } from './components/components.module';
 import { CatalogOptionsModule } from './catalog-options/catalog-options.module';
 import { ClientsModule } from './clients/clients.module';
-import { ProvidersModule } from './providers/providers.module';
 import { CalcModule } from './calc/calc.module';
 import { ExportModule } from './export/export.module';
 import { SalesModule } from './sales/sales.module';
@@ -44,7 +43,6 @@ import { StorePublicModule } from './store-public/store-public.module';
     ComponentsModule,
     CatalogOptionsModule,
     ClientsModule,
-    ProvidersModule,
     CalcModule,
     ExportModule,
     SalesModule,

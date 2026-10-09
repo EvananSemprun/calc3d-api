@@ -653,6 +653,23 @@ en el repo web: se sobrescribe al sincronizar.
     contrapartes filtrando por TODAS las claves del `where` y aplicando el
     `orderBy` de verdad. Las dos mutaciones (sacar el filtro por organización,
     sacar el `orderBy`) **tumban un test cada una**. Muere con la migración 2.
+    ⚠️ **El proveedor de un gasto es un CONTACTO del directorio** desde la
+    migración `20261009180000_proveedores_al_directorio`. Había dos formas de
+    registrar un proveedor que no se hablaban: la tabla `Provider` (nombre y
+    teléfono) a la que apuntaba el gasto, y el directorio con su tipo
+    `SUPPLIER`, que además guarda RIF, dirección, ciudad y mapa. Ganó el
+    directorio. **La migración copia la fila CONSERVANDO SU id**: por eso un
+    `Expense.providerId` viejo sigue siendo válido apuntando al contacto; con
+    ids nuevos el `ON DELETE SET NULL` los habría puesto en null en silencio.
+    El `INSERT` y el `DROP TABLE` van juntos a propósito. Al desplegarlo había
+    **0 gastos con proveedor** (de 87), así que no movió un solo dato.
+    ⚠️ `providerId` viaja en el body y hasta ese día **se escribía crudo**: con
+    el id de otro negocio, el nombre de SU contacto salía en Compras de
+    filamento y en la hoja de Gastos del Excel. `resolverProveedor()` lo filtra
+    por organización y exige `type = SUPPLIER`. `providerName` es el alta al
+    vuelo (busca sin distinguir mayúsculas para no crear "StratoFill" y
+    "stratofill"). Regresión: 7 casos; las tres mutaciones (sacar la
+    organización, sacar el tipo, sacar el `insensitive`) tumban un test.
     ⚠️ **Caja ya lee A QUIÉN se le debe, no solo de qué tipo era quien pagó**
     (2026-10-08). `idPagador()` en `cash.service.ts` resuelve la contraparte de
     cada fila (`counterpartyId` manda; si está nulo, la regla del backfill) y

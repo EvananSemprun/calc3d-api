@@ -399,12 +399,6 @@ export const PaymentCreateSchema = z.object({
 });
 export type PaymentCreateDto = z.infer<typeof PaymentCreateSchema>;
 
-export const ProviderSchema = z.object({
-  name: z.string().min(1, 'El nombre es obligatorio'),
-  contact: z.string().optional().nullable(),
-});
-export type ProviderDto = z.infer<typeof ProviderSchema>;
-
 // ----- Productos (piezas costeadas reutilizables, Fase 4) -----
 
 
@@ -470,7 +464,17 @@ export const ExpenseCreateSchema = z.object({
   isInvestment: z.boolean().default(false),
   quantity: z.number().int().positive().optional().nullable(),
   endDate: z.string().optional().nullable(),
+  /**
+   * A quién le compraste: un contacto del directorio con tipo "Proveedor".
+   *
+   * ⚠️ Hasta 2026-10-09 era una tabla aparte con su propia página. Ahora es un
+   * contacto, así que el id se valida contra la organización: sin eso, el id
+   * de otro negocio dejaría el nombre de SU contacto a la vista en Compras de
+   * filamento y en el reporte de Excel.
+   */
   providerId: z.string().optional().nullable(),
+  /** Un proveedor que todavía no existe: se crea como contacto al guardar. */
+  providerName: z.string().trim().min(1).optional().nullable(),
   // Enlace opcional al catálogo (solo uno debería venir).
   materialId: z.string().optional().nullable(),
   printerId: z.string().optional().nullable(),
@@ -514,6 +518,7 @@ export const ExpenseWithDefinitionSchema = z.object({
     isInvestment: z.boolean().default(false),
     quantity: z.number().int().positive().nullable().optional(),
     providerId: z.string().nullable().optional(),
+    providerName: z.string().trim().min(1).optional().nullable(),
     paidBy: PaidBySchema.default('BUSINESS'),
     counterpartyId: z.string().min(1).optional().nullable(),
   }),
