@@ -132,6 +132,7 @@ model Organization {
   cashAccounts     CashAccount[]
   reconciliations  CashReconciliation[]
   debtApplications DebtApplication[]
+  purchaseInvoices PurchaseInvoice[]
 }
 
 model User {
@@ -284,6 +285,8 @@ model Material {
 
   expenses    Expense[]
   stockCounts StockCount[]
+  /// Las líneas de factura que piden este filamento.
+  purchaseLines PurchaseInvoiceLine[]
 
   @@index([organizationId])
 }
@@ -345,6 +348,8 @@ model Printer {
   loans    Loan[]
   orders   Order[]
   readings PrinterReading[]
+  /// Las líneas de factura que piden esta impresora.
+  purchaseLines PurchaseInvoiceLine[]
 
   @@index([organizationId])
 }
@@ -389,6 +394,8 @@ model Client {
   storeRequests  StoreRequest[]
   /// Los gastos en los que este contacto es el proveedor.
   expensesAsProvider Expense[] @relation("GastosDelProveedor")
+  /// Las facturas de compra que le comprás a este contacto.
+  purchaseInvoices   PurchaseInvoice[] @relation("FacturasDelProveedor")
 
   @@index([organizationId])
   @@index([organizationId, type])
@@ -470,6 +477,15 @@ model Expense {
   rate         Decimal?  @db.Decimal(18, 6)
   currencyCode String?
 
+  /// De qué línea de factura nació esta compra. `null` = se cargó directo.
+  ///
+  /// ⚠️ **Es lo que le dice a Caja que su plata YA se contó.** Un gasto nacido
+  /// de una factura no mueve el saldo: lo movieron los abonos de la factura.
+  /// Sin esto, abonar $50 y después recibir la compra de $50 bajaría el saldo
+  /// $100 — el mismo error que descuadraba la hoja del Excel.
+  purchaseInvoiceLine   PurchaseInvoiceLine? @relation(fields: [purchaseInvoiceLineId], references: [id], onDelete: SetNull)
+  purchaseInvoiceLineId String?
+
   /// QUIÉN PUSO LA PLATA. `null` = la caja del negocio.
   ///
   /// La cuenta de Binance mezcla la plata del negocio con la personal; sin este
@@ -494,6 +510,7 @@ model Expense {
   @@index([organizationId])
   @@index([organizationId, date])
   @@index([campaignId])
+  @@index([purchaseInvoiceLineId])
 }
 
 enum ExchangeRateSource {
@@ -1167,6 +1184,8 @@ model Counterparty {
   loans        Loan[]
   expenses     Expense[]
   loanPayments LoanPayment[]
+  /// Los abonos a facturas que puso esta contraparte de su bolsillo.
+  purchasePayments PurchaseInvoicePayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1197,6 +1216,7 @@ model CashAccount {
 
   reconciliations CashReconciliation[]
   loanPayments    LoanPayment[]
+  purchasePayments PurchaseInvoicePayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1284,4 +1304,108 @@ model DebtApplication {
   @@index([expenseId])
   @@index([loanPaymentId])
   @@index([obligationMovementId])
+}
+
+/// FACTURA O ENCARGO DE COMPRA: lo que pediste y todavía no llegó, o llegó y
+/// se pagó en cuotas. Solo para **filamento e impresoras** (decisión del dueño).
+///
+/// ⚠️ **Los abonos son la PLATA; la recepción es la MERCADERÍA.** Son dos
+/// momentos distintos y esto los separa: el saldo de la caja baja cuando
+/// abonás, el rollo entra al inventario cuando llega.
+///
+/// ⚠️ El total, lo pagado, lo que falta y si está recibida **se DERIVAN** de
+/// las líneas y los abonos. Guardarlos los dejaría contradiciendo a sus partes
+/// el día que alguien corrige una línea. Lo único que se guarda es `voidedAt`,
+/// porque anular es una decisión, no un cálculo.
+model PurchaseInvoice {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  /// A quién le comprás: un contacto del directorio con tipo SUPPLIER.
+  supplier   Client? @relation("FacturasDelProveedor", fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierId String?
+
+  /// Fecha de la factura o del encargo (fecha de NEGOCIO, medianoche UTC).
+  date       DateTime
+  /// Cuándo se espera que llegue. Es una expectativa, no un compromiso.
+  expectedAt DateTime?
+  /// Número de factura o del pedido, para reconciliar con el proveedor.
+  reference  String?
+  notes      String?
+
+  /// Anular, no borrar: una factura con abonos movió plata de verdad.
+  voidedAt   DateTime?
+  voidReason String?
+
+  lines    PurchaseInvoiceLine[]
+  payments PurchaseInvoicePayment[]
+
+  source    RecordSource @default(MANUAL)
+  createdAt DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([organizationId, date])
+}
+
+/// Una línea de la factura: qué se pidió, cuánto y a qué precio.
+model PurchaseInvoiceLine {
+  id        String          @id @default(cuid())
+  invoice   PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId String
+
+  /// Qué se compra: `materialId` **o** `printerId`, nunca los dos…
+  material   Material? @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  materialId String?
+  printer    Printer?  @relation(fields: [printerId], references: [id], onDelete: Restrict)
+  printerId  String?
+  /// …salvo que la ficha todavía NO EXISTA: un color que nunca compraste no
+  /// tiene ficha hasta que llega. Entonces la línea lleva su nombre y la ficha
+  /// nace al recibirla.
+  nombreNuevo String?
+
+  quantity  Int
+  unitPrice Decimal @db.Decimal(12, 4)
+
+  /// Cuántos de esos ya llegaron. Nunca mayor que `quantity`: la guarda vive
+  /// en el servicio, porque un CHECK no puede comparar contra otra columna
+  /// calculada en el mismo momento.
+  received Int @default(0)
+
+  /// Los gastos que generó: uno por recepción (pueden ser varias parciales).
+  expenses Expense[]
+
+  @@index([invoiceId])
+}
+
+/// Un abono a la factura. **Esto es lo que mueve la caja.**
+model PurchaseInvoicePayment {
+  id             String          @id @default(cuid())
+  invoice        PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId      String
+  /// Desnormalizado para poder scopear sin pasar por la factura.
+  organizationId String
+
+  date   DateTime
+  amount Decimal  @db.Decimal(12, 4)
+
+  /// QUIÉN puso la plata. `null` = la caja del negocio; si no, el negocio se
+  /// la debe a esa contraparte, igual que un gasto de su bolsillo.
+  counterparty   Counterparty? @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  counterpartyId String?
+
+  /// De qué cuenta salió, si se sabe.
+  account   CashAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  accountId String?
+
+  note String?
+
+  /// Anular, no borrar: igual que las cuotas del préstamo.
+  voidedAt   DateTime?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([organizationId])
 }
