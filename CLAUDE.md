@@ -798,6 +798,33 @@ en el repo web: se sobrescribe al sincronizar.
       producción el 2026-10-09 desde Configuración → Caja → Contrapartes — sin
       tocar la base. Si alguna vez se monta otra organización, el prestamista
       va a nacer igual de mal: el backfill no puede adivinarlo.
+  - **Facturas de compra (2026-10-09, shared 0.32.0)** (`purchase-invoices/`):
+    lo pedido, lo abonado y lo recibido, para **filamento e impresoras**.
+    ⚠️ **LA REGLA: los abonos son la PLATA; la recepción es la MERCADERÍA.** Un
+    `Expense` nacido de una factura lleva `purchaseInvoiceLineId` y queda
+    **fuera de las líneas de dinero** de Caja: su plata ya se contó al abonar.
+    Sin eso, abonar $50 y recibir esa compra de $50 bajaría el saldo $100 — la
+    doble carga que descuadraba la hoja del Excel. Test con número clavado en
+    `cash.spec.ts`; las tres mutaciones lo tumban.
+    - El abono se reparte entre `filament` y `equipment` **a prorrata de su
+      factura**. Es una CONVENCIÓN, no un hecho: un abono no fue a una línea
+      concreta. Se hace así para que "Filamento comprado" siga queriendo decir
+      *todo el filamento que compraste*. Con facturas de una sola cosa es exacto.
+    - Total, pagado, saldo, recibido y estado **se DERIVAN** (`invoiceTotals`,
+      `invoiceStatus` en shared). Lo único guardado es `voidedAt`.
+    - **El estado son DOS ejes.** Pagada y sin recibir es lo normal al encargar.
+    - ⚠️ **Una factura con mercadería recibida no se corrige ni se anula.** Esa
+      recepción ya creó un gasto; rehacer las líneas lo dejaría apuntando a una
+      borrada, el `ON DELETE SET NULL` lo volvería un gasto normal, y ese SÍ
+      mueve la caja. Doble carga por la puerta de atrás.
+    - Al recibir, el monto **no viaja en el body**: sale de cantidad × precio
+      unitario. Si lo mandara el cliente, dos recepciones podrían sumar algo
+      distinto del total sin que nadie se entere. Todo en UNA transacción: un
+      gasto sin subir `received` dejaría la línea pidiendo lo que ya llegó.
+    - El precio del rollo lo recalcula **`ExpensesService`**, inyectado: la
+      misma regla que una compra directa. Recalcularlo aparte daría dos
+      verdades el día que cambie.
+    - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md`.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
     con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,

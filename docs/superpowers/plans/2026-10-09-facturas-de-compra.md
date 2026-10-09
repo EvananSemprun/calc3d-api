@@ -117,70 +117,73 @@ partes el día que alguien corrige una línea.
 
 ### 1. La ficha editable: marca y tipo
 
-- [ ] `MaterialCorrectionSchema` suma `brand` y `type` (nulables, se recortan).
+- [x] `MaterialCorrectionSchema` suma `brand` y `type` (nulables, se recortan).
       Los **gramos siguen afuera**: reescriben el costo por gramo de todas las
       compras pasadas de esa ficha.
-- [ ] `FichaDialog` dibuja los dos como `Combobox` creables (las mismas listas
+- [x] `FichaDialog` dibuja los dos como `Combobox` creables (las mismas listas
       administradas que usa el alta: `MATERIAL_BRAND`, `MATERIAL_TYPE`).
-- [ ] Test: corregir el tipo reagrupa el análisis; el `rollGrams` del body se
+- [x] Test: corregir el tipo reagrupa el análisis; el `rollGrams` del body se
       descarta aunque venga.
-- [ ] Actualizar en `calc3d-api/CLAUDE.md` la línea que dice "marca, tipo y
+- [x] Actualizar en `calc3d-api/CLAUDE.md` la línea que dice "marca, tipo y
       gramos quedan como nacieron": era una decisión del dueño y cambió.
-- [ ] `git commit`
+- [x] `git commit`
 
 ### 2. El modelo y la migración
 
-- [ ] Los tres modelos + `Expense.purchaseInvoiceLineId` + el enum de estado.
-- [ ] Migración **puramente aditiva**: ninguna columna existente se toca.
-- [ ] `git commit`
+- [x] Los tres modelos + `Expense.purchaseInvoiceLineId` + el enum de estado.
+- [x] Migración **puramente aditiva**: ninguna columna existente se toca.
+- [x] `git commit`
 
 ### 3. El motor: la factura y su saldo
 
-- [ ] En `shared`: `invoiceTotals(lines, payments)` → `{ total, pagado, saldo,
+- [x] En `shared`: `invoiceTotals(lines, payments)` → `{ total, pagado, saldo,
       recibidoTotal, pendienteTotal }`, puro y con decimal.js.
-- [ ] Tests con números clavados, **no derivados del propio motor**.
-- [ ] `git commit`
+- [x] Tests con números clavados, **no derivados del propio motor**.
+- [x] `git commit`
 
 ### 4. Caja: la plata del abono, UNA sola vez
 
-- [ ] `CashLedger` suma `purchasePayments`: salen de la caja cuando
+- [x] `CashLedger` suma `purchasePayments`: salen de la caja cuando
       `counterpartyId` es null, y generan deuda con la contraparte cuando no.
-- [ ] `cashEntries` **excluye los `Expense` con `purchaseInvoiceLineId`**.
-- [ ] ⚠️ Test de la invariante: abonar $50 y recibir la compra de $50 baja el
+- [x] `cashEntries` **excluye los `Expense` con `purchaseInvoiceLineId`**.
+- [x] ⚠️ Test de la invariante: abonar $50 y recibir la compra de $50 baja el
       saldo **$50, no $100**. Con número clavado.
-- [ ] Verificación por mutación: quitar la exclusión tiene que tumbarlo.
-- [ ] `git commit`
+- [x] Verificación por mutación: quitar la exclusión tiene que tumbarlo.
+- [x] `git commit`
 
 ### 5. La API
 
-- [ ] CRUD de facturas con sus líneas; `POST /purchase-invoices/:id/payments`
+- [x] CRUD de facturas con sus líneas; `POST /purchase-invoices/:id/payments`
       y su anulación (POST con motivo, no DELETE — igual que las cuotas).
-- [ ] `POST /purchase-invoices/:id/lines/:lineId/receive` con la cantidad
+- [x] `POST /purchase-invoices/:id/lines/:lineId/receive` con la cantidad
       recibida: crea el `Expense` (con su `purchaseInvoiceLineId`), sube
       `received` y dispara `recalcularPrecioDelRollo`.
-- [ ] Guardas: no recibir más de lo pedido; `supplierId` y `counterpartyId`
+- [x] Guardas: no recibir más de lo pedido; `supplierId` y `counterpartyId`
       filtrados por organización (viajan en el body); una línea apunta a
       material **o** impresora, nunca a las dos.
-- [ ] Regresiones de las tres guardas, cada una con su hermano alcanzable.
-- [ ] `git commit`
+- [x] Regresiones de las tres guardas, cada una con su hermano alcanzable.
+- [x] `git commit`
 
 ### 6. La pantalla
 
-- [ ] `/filament/facturas` (o Compras → pestaña): lista con lo que falta pagar
+- [x] `/filament/facturas` (o Compras → pestaña): lista con lo que falta pagar
       y lo que falta recibir, tarjetas en móvil.
-- [ ] Alta con líneas; abonar; recibir indicando cuántos llegaron.
-- [ ] Verificar EN PANTALLA: abonar baja el saldo de Caja; recibir mete el
+- [x] Alta con líneas; abonar; recibir indicando cuántos llegaron.
+- [x] Verificar EN PANTALLA: abonar baja el saldo de Caja; recibir mete el
       rollo al inventario y mueve el precio.
-- [ ] `git commit`
+- [x] `git commit`
 
 ### 7. Verificación contra un dump de producción
 
-- [ ] Restaurar, aplicar la migración, comprobar que las cifras de Caja quedan
+- [x] Restaurar, aplicar la migración, comprobar que las cifras de Caja quedan
       **idénticas** (la migración es aditiva: no puede mover nada).
-- [ ] Documentar en los dos `CLAUDE.md`.
-- [ ] `git commit`
+- [x] Documentar en los dos `CLAUDE.md`.
+- [x] `git commit`
 
 ---
+
+> **Estado: terminado el 2026-10-09.** Las tres entregas están commiteadas.
+> Lo que quedó fuera a propósito sigue fuera (monedas, devoluciones).
 
 ## Orden de entrega
 
