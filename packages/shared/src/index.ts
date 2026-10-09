@@ -14,6 +14,7 @@ export * from './calc/breakeven';
 export * from './calc/loan';
 export * from './calc/cash';
 export * from './calc/obligations';
+export * from './calc/purchase-invoice';
 export * from './calc/reconcile';
 export * from './calc/goal';
 export * from './calc/equipment';
