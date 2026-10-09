@@ -153,8 +153,20 @@ describe('ExpensesService', () => {
    * el precio de hace seis meses, que es como se pierde margen sin notarlo.
    */
   describe('create — el precio del rollo lo fija el servidor', () => {
+    /**
+     * El servicio ya no mira la compra que acaba de escribir sino **la última
+     * por fecha**, así que el mock tiene que poder contestar esa consulta.
+     * Devolver siempre la misma fila haría pasar el test incluso si el
+     * servicio buscara cualquier otra cosa: por eso filtra por `materialId`.
+     */
+    const conUltimaCompra = (compras: Record<string, { amount: number; quantity: number }>) =>
+      prisma.expense.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where?.materialId ? (compras[where.materialId] ?? null) : null),
+      );
+
     it('una compra de filamento fija el precio del rollo y reactiva la ficha', async () => {
       prisma.expense.create.mockResolvedValue({ id: 'e1' });
+      conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
 
       await service.create(ORG, {
         date: '2026-09-07',
@@ -175,8 +187,9 @@ describe('ExpensesService', () => {
       expect(prisma.material.update).not.toHaveBeenCalled();
     });
 
-    it('sin cantidad no se puede saber el precio por rollo: no lo toca', async () => {
+    it('sin NINGUNA compra con rollos se deja el precio que tenía', async () => {
       prisma.expense.create.mockResolvedValue({ id: 'e2' });
+      conUltimaCompra({});
 
       await service.create(ORG, {
         date: '2026-09-07',
@@ -193,6 +206,7 @@ describe('ExpensesService', () => {
 
     it('un gasto que no es de filamento no toca ningún catálogo', async () => {
       prisma.expense.create.mockResolvedValue({ id: 'e3' });
+      conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
 
       await service.create(ORG, {
         date: '2026-09-07',
@@ -641,5 +655,93 @@ describe('ExpensesService — el proveedor', () => {
   it('un PATCH con proveedor en null se lo saca', async () => {
     await service.update(ORG, 'e-1', { providerId: null } as any);
     expect(prisma.expense.update.mock.calls[0][0].data).toMatchObject({ providerId: null });
+  });
+});
+
+/**
+ * CORREGIR UNA COMPRA DE FILAMENTO.
+ *
+ * Una compra de filamento ES un gasto con `materialId`. Lo que se protege acá
+ * es que el precio con el que se COTIZA siga a la última compra: antes,
+ * arreglar un monto mal tipeado dejaba la calculadora con el precio viejo y
+ * nadie se enteraba — exactamente la pérdida de margen silenciosa que la regla
+ * "la última compra manda" vino a evitar.
+ */
+describe('ExpensesService — corregir y borrar una compra', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+  let service: ExpensesService;
+
+  /** Las compras que hay en la base, por material, ya ordenadas por fecha. */
+  const conCompras = (porMaterial: Record<string, { amount: number; quantity: number }>) =>
+    prisma.expense.findFirst.mockImplementation(({ where, select }: any) => {
+      // `ensureOwned` pregunta por id; `recalcularPrecioDelRollo`, por material.
+      if (!select) return Promise.resolve({ id: 'e-1', organizationId: ORG, materialId: 'm1' });
+      return Promise.resolve(where?.materialId ? (porMaterial[where.materialId] ?? null) : null);
+    });
+
+  const precioEscrito = () =>
+    prisma.material.updateMany.mock.calls.map(([c]: any[]) => [c.where.id, c.data.rollPrice]);
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    conContrapartes(prisma);
+    prisma.expense.update.mockResolvedValue({ id: 'e-1', materialId: 'm1' });
+    service = new ExpensesService(prisma as any);
+  });
+
+  it('corregir el monto mueve el precio del rollo', async () => {
+    conCompras({ m1: { amount: 30, quantity: 2 } }); // lo corregido: 30 ÷ 2
+
+    await service.update(ORG, 'e-1', { amount: 30 } as any);
+
+    expect(precioEscrito()).toEqual([['m1', 15]]);
+  });
+
+  // El hermano: sin esto, lo de arriba pasaría con un servicio que escribiera
+  // el precio SIEMPRE, incluso sin compras.
+  it('sin compras con rollos no se escribe ningún precio', async () => {
+    conCompras({});
+
+    await service.update(ORG, 'e-1', { amount: 30 } as any);
+
+    expect(prisma.material.updateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ Mover la compra a otra ficha toca DOS: la nueva gana una compra y la
+   * vieja pierde la suya, así que las dos tienen que volver a mirar cuál es
+   * ahora su última.
+   */
+  it('cambiar la compra de ficha recalcula las DOS', async () => {
+    conCompras({ m1: { amount: 10, quantity: 1 }, m2: { amount: 50, quantity: 2 } });
+    prisma.expense.update.mockResolvedValue({ id: 'e-1', materialId: 'm2' });
+
+    await service.update(ORG, 'e-1', { materialId: 'm2' } as any);
+
+    expect(precioEscrito().sort()).toEqual([
+      ['m1', 10],
+      ['m2', 25],
+    ]);
+  });
+
+  it('borrar la última compra deja el precio de la ANTERIOR, no el de la borrada', async () => {
+    conCompras({ m1: { amount: 18, quantity: 1 } }); // la que queda
+    prisma.expense.delete.mockResolvedValue({ id: 'e-1' });
+
+    await service.remove(ORG, 'e-1');
+
+    expect(prisma.expense.delete).toHaveBeenCalledWith({ where: { id: 'e-1' } });
+    expect(precioEscrito()).toEqual([['m1', 18]]);
+  });
+
+  it('el precio sale de la ÚLTIMA compra por fecha, no de cualquiera', async () => {
+    conCompras({ m1: { amount: 24, quantity: 2 } });
+
+    await service.update(ORG, 'e-1', { amount: 999 } as any);
+
+    // 12 = 24 ÷ 2 de la última; NO 999 del cuerpo que se acaba de mandar.
+    expect(precioEscrito()).toEqual([['m1', 12]]);
+    const orden = prisma.expense.findFirst.mock.calls.at(-1)[0].orderBy;
+    expect(orden).toEqual([{ date: 'desc' }, { createdAt: 'desc' }]);
   });
 });

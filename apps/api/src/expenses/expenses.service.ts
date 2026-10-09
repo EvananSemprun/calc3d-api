@@ -149,7 +149,7 @@ export class ExpensesService {
       include: this.linkInclude,
     });
 
-    await this.refreshRollPrice(organizationId, dto.materialId, dto.quantity, dto.amount);
+    await this.recalcularPrecioDelRollo(organizationId, dto.materialId);
     return gasto;
   }
 
@@ -160,20 +160,37 @@ export class ExpensesService {
    * seguiría cotizando con un precio viejo, que es como se pierde margen sin
    * darse cuenta. Sin cantidad no hay precio por rollo que calcular.
    *
+   * ⚠️ Lee **LA ÚLTIMA COMPRA POR FECHA**, no la que se acaba de tocar. Eso
+   * importa en tres momentos:
+   * - al **corregir** una compra vieja: el precio no tiene por qué moverse;
+   * - al **corregir la última**: tiene que moverse, y antes NO se movía —
+   *   arreglabas un monto mal tipeado y la calculadora seguía con el viejo;
+   * - al **borrar** la última: el precio vuelve al de la anterior en vez de
+   *   quedar congelado en una compra que ya no existe.
+   *
    * Comprar rollos de una ficha descontinuada la vuelve a ACTIVA: si se volvió a
    * comprar, se sigue manejando. `updateMany` con la organización: con el id de
    * una ficha ajena no escribe nada.
    */
-  private async refreshRollPrice(
+  private async recalcularPrecioDelRollo(
     organizationId: string,
     materialId: string | null | undefined,
-    quantity: number | null | undefined,
-    amount: number,
   ) {
-    if (!materialId || !quantity || quantity <= 0) return;
+    if (!materialId) return;
+    const ultima = await this.prisma.expense.findFirst({
+      where: { organizationId, materialId, quantity: { gt: 0 } },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      select: { amount: true, quantity: true },
+    });
+    // Sin compras con rollos no hay precio que calcular: se deja el que tenía.
+    // Ponerlo en 0 haría cotizar gratis, que es peor que un precio viejo.
+    if (!ultima?.quantity) return;
     await this.prisma.material.updateMany({
       where: { id: materialId, organizationId },
-      data: { rollPrice: purchaseCostPerRoll(amount, quantity), status: 'ACTIVE' },
+      data: {
+        rollPrice: purchaseCostPerRoll(Number(ultima.amount), ultima.quantity),
+        status: 'ACTIVE',
+      },
     });
   }
 
@@ -254,10 +271,10 @@ export class ExpensesService {
   }
 
   async update(organizationId: string, id: string, dto: ExpenseUpdateDto) {
-    await this.ensureOwned(organizationId, id);
+    const antes = await this.ensureOwned(organizationId, id);
     const quien = await this.quienPago(organizationId, dto);
     const proveedor = await this.resolverProveedor(organizationId, dto);
-    return this.prisma.expense.update({
+    const gasto = await this.prisma.expense.update({
       where: { id },
       data: {
         ...(dto.date && { date: new Date(dto.date) }),
@@ -280,16 +297,26 @@ export class ExpensesService {
       },
       include: this.linkInclude,
     });
+
+    // Los DOS materiales: si la compra cambió de ficha, la que la pierde
+    // también tiene que volver a mirar cuál es ahora su última compra.
+    for (const material of new Set([antes.materialId, gasto.materialId])) {
+      await this.recalcularPrecioDelRollo(organizationId, material);
+    }
+    return gasto;
   }
 
   async remove(organizationId: string, id: string) {
-    await this.ensureOwned(organizationId, id);
+    const gasto = await this.ensureOwned(organizationId, id);
     await this.prisma.expense.delete({ where: { id } });
+    // Borrar la última compra deja el precio congelado en una que ya no existe.
+    await this.recalcularPrecioDelRollo(organizationId, gasto.materialId);
     return { ok: true };
   }
 
   private async ensureOwned(organizationId: string, id: string) {
     const found = await this.prisma.expense.findFirst({ where: { id, organizationId } });
     if (!found) throw new NotFoundException('Gasto no encontrado');
+    return found;
   }
 }

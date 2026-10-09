@@ -141,6 +141,15 @@ export interface FilamentPurchase {
   costPerGram: number;
   providerName: string | null;
   note: string | null;
+  /**
+   * Los ids de quién la vendió y quién la pagó.
+   *
+   * Van además de los nombres porque la pantalla deja CORREGIR la compra: con
+   * solo el nombre, el formulario no puede marcar lo que ya estaba elegido y
+   * guardar lo borraría sin avisar.
+   */
+  providerId: string | null;
+  counterpartyId: string | null;
   /** tasa y moneda si el pago fue en bolívares */
   rate: number | null;
   currencyCode: string | null;

@@ -637,6 +637,18 @@ en el repo web: se sobrescribe al sincronizar.
     el campo tal cual llegaba (mass-assignment: podía pisar `rollGrams`,
     `lifetimeHours`, `unitsPerPackage` o incluso `status`/`organizationId` sin
     las reglas de su schema). Regresión: `expenses.service.spec.ts`.
+    ⚠️ **El precio del rollo sigue a la ÚLTIMA COMPRA POR FECHA**, no a la que
+    se acaba de tocar (`recalcularPrecioDelRollo`, 2026-10-09). Antes solo lo
+    fijaba `create`, así que **corregir un monto mal tipeado dejaba la
+    calculadora con el precio viejo** — la pérdida de margen silenciosa que la
+    regla vino a evitar. Ahora corre también en `update` y en `remove`:
+    corregir una compra vieja NO mueve el precio, corregir la última SÍ, y
+    borrar la última lo devuelve al de la anterior en vez de dejarlo congelado
+    en una compra que ya no existe. Si la compra cambia de ficha se recalculan
+    **las dos** (la que la gana y la que la pierde). Sin ninguna compra con
+    rollos se deja el precio que había: ponerlo en 0 haría cotizar gratis.
+    Regresión: 5 casos; las tres mutaciones (recalcular una sola ficha, no
+    recalcular al borrar, invertir el `orderBy`) tumban un test cada una.
     ⚠️ **Quién pagó un gasto es `counterpartyId` y nada más** (desde
     2026-10-10). Entre el 08 y el 10 convivió con el enum `paidBy`, y
     `quienPago()` los escribía SIEMPRE como par para que no pudieran

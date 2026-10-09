@@ -106,6 +106,8 @@ export class FilamentService {
         costPerGram: purchaseCostPerGram(costPerRoll, g.material?.rollGrams ?? 0),
         providerName: g.provider?.name ?? null,
         note: g.description ?? null,
+        providerId: g.providerId,
+        counterpartyId: g.counterpartyId,
         rate: g.rate == null ? null : Number(g.rate),
         currencyCode: g.currencyCode ?? null,
       };

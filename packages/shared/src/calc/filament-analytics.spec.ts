@@ -17,6 +17,8 @@ function compra(p: Partial<FilamentPurchase>): FilamentPurchase {
     costPerGram: 0.02,
     providerName: null,
     note: null,
+    providerId: null,
+    counterpartyId: null,
     rate: null,
     currencyCode: null,
     ...p,
