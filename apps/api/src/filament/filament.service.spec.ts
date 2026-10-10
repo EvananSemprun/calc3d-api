@@ -122,6 +122,51 @@ describe('Conteo de stock', () => {
   });
 });
 
+describe('Conteo de stock — el último precio pagado', () => {
+  /**
+   * El precio con el que se propone reponer sale de `Material.rollPrice`, que
+   * es lo que costó la ÚLTIMA compra. Una ficha que nunca se compró trae `null`
+   * aunque la columna tenga un número: ese número no lo pagó nadie.
+   */
+  const conCompras = (ids: string[]) =>
+    makePrisma({
+      expense: {
+        findMany: jest.fn().mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+          // La consulta de "alguna vez se compró" es la que NO filtra por fecha.
+          where.date
+            ? Promise.resolve([])
+            : Promise.resolve(ids.map((materialId) => ({ materialId }))),
+        ),
+      },
+    });
+
+  it('trae lo que costó el rollo la última vez', async () => {
+    const filas = await service(conCompras(['m1'])).stock(ORG, '2026-08');
+
+    expect(filas.find((f) => f.materialId === 'm1')!.lastRollPrice).toBe(20);
+  });
+
+  it('una ficha sin ninguna compra con rollos trae null, no el número de la columna', async () => {
+    const filas = await service(conCompras(['m1'])).stock(ORG, '2026-08');
+
+    // m2 tiene rollPrice '22' en la base y CERO compras: no hay precio que proponer.
+    expect(filas.find((f) => f.materialId === 'm2')!.lastRollPrice).toBeNull();
+  });
+
+  it('solo mira las compras de SU organización y con rollos', async () => {
+    const prisma = conCompras(['m1']);
+    await service(prisma).stock(ORG, '2026-08');
+
+    const wheres = prisma.expense.findMany.mock.calls.map((c) => c[0].where);
+    const compras = wheres.find((w: Record<string, unknown>) => !w.date);
+    expect(compras).toMatchObject({
+      organizationId: ORG,
+      materialId: { not: null },
+      quantity: { gt: 0 },
+    });
+  });
+});
+
 describe('Conteo de stock — fichas que se acabaron el mes anterior', () => {
   const SEPT = new Date('2026-09-01T00:00:00Z');
   const AGO = new Date('2026-08-01T00:00:00Z');

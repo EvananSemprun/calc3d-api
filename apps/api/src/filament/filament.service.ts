@@ -120,18 +120,20 @@ export class FilamentService {
   /** El conteo del mes, con TODOS los materiales (los no contados, en cero). */
   async stock(organizationId: string, month: string): Promise<StockCountRow[]> {
     const anterior = previousMonth(month);
-    const [materiales, conteos, cerrado, previo, previoCerrado, compradas] = await Promise.all([
-      this.prisma.material.findMany({
-        where: { organizationId },
-        orderBy: { name: 'asc' },
-        include: { _count: { select: { expenses: true, stockCounts: true } } },
-      }),
-      this.countsOf(organizationId, month),
-      this.isClosed(organizationId, month),
-      this.countsOf(organizationId, anterior),
-      this.isClosed(organizationId, anterior),
-      this.materialsBoughtIn(organizationId, month),
-    ]);
+    const [materiales, conteos, cerrado, previo, previoCerrado, compradas, algunaVezCompradas] =
+      await Promise.all([
+        this.prisma.material.findMany({
+          where: { organizationId },
+          orderBy: { name: 'asc' },
+          include: { _count: { select: { expenses: true, stockCounts: true } } },
+        }),
+        this.countsOf(organizationId, month),
+        this.isClosed(organizationId, month),
+        this.countsOf(organizationId, anterior),
+        this.isClosed(organizationId, anterior),
+        this.materialsBoughtIn(organizationId, month),
+        this.materialsEverBought(organizationId),
+      ]);
     const porMaterial = new Map(conteos.map((c) => [c.materialId, c]));
     // Solo un mes anterior CERRADO dice que algo se acabó; abierto no es dato final.
     const anteriorPorMaterial = new Map(previoCerrado ? previo.map((c) => [c.materialId, c]) : []);
@@ -159,6 +161,9 @@ export class FilamentService {
         exhausted:
           previoCerrado && (!ant || stockTotal(ant) === 0) && !compradas.has(m.id) && stockTotal(partes) === 0,
         previous: ant ? { sealed: ant.sealed, inUse: ant.inUse, running: ant.running } : null,
+        // El precio de la última compra, SOLO si alguna vez se compró: ver
+        // `lastRollPrice` en el contrato y `materialsEverBought` más abajo.
+        lastRollPrice: algunaVezCompradas.has(m.id) ? Number(m.rollPrice) : null,
       };
     });
   }
@@ -360,6 +365,24 @@ export class FilamentService {
     const compras = await this.prisma.expense.findMany({
       where: { organizationId, materialId: { not: null }, quantity: { gt: 0 }, date: { gte: desde, lt: hasta } },
       select: { materialId: true },
+    });
+    return new Set(compras.map((c) => c.materialId as string));
+  }
+
+  /**
+   * Las fichas que tienen ALGUNA compra con rollos, de toda la historia.
+   *
+   * Es la condición para proponer su precio al armar el pedido: `rollPrice` es
+   * obligatorio en la base, así que una ficha sin compras igual trae un número
+   * y proponerlo sería inventar un precio que nadie pagó. Mismo filtro que
+   * `recalcularPrecioDelRollo` (`quantity > 0`), para que las dos preguntas
+   * —cuál fue el último precio y si hubo compra— no puedan contestar distinto.
+   */
+  private async materialsEverBought(organizationId: string): Promise<Set<string>> {
+    const compras = await this.prisma.expense.findMany({
+      where: { organizationId, materialId: { not: null }, quantity: { gt: 0 } },
+      select: { materialId: true },
+      distinct: ['materialId'],
     });
     return new Set(compras.map((c) => c.materialId as string));
   }

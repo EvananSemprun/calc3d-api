@@ -9,6 +9,7 @@ export * from './calc/calculateQuote';
 export * from './calc/wholesale';
 export * from './calc/charge-equivalents';
 export * from './calc/stock';
+export * from './calc/restock-order';
 export * from './calc/filament-analytics';
 export * from './calc/breakeven';
 export * from './calc/loan';

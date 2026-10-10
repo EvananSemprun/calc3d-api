@@ -1198,6 +1198,40 @@ en el repo web: se sobrescribe al sincronizar.
     ⚠️ Las compras importadas del Excel tienen TODAS fecha 2026-08-31 (la hoja no
     la registraba): hasta que haya compras con fecha real, "lo más comprado" es
     el histórico completo y no se puede calcular un ritmo por mes.
+  - **Armar el pedido con lo que falta (2026-10-10, shared 0.38.0)** —
+    `suggestRestockLines` en `shared/calc/restock-order.ts`: función PURA que
+    recibe los grupos que ya devolvió `restockByColor` + las fichas y devuelve
+    las líneas sugeridas para la factura nueva. El eslabón que faltaba entre
+    Stock del mes y Compras. 18 tests; pantalla: `StockTab.tsx` → `/compras`.
+    - ⚠️ **Entran los grupos tal como vienen**: esa es la lista que el dueño
+      está mirando. Volver a clasificar acá sería una segunda opinión sobre lo
+      mismo, y el día que una cambie la propuesta diría algo distinto de la
+      lista de arriba. Solo `OUT` y `LOW`; `SUGGEST` no es un faltante.
+    - ⚠️ **Una línea por COLOR, no por ficha** (la regla del 2026-09-13). La
+      línea apunta a una ficha ACTIVA del grupo —gana la que ya se compró
+      alguna vez, desempate por nombre para que sea reproducible—. Medido
+      contra la base local: 10 de 34 colores tienen más de una ficha activa y
+      el PLA Negro tiene CUATRO marcas.
+    - ⚠️ **Cantidad: un rollo por color.** Es la unidad con la que se compra y
+      el riesgo es asimétrico (subir la cantidad es un click; comprar un rollo
+      de más es plata quieta). Un consumo por color solo se puede derivar con
+      dos meses cerrados seguidos, así que una cantidad "inteligente" sería
+      adivinada.
+    - ⚠️ **El precio sale de `Material.rollPrice`**, la MISMA fuente que la
+      calculadora (`recalcularPrecioDelRollo` la mantiene con la última compra
+      por fecha). `GET /filament/stock` lo expone como **`lastRollPrice`**, que
+      es `null` si la ficha no tiene NINGUNA compra con rollos (`rollPrice` es
+      obligatorio en la base, así que el número que trae no lo pagó nadie) —
+      mismo filtro `quantity > 0` que `recalcularPrecioDelRollo`, para que las
+      dos preguntas no contesten distinto. Un precio nulo, 0 o imposible entra
+      **en blanco** y el formulario lo pide: hay una ficha real
+      (`PLA Creality Azul oscuro`) con una compra importada en $0, y sin esta
+      regla la propuesta habría pedido ese rollo gratis.
+    - Mutaciones que tumban tests: incluir las descontinuadas (2), tratar
+      `SUGGEST` como faltante (1), proponer $0 sin compra previa (5), ignorar
+      el precio en el desempate (1), devolver `rollPrice` sin mirar si hubo
+      compra (1), sacarle el filtro por organización a esa consulta (1).
+    - Plan: `docs/superpowers/plans/2026-10-10-fases-4-y-5.md` (tarea 1).
   - **Cierre mensual del stock (2026-09-13, shared 0.13.0)** — tabla `StockMonth`
     (org + mes, `closedAt`, `reopenedAt`; un mes sin fila está abierto).
     `POST /filament/stock/close` escribe una fila por CADA ficha (lo que no vino,

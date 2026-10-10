@@ -126,6 +126,18 @@ export interface RestockByColor {
 const normalizar = (s: string | null) => (s ?? '').trim().toLowerCase();
 
 /**
+ * La clave de un grupo de reposición: `tipo|color` normalizado.
+ *
+ * Vive acá y no inline en `restockByColor` porque hay un segundo lector —la
+ * propuesta de pedido (`suggestRestockLines`), que tiene que encontrar las
+ * fichas del mismo color que la lista—. Dos formas de armar la clave divergen
+ * el día que una de las dos cambie, y la propuesta quedaría sin fichas que
+ * ofrecer sin que nada falle.
+ */
+export const restockKey = (m: { type: string | null; color: string | null }): string =>
+  `${normalizar(m.type)}|${normalizar(m.color)}`;
+
+/**
  * Agrupa las fichas por tipo + color y decide qué comprar.
  *
  * - Como en el Excel, si el mes se contó (hay al menos un conteo), un color o
@@ -144,7 +156,7 @@ export function restockByColor(
 ): RestockByColor {
   const grupos = new Map<string, { label: string; fichas: RestockMaterial[] }>();
   for (const m of materials) {
-    const key = `${normalizar(m.type)}|${normalizar(m.color)}`;
+    const key = restockKey(m);
     const grupo = grupos.get(key);
     if (grupo) {
       grupo.fichas.push(m);

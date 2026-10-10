@@ -133,6 +133,20 @@ export interface StockCountRow extends StockCountParts {
    * mes no está cerrado o la ficha no estaba en su conteo.
    */
   previous: StockCountParts | null;
+  /**
+   * Lo que costó el rollo la ÚLTIMA vez que se compró, para proponerlo como
+   * precio al armar el pedido con lo que falta.
+   *
+   * Es `Material.rollPrice`, que `recalcularPrecioDelRollo` mantiene al día con
+   * la última compra por fecha: **no es otra fuente de verdad**, es la misma que
+   * usa la calculadora.
+   *
+   * ⚠️ **null cuando la ficha no tiene NINGUNA compra con rollos.** `rollPrice`
+   * es obligatorio en la base, así que una ficha sin compras igual trae un
+   * número —el que le tocó al nacer—, y proponerlo sería inventar un precio que
+   * nadie pagó. La línea entra en blanco y el formulario lo pide.
+   */
+  lastRollPrice: number | null;
 }
 
 /** Una compra de filamento, con lo que costó de verdad. */
