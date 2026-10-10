@@ -798,6 +798,10 @@ export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>
 
 // ----- Facturas de compra (filamento e impresoras) -----
 
+/** Qué ficha nace cuando la línea pide algo que todavía no está en el catálogo. */
+export const NuevoTipoSchema = z.enum(['MATERIAL', 'PRINTER']);
+export type NuevoTipo = z.infer<typeof NuevoTipoSchema>;
+
 /**
  * Una línea: qué se pidió, cuánto y a cuánto.
  *
@@ -805,6 +809,13 @@ export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>
  * vez haría una línea que es dos cosas; ninguna, una línea que no es nada y
  * que al recibirla no sabría qué meter al inventario. El `refine` lo frena acá
  * y no en el servicio, para que el 400 llegue antes de tocar la base.
+ *
+ * ⚠️ **Y "algo nuevo" tiene que decir QUÉ es** (`nuevoTipo`). Una impresora
+ * nueva es, por definición, la que no está en el catálogo: encargar una te
+ * creaba un ROLLO con su nombre, porque la recepción solo sabía crear
+ * filamento. Las dos mitades de la regla son necesarias: exigirlo con
+ * `nombreNuevo` y **prohibirlo sin él**, o una línea del catálogo podría
+ * declarar un tipo que contradice a su propia ficha.
  */
 export const PurchaseInvoiceLineSchema = z
   .object({
@@ -812,12 +823,18 @@ export const PurchaseInvoiceLineSchema = z
     printerId: z.string().min(1).optional().nullable(),
     /** Para una ficha que todavía no existe: nace al recibir la compra. */
     nombreNuevo: z.string().trim().min(1).optional().nullable(),
+    /** Qué nace al recibir: obligatorio con `nombreNuevo`, prohibido sin él. */
+    nuevoTipo: NuevoTipoSchema.optional().nullable(),
     quantity: z.number().int().positive('Pedí al menos uno'),
     unitPrice: z.number().min(0, 'El precio no puede ser negativo'),
   })
   .refine(
     (l) => [l.materialId, l.printerId, l.nombreNuevo].filter(Boolean).length === 1,
     'Cada línea es un filamento, una impresora o algo nuevo con su nombre: una sola cosa',
+  )
+  .refine(
+    (l) => !!l.nombreNuevo === !!l.nuevoTipo,
+    'Si pedís algo que todavía no tenés, decí si es filamento o si es impresora: la ficha nace al recibirlo',
   );
 export type PurchaseInvoiceLineDto = z.infer<typeof PurchaseInvoiceLineSchema>;
 

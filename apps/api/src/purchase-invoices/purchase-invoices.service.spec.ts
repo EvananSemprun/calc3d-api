@@ -38,7 +38,10 @@ function makePrisma(factura?: Record<string, unknown>) {
   });
   return {
     client: tabla(FILAS.client),
-    printer: tabla(FILAS.printer),
+    printer: {
+      ...tabla(FILAS.printer),
+      create: jest.fn(() => Promise.resolve({ id: 'imp-nueva' })) as jest.Mock,
+    },
     counterparty: tabla(FILAS.counterparty),
     cashAccount: tabla(FILAS.cashAccount),
     purchaseInvoice: {
@@ -85,6 +88,7 @@ const linea = (over: Record<string, unknown> = {}) => ({
   materialId: 'mat-mio',
   printerId: null,
   nombreNuevo: null,
+  nuevoTipo: null,
   quantity: 2,
   unitPrice: 25,
   received: 0,
@@ -109,6 +113,9 @@ describe('PurchaseInvoiceLineSchema', () => {
     ['dos cosas a la vez', { materialId: 'm', printerId: 'p', quantity: 1, unitPrice: 1 }],
     ['ninguna cosa', { quantity: 1, unitPrice: 1 }],
     ['una ficha y un nombre nuevo', { materialId: 'm', nombreNuevo: 'Otro', quantity: 1, unitPrice: 1 }],
+    // ⚠️ Algo nuevo SIN decir qué es: así se encargaba una impresora y nacía un
+    // rollo. El contrato completo está en `shared/schemas/purchase-invoice.spec.ts`.
+    ['algo nuevo sin decir qué es', { nombreNuevo: 'Impresora A2', quantity: 1, unitPrice: 300 }],
   ])('%s → se rechaza', (_, linea) => {
     expect(PurchaseInvoiceLineSchema.safeParse(linea).success).toBe(false);
   });
@@ -118,7 +125,14 @@ describe('PurchaseInvoiceLineSchema', () => {
   it.each([
     ['un filamento', { materialId: 'm', quantity: 1, unitPrice: 1 }],
     ['una impresora', { printerId: 'p', quantity: 1, unitPrice: 1 }],
-    ['algo nuevo con su nombre', { nombreNuevo: 'PLA Turquesa', quantity: 1, unitPrice: 1 }],
+    [
+      'un filamento nuevo con su nombre',
+      { nombreNuevo: 'PLA Turquesa', nuevoTipo: 'MATERIAL', quantity: 1, unitPrice: 1 },
+    ],
+    [
+      'una impresora nueva con su nombre',
+      { nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER', quantity: 1, unitPrice: 300 },
+    ],
   ])('%s → se acepta', (_, linea) => {
     expect(PurchaseInvoiceLineSchema.safeParse(linea).success).toBe(true);
   });
@@ -338,10 +352,19 @@ describe('PurchaseInvoicesService — recibir', () => {
   });
 
   /** Un color que nunca compraste no tiene ficha hasta que llega. */
-  it('una línea con nombre nuevo CREA la ficha y le enlaza el gasto', async () => {
+  it('una línea con filamento nuevo CREA la ficha y le enlaza el gasto', async () => {
     const p = makePrisma({
       ...FACTURA_VACIA,
-      lines: [linea({ materialId: null, material: null, nombreNuevo: 'PLA Turquesa', quantity: 2, unitPrice: 19 })],
+      lines: [
+        linea({
+          materialId: null,
+          material: null,
+          nombreNuevo: 'PLA Turquesa',
+          nuevoTipo: 'MATERIAL',
+          quantity: 2,
+          unitPrice: 19,
+        }),
+      ],
     });
 
     await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 2 } as never);
@@ -352,6 +375,9 @@ describe('PurchaseInvoicesService — recibir', () => {
       rollPrice: 19,
     });
     expect(p.expense.create.mock.calls[0][0].data.materialId).toBe('mat-nuevo');
+    // ⚠️ Las DOS tablas: mirar solo la que esperás es cómo pasó desapercibido
+    // el bug simétrico (una impresora que nacía como rollo).
+    expect(p.printer.create).not.toHaveBeenCalled();
   });
 
   it('una impresora recibida es inversión, no consumible', async () => {
@@ -382,5 +408,167 @@ describe('PurchaseInvoicesService — recibir', () => {
     const p = conLinea();
     await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
     expect(p.expense.create.mock.calls[0][0].data.providerId).toBe('prov-mio');
+  });
+});
+
+/**
+ * ENCARGAR UNA IMPRESORA QUE TODAVÍA NO TENÉS.
+ *
+ * ⚠️ Hasta acá "algo que todavía no tenés" creaba **siempre** una ficha de
+ * filamento: encargar una impresora nueva te dejaba un rollo llamado "Impresora
+ * A2". Y una impresora nueva es, por definición, la que no está en el catálogo:
+ * es el caso normal al comprar una máquina, no el raro.
+ *
+ * Cada test afirma sobre **las DOS tablas**. Mirar solo la que esperás es
+ * exactamente cómo este bug pasó desapercibido.
+ */
+describe('PurchaseInvoicesService — recibir algo que todavía no tenés', () => {
+  const conNueva = (over: Record<string, unknown>) =>
+    makePrisma({
+      ...FACTURA_VACIA,
+      supplierId: 'prov-mio',
+      lines: [linea({ materialId: null, material: null, printerId: null, printer: null, ...over })],
+    });
+
+  const IMPRESORA = { nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER', quantity: 1, unitPrice: 300 };
+
+  it('recibir una impresora nueva CREA la impresora y NO un filamento', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    expect((p.printer.create.mock.calls[0][0] as { data: unknown }).data).toMatchObject({
+      organizationId: ORG,
+      name: 'Impresora A2',
+      price: 300,
+    });
+    expect(p.material.create).not.toHaveBeenCalled();
+  });
+
+  it('la línea queda repuntada a la impresora recién creada', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    expect(p.purchaseInvoiceLine.update).toHaveBeenCalledWith({
+      where: { id: 'l1' },
+      data: { printerId: 'imp-nueva' },
+    });
+  });
+
+  /**
+   * ⚠️ El gasto distingue EQUIPMENT/CONSUMABLE e `isInvestment` por el
+   * `printerId`. Una impresora que naciera sin repuntar la línea caería como
+   * consumible y quedaría fuera de la reposición de equipos.
+   */
+  it('el gasto de la impresora nueva es inversión en equipo, no consumible', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.category).toBe('EQUIPMENT');
+    expect(gasto.isInvestment).toBe(true);
+    expect(gasto.printerId).toBe('imp-nueva');
+    expect(gasto.materialId).toBeNull();
+  });
+
+  /** Horas de vida y consumo quedan en el default: se corrigen desde el catálogo. */
+  it('la impresora nace solo con el precio de la compra', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    const data = (p.printer.create.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(Object.keys(data).sort()).toEqual(['name', 'organizationId', 'price']);
+  });
+
+  /** Una impresora no tiene gramos de rollo: mandarlos no puede inventar nada. */
+  it('los gramos del rollo no se cuelan en una impresora', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, rollGrams: 1000 } as never);
+
+    expect(p.material.create).not.toHaveBeenCalled();
+    expect(
+      (p.printer.create.mock.calls[0][0] as { data: Record<string, unknown> }).data.rollGrams,
+    ).toBeUndefined();
+  });
+
+  /**
+   * ⚠️ El schema Zod ya lo frena al cargar la factura, pero una fila vieja (o
+   * un script) puede tener `nombreNuevo` sin tipo. Adivinar es lo que producía
+   * el bug: mejor 400 que un rollo llamado "Impresora A2".
+   */
+  it('algo nuevo SIN tipo → 400 y no crea ninguna de las dos fichas', async () => {
+    const p = conNueva({ nombreNuevo: 'Impresora A2', nuevoTipo: null, quantity: 1, unitPrice: 300 });
+
+    await expect(servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(p.material.create).not.toHaveBeenCalled();
+    expect(p.printer.create).not.toHaveBeenCalled();
+    expect(p.expense.create).not.toHaveBeenCalled();
+  });
+
+  // El hermano alcanzable: la MISMA línea con su tipo sí se recibe.
+  it('…y con el tipo puesto sí se recibe', async () => {
+    const p = conNueva(IMPRESORA);
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    expect(p.printer.create).toHaveBeenCalled();
+    expect(p.expense.create).toHaveBeenCalled();
+  });
+
+  /** El precio del rollo no existe para una impresora: no hay nada que recalcular. */
+  it('recibir una impresora no toca el precio de ningún rollo', async () => {
+    const p = conNueva(IMPRESORA);
+    const exp = expensesFalso();
+
+    await servicio(p, exp).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
+
+    // Se llama igual (es un no-op sin ficha): lo que no puede pasar es que
+    // llegue con el id de un filamento, porque eso sería un rollo inventado.
+    expect(exp.recalcularPrecioDelRollo).not.toHaveBeenCalledWith(ORG, expect.any(String));
+  });
+});
+
+/** Lo que la línea declara tiene que SOBREVIVIR al guardado y a la lectura. */
+describe('PurchaseInvoicesService — nuevoTipo viaja hasta la base y vuelve', () => {
+  it('create guarda el tipo de lo nuevo', async () => {
+    const p = makePrisma();
+
+    await servicio(p).create(ORG, {
+      date: '2026-10-11',
+      lines: [{ nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER', quantity: 1, unitPrice: 300 }],
+    } as never);
+
+    expect(p.purchaseInvoice.create.mock.calls[0][0].data.lines.create[0]).toMatchObject({
+      nombreNuevo: 'Impresora A2',
+      nuevoTipo: 'PRINTER',
+    });
+  });
+
+  it('una línea del catálogo lo guarda en null', async () => {
+    const p = makePrisma();
+
+    await servicio(p).create(ORG, ALTA as never);
+
+    expect(p.purchaseInvoice.create.mock.calls[0][0].data.lines.create[0].nuevoTipo).toBeNull();
+  });
+
+  /** Sin esto la pantalla no puede decir qué va a nacer ni pedir los gramos. */
+  it('la factura que lee la pantalla trae el tipo de lo nuevo', async () => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      lines: [
+        linea({ materialId: null, material: null, nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER' }),
+      ],
+    });
+
+    const f = await servicio(p).get(ORG, 'f1');
+
+    expect(f.lines[0].nuevoTipo).toBe('PRINTER');
   });
 });

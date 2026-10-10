@@ -1348,6 +1348,12 @@ model PurchaseInvoice {
   @@index([organizationId, date])
 }
 
+/// Qué ficha nace al recibir una línea que pide algo que no está en el catálogo.
+enum PurchaseLineNuevoTipo {
+  MATERIAL
+  PRINTER
+}
+
 /// Una línea de la factura: qué se pidió, cuánto y a qué precio.
 model PurchaseInvoiceLine {
   id        String          @id @default(cuid())
@@ -1363,6 +1369,12 @@ model PurchaseInvoiceLine {
   /// tiene ficha hasta que llega. Entonces la línea lleva su nombre y la ficha
   /// nace al recibirla.
   nombreNuevo String?
+  /// ⚠️ **QUÉ ficha nace.** `null` solo en una línea del catálogo. Sin esto la
+  /// recepción creaba SIEMPRE un filamento, así que encargar una impresora
+  /// nueva —el caso normal: una máquina nueva no está en el catálogo— dejaba un
+  /// rollo llamado "Impresora A2". El contrato Zod lo exige con `nombreNuevo` y
+  /// lo prohíbe sin él.
+  nuevoTipo PurchaseLineNuevoTipo?
 
   quantity  Int
   unitPrice Decimal @db.Decimal(12, 4)

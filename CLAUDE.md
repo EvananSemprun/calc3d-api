@@ -840,6 +840,32 @@ en el repo web: se sobrescribe al sincronizar.
       `void()` tampoco anula una factura con mercadería recibida, así que esa
       fila hoy **no se puede corregir por ninguna puerta**. Que no se pueda
       romper es lo que importa; corregirla es Fase 2.
+    - ⚠️ **"Algo que todavía no tenés" dice QUÉ es** (`nuevoTipo`
+      `MATERIAL|PRINTER`, shared 0.34.0, migración
+      `20261011120000_que_nace_al_recibir`, aditiva). Hasta acá la recepción
+      creaba **siempre** una ficha de filamento: encargar una impresora nueva
+      dejaba un rollo llamado "Impresora A2". Y una impresora nueva es, por
+      definición, la que **no** está en el catálogo: era el caso normal, no el
+      raro. En producción había 0 líneas con `nombreNuevo`, así que el bug no
+      alcanzó a hacer daño.
+      - El contrato son **DOS mitades**: el `refine` lo **exige** con
+        `nombreNuevo` y lo **prohíbe** sin él. Con solo la primera, una línea
+        del catálogo podría declarar un tipo que contradice a su ficha; con
+        solo la segunda vuelve la ambigüedad. Las dos tienen su mutación.
+      - ⚠️ **Repuntar la línea a la ficha recién creada no es cosmético**: el
+        `Expense` decide `EQUIPMENT`/`CONSUMABLE` e `isInvestment` por
+        `printerId`. Una impresora que naciera sin repuntar entraría como
+        consumible y quedaría fuera de la reposición de equipos. Esa mutación
+        tumba 2 tests.
+      - Una impresora nace **solo con el precio de la compra**; horas de vida y
+        consumo quedan en el default y se corrigen desde el catálogo. Los
+        `rollGrams` de la recepción se ignoran (una impresora no tiene rollo).
+      - `receive()` igual rechaza con **400** una línea con `nombreNuevo` y sin
+        tipo (fila vieja o script): adivinar "filamento" ES el bug.
+      - Regresión: `shared/schemas/purchase-invoice.spec.ts` (9) y
+        `purchase-invoices.service.spec.ts` — cada test de recepción afirma
+        sobre **las DOS tablas** (`Printer` creada **y** `Material` no), que es
+        justo lo que faltaba para que el bug se viera.
     - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md`.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio

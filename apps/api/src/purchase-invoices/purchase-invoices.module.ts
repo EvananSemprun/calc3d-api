@@ -88,6 +88,8 @@ export class PurchaseInvoicesService {
       printerId: l.printerId,
       printerName: l.printer?.name ?? null,
       nombreNuevo: l.nombreNuevo,
+      /** Qué ficha va a nacer al recibir: la pantalla lo necesita para decirlo. */
+      nuevoTipo: l.nuevoTipo,
       quantity: l.quantity,
       unitPrice: n(l.unitPrice),
       received: l.received,
@@ -174,6 +176,8 @@ export class PurchaseInvoicesService {
       materialId: l.materialId || null,
       printerId: l.printerId || null,
       nombreNuevo: l.nombreNuevo || null,
+      /** El schema ya garantiza que viene con `nombreNuevo` y solo con él. */
+      nuevoTipo: l.nuevoTipo || null,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
     }));
@@ -341,13 +345,35 @@ export class PurchaseInvoicesService {
     const fecha = dto.date ? new Date(dto.date) : new Date();
     const monto = Math.round(dto.quantity * n(linea.unitPrice) * 10000) / 10000;
 
+    // ⚠️ Una línea que pide algo nuevo y NO dice qué es no se adivina: adivinar
+    // "filamento" es justo lo que dejaba un rollo llamado "Impresora A2". El
+    // schema Zod ya lo frena al cargar la factura; esto cubre una fila vieja o
+    // un script. Antes de la transacción: el 400 sale sin haber escrito nada.
+    if (!linea.materialId && !linea.printerId && !linea.nuevoTipo) {
+      throw new BadRequestException(
+        'Esa línea pide algo que todavía no tenés pero no dice si es filamento o impresora. Elegilo en la factura antes de recibir.',
+      );
+    }
+
     const materialId = await this.prisma.$transaction(async (tx) => {
-      // Una ficha que nace acá: el color que nunca compraste no existía hasta
-      // que llegó. Marca, tipo y gramos se corrigen después desde la ficha.
+      // Una ficha que nace acá: lo que nunca compraste no existía hasta que
+      // llegó. El resto de sus datos se corrige después desde su catálogo.
       let matId = linea.materialId;
-      const impId = linea.printerId;
+      let impId = linea.printerId;
       if (!matId && !impId && linea.nombreNuevo) {
-        if (linea.printerId === null && linea.materialId === null) {
+        if (linea.nuevoTipo === 'PRINTER') {
+          // Nace con el precio de la compra; horas de vida y consumo quedan en
+          // el default y se corrigen desde el catálogo de impresoras.
+          const nueva = await tx.printer.create({
+            data: { organizationId, name: linea.nombreNuevo, price: n(linea.unitPrice) },
+          });
+          impId = nueva.id;
+          // ⚠️ Repuntar la línea no es cosmético: el gasto de abajo decide
+          // EQUIPMENT/CONSUMABLE e `isInvestment` por `impId`. Sin esto, una
+          // impresora entraría como consumible y quedaría fuera de la
+          // reposición de equipos.
+          await tx.purchaseInvoiceLine.update({ where: { id: lineId }, data: { printerId: impId } });
+        } else {
           const nueva = await tx.material.create({
             data: {
               organizationId,
