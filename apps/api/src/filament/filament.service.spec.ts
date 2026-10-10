@@ -167,6 +167,84 @@ describe('Conteo de stock — el último precio pagado', () => {
   });
 });
 
+describe('Conteo de stock — lo RECIBIDO en el mes se ofrece al contar', () => {
+  /**
+   * Las recepciones del mes (`Expense` con ficha y rollos, que es lo que crea
+   * tanto recibir una línea de factura como cargar una compra a mano) se
+   * devuelven en `received` para OFRECERLAS como punto de partida. Sugerir, no
+   * escribir: la casilla la llena el dueño.
+   */
+  const conRecepciones = (recibidas: { materialId: string | null; quantity: number | null }[]) =>
+    makePrisma({
+      expense: {
+        findMany: jest.fn().mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+          // La del mes es la que filtra por fecha Y por rollos (`quantity`).
+          where.date && where.quantity ? Promise.resolve(recibidas) : Promise.resolve([]),
+        ),
+      },
+    });
+
+  it('devuelve los rollos que entraron, sumados por ficha', async () => {
+    const filas = await service(
+      conRecepciones([
+        { materialId: 'm1', quantity: 2 },
+        { materialId: 'm1', quantity: 3 },
+        { materialId: 'm2', quantity: 1 },
+      ]),
+    ).stock(ORG, '2026-08');
+
+    expect(filas.find((f) => f.materialId === 'm1')!.received).toBe(5);
+    expect(filas.find((f) => f.materialId === 'm2')!.received).toBe(1);
+  });
+
+  it('una ficha SIN recepciones ese mes trae null, no 0', async () => {
+    // ⚠️ "No sé" y "cero" no son lo mismo: 0 es un conteo válido, y ofrecerlo
+    // sería ofrecer una respuesta en vez de una referencia.
+    const filas = await service(conRecepciones([{ materialId: 'm1', quantity: 2 }])).stock(
+      ORG,
+      '2026-08',
+    );
+
+    expect(filas.find((f) => f.materialId === 'm2')!.received).toBeNull();
+    // HERMANO ALCANZABLE: la que sí recibió trae su número.
+    expect(filas.find((f) => f.materialId === 'm1')!.received).toBe(2);
+  });
+
+  it('un gasto de filamento SIN rollos no sugiere nada', async () => {
+    const filas = await service(
+      conRecepciones([
+        { materialId: 'm1', quantity: null },
+        { materialId: 'm2', quantity: 0 },
+      ]),
+    ).stock(ORG, '2026-08');
+
+    expect(filas.find((f) => f.materialId === 'm1')!.received).toBeNull();
+    expect(filas.find((f) => f.materialId === 'm2')!.received).toBeNull();
+  });
+
+  /**
+   * ⚠️ La MISMA consulta responde dos preguntas —cuánto entró y si la ficha se
+   * compró en el mes (`exhausted`)—, así que las dos no pueden contestar
+   * distinto. Antes eran dos viajes a la base con el mismo filtro.
+   */
+  it('pide las recepciones del mes UNA sola vez, de su organización y con rollos', async () => {
+    const prisma = conRecepciones([{ materialId: 'm1', quantity: 2 }]);
+    await service(prisma).stock(ORG, '2026-08');
+
+    const delMes = prisma.expense.findMany.mock.calls
+      .map((c) => c[0].where)
+      .filter((w: Record<string, unknown>) => w.date && w.quantity);
+
+    expect(delMes).toHaveLength(1);
+    expect(delMes[0]).toMatchObject({
+      organizationId: ORG,
+      materialId: { not: null },
+      quantity: { gt: 0 },
+      date: { gte: new Date('2026-08-01T00:00:00Z'), lt: new Date('2026-09-01T00:00:00Z') },
+    });
+  });
+});
+
 describe('Conteo de stock — fichas que se acabaron el mes anterior', () => {
   const SEPT = new Date('2026-09-01T00:00:00Z');
   const AGO = new Date('2026-08-01T00:00:00Z');

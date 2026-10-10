@@ -134,6 +134,17 @@ export interface StockCountRow extends StockCountParts {
    */
   previous: StockCountParts | null;
   /**
+   * Rollos que ENTRARON en este mes (recepciones de factura y compras cargadas
+   * a mano), para ofrecerlos como punto de partida al contar.
+   *
+   * ⚠️ **`null` cuando no hubo ninguna recepción, NUNCA 0.** "No sé" y "cero"
+   * no son lo mismo, y 0 es un conteo válido: con un 0 la pantalla estaría
+   * ofreciendo una respuesta en vez de una referencia. Ver
+   * `rollosRecibidosPorFicha` en shared, donde está la decisión del dueño de
+   * sugerir SOLO lo recibido (y no el cierre anterior más lo recibido).
+   */
+  received: number | null;
+  /**
    * Lo que costó el rollo la ÚLTIMA vez que se compró, para proponerlo como
    * precio al armar el pedido con lo que falta.
    *

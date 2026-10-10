@@ -452,3 +452,49 @@ function mesesEntre(desde: string, hasta: string): number {
   const [a2, m2] = hasta.split('-').map(Number);
   return (a2 * 12 + m2) - (a1 * 12 + m1);
 }
+
+// ----- La sugerencia del conteo -----
+//
+// Al contar, los rollos que ENTRARON ese mes se ofrecen como punto de partida.
+//
+// ⚠️ **SUGERIR, NO ESCRIBIR, y el alcance es una decisión del dueño
+// (2026-10-10): se sugiere SOLO lo recibido en el mes.** Descartó "el cierre
+// anterior más lo recibido", y la razón va acá porque es la que sostiene todo
+// el diseño: si la app completa el conteo, el dueño termina **confirmando un
+// número en vez de mirando el estante**, y el conteo deja de medir nada. Lo
+// que ahorra tipeo ahorra también la verificación, que es lo único que el
+// conteo aporta.
+//
+// ⚠️ Una recepción de una factura de Compras **es** uno de estos gastos (la
+// recepción crea un `Expense` con `materialId` y la fecha en que llegó), y una
+// compra cargada a mano es un rollo en el estante exactamente igual. Por eso
+// entran las dos: dejar afuera las de a mano haría que la sugerencia
+// contradiga el "comprados" que la MISMA pantalla muestra en su resumen.
+
+/** Un gasto de filamento del mes: la ficha y cuántos rollos entraron. */
+export interface RecepcionDeRollos {
+  /** `Expense.materialId`; null = gasto sin ficha enlazada. */
+  materialId: string | null;
+  rolls: number;
+}
+
+/**
+ * Rollos recibidos en el mes, por ficha.
+ *
+ * ⚠️ **Una ficha sin recepciones NO está en el resultado**, y eso es el
+ * contrato: "no sé" y "cero" no son lo mismo, y 0 es un conteo válido. Si
+ * devolviera 0, la pantalla ofrecería una respuesta en vez de una referencia.
+ * Por el mismo motivo una recepción de 0 rollos no crea entrada.
+ */
+export function rollosRecibidosPorFicha(
+  recepciones: RecepcionDeRollos[],
+): Record<string, number> {
+  const porFicha: Record<string, number> = {};
+  for (const r of recepciones) {
+    // Sin ficha no hay casilla que sugerir, y una cantidad que no es positiva
+    // (un gasto sin rollos, un dato roto) no es una recepción.
+    if (!r.materialId || !(r.rolls > 0)) continue;
+    porFicha[r.materialId] = (porFicha[r.materialId] ?? 0) + r.rolls;
+  }
+  return porFicha;
+}

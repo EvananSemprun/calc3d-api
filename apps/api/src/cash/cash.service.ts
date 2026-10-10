@@ -62,6 +62,29 @@ const tipoPagador = (
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /**
+ * LAS CUOTAS VIGENTES: las que de verdad se pagaron.
+ *
+ * Anular una cuota NO la borra —la fila se queda en el historial con su
+ * motivo— pero ese pago **no ocurrió**: el saldo del préstamo vuelve a subir,
+ * la caja no pagó nada y quien la puso de su bolsillo no tiene nada que
+ * cobrar. Es la regla del módulo de préstamos (`serialize()` de
+ * `loans.module.ts` calcula sobre los vigentes) y Caja la ignoraba: anular
+ * subía el saldo en Deuda y **no** en Caja, así que Caja **subestimaba** la
+ * deuda con el prestamista. Dos definiciones del mismo número.
+ *
+ * ⚠️ La exclusión NO va en el `where` de Prisma, a propósito: lo anulado viaja
+ * con su `voidedAt` y la decisión la toma ESTE código, que es el que los tests
+ * corren. El motor (`loanBalance`, `cashEntries`) no conoce `voidedAt`, así que
+ * con el filtro en SQL no quedaría ninguna guarda ejercida —la base falsa de
+ * los specs no resuelve el `where` anidado de una relación— y borrarla no
+ * tumbaría un solo test: peor que no tenerla, porque parece puesta.
+ *
+ * Regresión: `cash.service.spec.ts`, "Caja y Deuda cuentan lo mismo".
+ */
+const vigentes = <T extends { voidedAt: Date | null }>(filas: T[]) =>
+  filas.filter((f) => f.voidedAt == null);
+
+/**
  * Qué fracción de una factura es filamento. El resto es equipo.
  *
  * ⚠️ Es una **convención de prorrateo**: un abono no "fue" a una línea
@@ -136,7 +159,7 @@ export class CashService {
   /** Todos los datos crudos, una sola vez. */
   private async datos(organizationId: string) {
     const where = { organizationId };
-    const [ventas, abonos, gastos, cuotas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes, abonosDeCompra] =
+    const [ventas, abonos, gastos, cuotasTodas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes, abonosDeCompra] =
       await Promise.all([
         // El desplegable necesita además el id (para el join con la etiqueta),
         // el texto de cada fila y su origen (la insignia "Importado").
@@ -154,7 +177,9 @@ export class CashService {
         this.prisma.debtApplication.findMany({ where }),
         this.prisma.loan.findMany({
           where: { organizationId, closedAt: null },
-          select: { principal: true, payments: { select: { amount: true } } },
+          // `voidedAt` VIAJA con cada cuota: a quién amortiza lo decide
+          // `vigentes`, no el `where`. Ver su comentario.
+          select: { principal: true, payments: { select: { amount: true, voidedAt: true } } },
         }),
         this.prisma.cashAccount.findMany({ where, orderBy: { isDefault: 'desc' } }),
         this.prisma.cashReconciliation.findMany({
@@ -174,6 +199,15 @@ export class CashService {
           include: { invoice: { select: { lines: { select: { quantity: true, unitPrice: true, printerId: true } } } } },
         }),
       ]);
+
+    /**
+     * ⚠️ Las cuotas anuladas se van ACÁ, en un solo lugar, porque el mismo
+     * hecho lo leen TRES veces: la línea "Cuotas del préstamo" del saldo, las
+     * obligaciones con quien la puso de su bolsillo y las etiquetas del
+     * desplegable. Filtrar en cada uso deja la puerta de al lado abierta, que
+     * es el error que este proyecto ya cometió varias veces.
+     */
+    const cuotas = vigentes(cuotasTodas);
 
     // Lo aplicado a CADA obligación y lo aplicado POR cada pago.
     const porObligacion = new Map<string, number>();
@@ -568,8 +602,14 @@ export class CashService {
       paymentsTotal: d.movimientos
         .filter((m) => m.counterpartyId && bolsillos.has(m.counterpartyId) && m.kind === 'WITHDRAWAL')
         .reduce((s, m) => s + n(m.amount), 0),
+      /**
+       * ⚠️ `vigentes` es lo que hace que este número sea el MISMO que el
+       * `totals.prestamista` de Deuda. Sin él, anular una cuota sube el saldo
+       * allá y no acá, y Caja le dice al dueño que debe menos de lo que debe.
+       */
       lenderBalance: d.prestamos.reduce(
-        (s, l) => s + loanBalance(n(l.principal), l.payments.map((p) => ({ amount: n(p.amount) }))),
+        (s, l) =>
+          s + loanBalance(n(l.principal), vigentes(l.payments).map((p) => ({ amount: n(p.amount) }))),
         0,
       ),
     });

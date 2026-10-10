@@ -10,6 +10,7 @@ import {
   purchaseCostPerGram,
   purchaseCostPerRoll,
   preciosPorTipo,
+  rollosRecibidosPorFicha,
   stockTotal,
   type FilamentPurchase,
   type PrecioPorTipo,
@@ -172,7 +173,7 @@ export class FilamentService {
   /** El conteo del mes, con TODOS los materiales (los no contados, en cero). */
   async stock(organizationId: string, month: string): Promise<StockCountRow[]> {
     const anterior = previousMonth(month);
-    const [materiales, conteos, cerrado, previo, previoCerrado, compradas, algunaVezCompradas] =
+    const [materiales, conteos, cerrado, previo, previoCerrado, recibidos, algunaVezCompradas] =
       await Promise.all([
         this.prisma.material.findMany({
           where: { organizationId },
@@ -183,7 +184,7 @@ export class FilamentService {
         this.isClosed(organizationId, month),
         this.countsOf(organizationId, anterior),
         this.isClosed(organizationId, anterior),
-        this.materialsBoughtIn(organizationId, month),
+        this.rollsReceivedIn(organizationId, month),
         this.materialsEverBought(organizationId),
       ]);
     const porMaterial = new Map(conteos.map((c) => [c.materialId, c]));
@@ -211,8 +212,11 @@ export class FilamentService {
         // No hay: el mes anterior (cerrado) no la tenía —en 0 o ni siquiera en su
         // conteo—, no se compró en este y no tiene rollos anotados.
         exhausted:
-          previoCerrado && (!ant || stockTotal(ant) === 0) && !compradas.has(m.id) && stockTotal(partes) === 0,
+          previoCerrado && (!ant || stockTotal(ant) === 0) && !recibidos[m.id] && stockTotal(partes) === 0,
         previous: ant ? { sealed: ant.sealed, inUse: ant.inUse, running: ant.running } : null,
+        // Lo que ENTRÓ este mes, para OFRECERLO al contar. `null` y no 0 sin
+        // recepciones: "no sé" y "cero" no son lo mismo (ver el contrato).
+        received: recibidos[m.id] ?? null,
         // El precio de la última compra, SOLO si alguna vez se compró: ver
         // `lastRollPrice` en el contrato y `materialsEverBought` más abajo.
         lastRollPrice: algunaVezCompradas.has(m.id) ? Number(m.rollPrice) : null,
@@ -408,17 +412,35 @@ export class FilamentService {
     return porFicha;
   }
 
-  /** Rollos que entraron en el mes: sin ellos, un mes con compras daría un
-   *  consumo negativo, que es lo que le pasa a la hoja. */
-  /** Las fichas con al menos una compra (con rollos) dentro del mes. */
-  private async materialsBoughtIn(organizationId: string, month: string): Promise<Set<string>> {
+  /**
+   * ROLLOS QUE ENTRARON EN EL MES, por ficha — lo que el conteo ofrece como
+   * punto de partida (2026-10-10, shared 0.48.0).
+   *
+   * ⚠️ **Una consulta para DOS preguntas**: cuántos rollos entraron (la
+   * sugerencia) y si la ficha se compró en el mes (`exhausted`, que antes tenía
+   * su propio viaje a la base con el MISMO filtro). Con dos consultas, el día
+   * que una cambie el conteo diría que entraron 2 rollos de una ficha que la
+   * otra considera agotada.
+   *
+   * ⚠️ Recibir una línea de factura crea un `Expense` con `materialId` y la
+   * fecha en que LLEGÓ, así que las recepciones de Compras ya están acá; una
+   * compra cargada a mano es un rollo en el estante igual. El reparto por ficha
+   * y la regla de "sin rollos no sugiere nada" viven en
+   * `rollosRecibidosPorFicha`, en shared.
+   */
+  private async rollsReceivedIn(
+    organizationId: string,
+    month: string,
+  ): Promise<Record<string, number>> {
     const desde = monthStart(month);
     const hasta = new Date(Date.UTC(desde.getUTCFullYear(), desde.getUTCMonth() + 1, 1));
     const compras = await this.prisma.expense.findMany({
       where: { organizationId, materialId: { not: null }, quantity: { gt: 0 }, date: { gte: desde, lt: hasta } },
-      select: { materialId: true },
+      select: { materialId: true, quantity: true },
     });
-    return new Set(compras.map((c) => c.materialId as string));
+    return rollosRecibidosPorFicha(
+      compras.map((c) => ({ materialId: c.materialId, rolls: c.quantity ?? 0 })),
+    );
   }
 
   /**

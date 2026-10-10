@@ -16,6 +16,9 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CashController } from './cash.module';
 import { CashService } from './cash.service';
+// La OTRA lectura del saldo del préstamo. Está acá para poder exigir que diga
+// lo mismo que Caja sobre los mismos datos, no para probar Deuda.
+import { LoansService } from '../loans/loans.module';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 
 const ORG = 'org-A';
@@ -1961,5 +1964,141 @@ describe('CashService.summary — el abono tomado del saldo a favor', () => {
     ).summary(ORG);
 
     expect(r.balance.balance).toBe(60);
+  });
+});
+
+/**
+ * ANULAR UNA CUOTA NO ES BORRARLA — y Caja tiene que respetarlo.
+ *
+ * La regla del módulo de préstamos: la fila queda en el historial con su
+ * motivo y **el saldo vuelve a subir**, porque ese pago no ocurrió. Deuda lo
+ * hacía (`serialize()` calcula sobre los vigentes) y Caja no: leía
+ * `loan.payments` entero, así que anular una cuota subía el saldo en Deuda y
+ * **no** en Caja. Dos definiciones del mismo número diciendo cosas distintas,
+ * y la de Caja **subestimaba la deuda**.
+ *
+ * ⚠️ Lo que falló no fue una cuenta: fue que **nadie las comparó**. Por eso
+ * este arnés corre las DOS lecturas sobre los MISMOS datos y exige que digan
+ * lo mismo, además de clavar el número.
+ *
+ * Los números, A MANO (con su contrafáctico al lado):
+ *   - prestamista: capital 750 − la cuota VIGENTE de 100 = **650**
+ *     (contando la anulada daría 600 — ese es el contrafáctico)
+ *   - caja: solo salieron los 100 de la cuota vigente → saldo **−100**
+ *     (contando la anulada daría −150)
+ *   - propietario: la cuota anulada que puso él de su bolsillo no es deuda
+ *     suya → se le debe **0** (sin anular se le deberían 40)
+ */
+describe('Caja y Deuda cuentan lo mismo: una cuota ANULADA no amortiza', () => {
+  /** La cuota que SÍ se pagó, de la caja. */
+  const vigente = () => ({
+    id: 'c1', organizationId: ORG, loanId: 'p1', date: new Date('2026-09-05'),
+    amount: '100', reference: 'REF-1', counterpartyId: null, counterparty: null,
+    accountId: null, refundable: false, source: 'MANUAL',
+    voidedAt: null, voidReason: null,
+  });
+
+  /** Se cargó dos veces y se anuló. De la caja: toca la línea del saldo. */
+  const anulada = () => ({
+    id: 'c2', organizationId: ORG, loanId: 'p1', date: new Date('2026-09-10'),
+    amount: '50', reference: 'REF-2', counterpartyId: null, counterparty: null,
+    accountId: null, refundable: false, source: 'MANUAL',
+    voidedAt: new Date('2026-09-20'), voidReason: 'Se cargó dos veces',
+  });
+
+  /** Anulada y la puso el PROPIETARIO: toca la deuda con él, no el saldo. */
+  const anuladaDelDueno = () => ({
+    id: 'c3', organizationId: ORG, loanId: 'p1', date: new Date('2026-09-12'),
+    amount: '40', reference: 'REF-3', counterpartyId: 'cp1',
+    counterparty: { id: 'cp1', name: 'Propietario' },
+    accountId: null, refundable: true, source: 'MANUAL',
+    voidedAt: new Date('2026-09-20'), voidReason: 'La pagó el banco, no él',
+  });
+
+  /**
+   * Las cuotas son los MISMOS objetos en `loanPayment` y en `loan[0].payments`:
+   * en la base son la misma fila, y así un test que desanula una la desanula
+   * para las dos lecturas (si no, el contrafáctico probaría otra cosa).
+   */
+  const tablas = (cuotas: Record<string, unknown>[]): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+      { id: 'cp3', organizationId: ORG, name: 'Señor Edwin', kind: 'EXTERNAL_LENDER', active: true, isDefault: false },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [],
+    cashReconciliation: [],
+    sale: [],
+    payment: [],
+    expense: [],
+    ownerMovement: [],
+    debtApplication: [],
+    purchaseInvoicePayment: [],
+    loanPayment: cuotas,
+    loan: [
+      {
+        id: 'p1', organizationId: ORG, name: 'Deuda impresora P2S', concept: null,
+        principal: '750', monthlyPayment: '100', paymentFrequency: 'MONTHLY',
+        counterpartyId: 'cp3', counterparty: { id: 'cp3', name: 'Señor Edwin', kind: 'EXTERNAL_LENDER' },
+        nextDueDate: null, startDate: null, closedAt: null, notes: null,
+        printerId: null, printer: null, createdAt: new Date('2026-08-01'),
+        payments: cuotas,
+      },
+    ],
+  });
+
+  /** Las dos pantallas sobre la MISMA base falsa. */
+  const lasDos = async (cuotas: Record<string, unknown>[]) => {
+    const prisma = baseFalsa(tablas(cuotas));
+    const caja = new CashService(prisma as never);
+    const deuda = new LoansService(prisma as never, caja, { list: async () => [] } as never);
+    return { caja: await caja.summary(ORG), deuda: await deuda.overview(ORG) };
+  };
+
+  it('le debe 650 al prestamista, y Caja y Deuda dicen el MISMO 650', async () => {
+    const { caja, deuda } = await lasDos([vigente(), anulada()]);
+
+    expect(caja.financing.owedToLender).toBe(650);
+    expect(deuda.totals.prestamista).toBe(650);
+    expect(caja.financing.owedToLender).toBe(deuda.totals.prestamista);
+  });
+
+  it('CONTRAFÁCTICO: sin anular, las dos dicen 600', async () => {
+    const dosVigentes = [vigente(), { ...anulada(), voidedAt: null, voidReason: null }];
+    const { caja, deuda } = await lasDos(dosVigentes);
+
+    expect(caja.financing.owedToLender).toBe(600);
+    expect(deuda.totals.prestamista).toBe(600);
+  });
+
+  it('la cuota anulada tampoco salió de la caja: saldo −100, no −150', async () => {
+    const { caja } = await lasDos([vigente(), anulada()]);
+
+    expect(caja.balance.loanPayments).toBe(100);
+    expect(caja.balance.balance).toBe(-100);
+  });
+
+  it('CONTRAFÁCTICO: sin anular sí salen, y el saldo es −150', async () => {
+    const { caja } = await lasDos([vigente(), { ...anulada(), voidedAt: null, voidReason: null }]);
+
+    expect(caja.balance.loanPayments).toBe(150);
+    expect(caja.balance.balance).toBe(-150);
+  });
+
+  it('una cuota anulada que puso el dueño no es deuda con él: 0', async () => {
+    const { caja } = await lasDos([vigente(), anuladaDelDueno()]);
+
+    expect(caja.obligations).toEqual([]);
+    expect(caja.financing.owedToOwner).toBe(0);
+  });
+
+  it('CONTRAFÁCTICO: sin anular, se le deben esos 40', async () => {
+    const { caja } = await lasDos([
+      vigente(),
+      { ...anuladaDelDueno(), voidedAt: null, voidReason: null },
+    ]);
+
+    expect(caja.obligations.map((o: { sourceId: string }) => o.sourceId)).toEqual(['c3']);
+    expect(caja.financing.owedToOwner).toBe(40);
   });
 });

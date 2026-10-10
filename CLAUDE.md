@@ -1687,6 +1687,26 @@ en el repo web: se sobrescribe al sincronizar.
     `POST stock/reopen`, `PUT stock` en 410 —: agregar otra ruta de escritura ahí
     rompe el test a propósito), `materials.service.spec.ts`. Spec:
     `docs/superpowers/specs/2026-09-13-cierre-mensual-stock-design.md`.
+  - **La recepción SUGIERE el conteo (2026-10-10, shared 0.48.0)** —
+    `GET /filament/stock` trae **`received`**: los rollos que ENTRARON en el mes
+    por ficha, para que el conteo los ofrezca como punto de partida.
+    ⚠️ **`null` cuando no hubo ninguna recepción, NUNCA 0**: "no sé" y "cero" no
+    son lo mismo, y 0 es un conteo válido — con un 0 la pantalla ofrecería una
+    respuesta en vez de una referencia. El reparto por ficha lo hace
+    `rollosRecibidosPorFicha` (shared), donde está escrita la **decisión del
+    dueño**: se sugiere SOLO lo recibido en el mes y NO "el cierre anterior más
+    lo recibido", porque con el conteo completado se termina confirmando un
+    número en vez de mirando el estante.
+    ⚠️ Entran las recepciones de factura **y** las compras cargadas a mano:
+    recibir una línea crea un `Expense` con `materialId` y la fecha en que
+    llegó, y un rollo comprado a mano está en el estante igual; dejarlas afuera
+    haría que la sugerencia contradiga el `purchased` del mismo `/summary`.
+    ⚠️ **Una sola consulta para DOS preguntas** (`rollsReceivedIn`, que
+    reemplazó a `materialsBoughtIn`): cuánto entró y si la ficha se compró en el
+    mes (`exhausted`). Eran dos viajes con el MISMO filtro, y con dos el día que
+    una cambie el conteo diría que entraron 2 rollos de una ficha que la otra da
+    por agotada. Regresión: `filament.service.spec.ts` (5, con el hermano
+    alcanzable y el "una sola vez").
   - **Activo / Descontinuado** (2026-09-13, shared 0.14.0) —
     `PATCH /materials/:id/status` con `MaterialStatusUpdateSchema`. Va APARTE del
     `PATCH /materials/:id`: `MaterialSchema` no tiene `status`, así que guardar el
