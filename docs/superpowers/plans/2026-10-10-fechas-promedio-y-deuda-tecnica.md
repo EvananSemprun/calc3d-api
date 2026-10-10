@@ -1,5 +1,10 @@
 # Fechas, el promedio de la calculadora y la deuda técnica
 
+> ⚠️ **Las casillas de abajo NO se marcaron.** Las cinco tareas están **hechas y desplegadas** (2026-10-10). El estado real está
+> en la sección **"Cierre"** del final, con los números medidos. Una lista de
+> tareas que dice "nada hecho" sobre trabajo ya desplegado manda a rehacerlo:
+> antes de tomar algo de acá, leé el cierre.
+
 **De dónde sale:** los pendientes que quedaron al cerrar las fases 1, 4 y 5 el
 2026-10-10, más una decisión nueva del dueño sobre la calculadora.
 

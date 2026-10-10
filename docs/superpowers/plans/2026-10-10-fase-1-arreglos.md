@@ -1,5 +1,10 @@
 # Fase 1 — Arreglar lo que está roto (y lo que miente)
 
+> ⚠️ **Las casillas de abajo NO se marcaron.** Las ocho tareas están **hechas y desplegadas** (2026-10-10). El estado real está
+> en la sección **"Cierre"** del final, con los números medidos. Una lista de
+> tareas que dice "nada hecho" sobre trabajo ya desplegado manda a rehacerlo:
+> antes de tomar algo de acá, leé el cierre.
+
 **Spec:** `docs/superpowers/specs/2026-10-09-compras-y-visibilidad.md`, Fase 1.
 
 **Objetivo:** cinco arreglos que no agregan features: tapan un agujero, matan
