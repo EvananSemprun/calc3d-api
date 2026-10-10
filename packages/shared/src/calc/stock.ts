@@ -338,3 +338,26 @@ export function previousDay(day: string): string {
   const f = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - 1));
   return f.toISOString().slice(0, 10);
 }
+
+/**
+ * Cuántos días hay de `desde` a `hasta`, los dos `AAAA-MM-DD`. Negativo si
+ * `hasta` es anterior.
+ *
+ * ⚠️ En **UTC**, como el resto de las fechas de negocio: restar dos
+ * `new Date(key)` locales cruza mal el borde del día al oeste de UTC y
+ * devuelve un día de más o de menos. Y un día que no existe LANZA en vez de
+ * devolver un número: `'2026-02-30'` corrido al 2 de marzo daría una cuenta
+ * que parece buena.
+ */
+export function daysBetween(desde: string, hasta: string): number {
+  for (const d of [desde, hasta]) {
+    if (!isCalendarDay(d)) {
+      throw new Error(`Fecha inválida: "${d}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+    }
+  }
+  const utc = (day: string) => {
+    const m = DIA_RE.exec(day) as RegExpExecArray;
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  };
+  return Math.round((utc(hasta) - utc(desde)) / 86_400_000);
+}

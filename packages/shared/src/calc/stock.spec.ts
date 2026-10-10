@@ -1,6 +1,7 @@
 import {
   businessDateKey,
   canCloseMonth,
+  daysBetween,
   isCalendarDay,
   previousDay,
   monthCloseDay,
@@ -230,5 +231,31 @@ describe('cierre de mes en la zona del negocio', () => {
 
   it('febrero de un año no bisiesto cierra el 28', () => {
     expect(monthCloseDay('2026-02')).toBe('2026-02-28');
+  });
+});
+
+describe('daysBetween', () => {
+  it('cuenta los días dentro del mes', () => {
+    expect(daysBetween('2026-10-05', '2026-10-10')).toBe(5);
+    expect(daysBetween('2026-10-10', '2026-10-10')).toBe(0);
+  });
+
+  it('cruza el mes y el año, con los días que cada mes tenga', () => {
+    expect(daysBetween('2026-09-30', '2026-10-01')).toBe(1);
+    expect(daysBetween('2026-09-10', '2026-10-10')).toBe(30);
+    expect(daysBetween('2025-12-31', '2026-01-01')).toBe(1);
+    // 2024 es bisiesto: de 28/02 a 01/03 hay dos días, no uno.
+    expect(daysBetween('2024-02-28', '2024-03-01')).toBe(2);
+    expect(daysBetween('2026-02-28', '2026-03-01')).toBe(1);
+  });
+
+  it('hacia atrás da negativo, no un absoluto', () => {
+    expect(daysBetween('2026-10-10', '2026-10-05')).toBe(-5);
+  });
+
+  it('un día que no existe LANZA en vez de devolver una cuenta corrida', () => {
+    expect(() => daysBetween('2026-02-30', '2026-10-10')).toThrow();
+    expect(() => daysBetween('2026-10-10', '2026-13-01')).toThrow();
+    expect(() => daysBetween('', '2026-10-10')).toThrow();
   });
 });

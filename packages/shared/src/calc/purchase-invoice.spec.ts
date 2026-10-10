@@ -1,4 +1,4 @@
-import { invoiceStatus, invoiceTotals } from './purchase-invoice';
+import { facturasAtrasadas, invoiceStatus, invoiceTotals, type FacturaParaAtraso } from './purchase-invoice';
 
 /**
  * ⚠️ Los números esperados están **puestos a mano**, no calculados con el
@@ -130,5 +130,135 @@ describe('invoiceStatus', () => {
   /** Sin líneas no hay nada que recibir: decir "parcial" sería mentira. */
   it('una factura sin líneas no está a medio recibir', () => {
     expect(estado([], []).mercaderia).toBe('SIN_RECIBIR');
+  });
+});
+
+// ----- Lo que no llegó -----
+
+/**
+ * ⚠️ **"Hoy" es una CONSTANTE del test, no `new Date()`.** Un test que leyera
+ * el reloj pasaría hoy y fallaría solo algún martes, y el que lo viera fallar
+ * no tendría forma de saber por qué.
+ */
+const HOY = '2026-10-10';
+
+/** Una factura por 2 rollos prometidos para el 5, sin nada recibido. */
+const factura = (cambios: Partial<FacturaParaAtraso> = {}): FacturaParaAtraso => ({
+  id: 'f1',
+  expectedAt: '2026-10-05',
+  voidedAt: null,
+  lines: [{ quantity: 2, unitPrice: 10, received: 0 }],
+  ...cambios,
+});
+
+const ids = (fs: FacturaParaAtraso[], hoy = HOY) => facturasAtrasadas(fs, hoy).map((f) => f.id);
+
+describe('facturasAtrasadas', () => {
+  it('prometida para el 5 y hoy es el 10: atrasada hace 5 días, faltan 2 rollos', () => {
+    expect(facturasAtrasadas([factura()], HOY)).toEqual([
+      { id: 'f1', expectedAt: '2026-10-05', diasDeAtraso: 5, porRecibir: 2 },
+    ]);
+  });
+
+  /**
+   * ⚠️ Es la prueba de que el "hoy" ENTRA: las mismas facturas, dos días
+   * distintos, dos respuestas distintas. Si la función leyera el reloj, el
+   * segundo caso daría lo mismo que el primero.
+   */
+  it('el "hoy" lo decide quien pregunta: el 6 está atrasada hace 1 día, el 5 no', () => {
+    expect(facturasAtrasadas([factura()], '2026-10-06')[0]?.diasDeAtraso).toBe(1);
+    expect(facturasAtrasadas([factura()], '2026-10-05')).toEqual([]);
+  });
+
+  // --- Las cuatro formas de que el aviso mienta. Cada una con su HERMANA
+  // ALCANZABLE: sin ella, una función que devolviera siempre vacío pasaría los
+  // cuatro tests sin hacer nada.
+
+  it('una factura ANULADA nunca está atrasada; su hermana viva sí', () => {
+    expect(
+      ids([
+        factura({ id: 'anulada', voidedAt: '2026-10-07T12:00:00.000Z' }),
+        factura({ id: 'viva' }),
+      ]),
+    ).toEqual(['viva']);
+  });
+
+  it('una factura YA RECIBIDA ENTERA no está atrasada; una recibida a medias sí', () => {
+    expect(
+      ids([
+        factura({ id: 'llego-todo', lines: [{ quantity: 2, unitPrice: 10, received: 2 }] }),
+        factura({ id: 'llego-parte', lines: [{ quantity: 2, unitPrice: 10, received: 1 }] }),
+      ]),
+    ).toEqual(['llego-parte']);
+  });
+
+  it('SIN fecha esperada no hay promesa que incumplir; con fecha pasada sí', () => {
+    expect(ids([factura({ id: 'sin-fecha', expectedAt: null }), factura({ id: 'con-fecha' })])).toEqual(
+      ['con-fecha'],
+    );
+  });
+
+  it('la fecha esperada de HOY todavía no es atraso; la de ayer sí', () => {
+    expect(
+      ids([
+        factura({ id: 'llega-hoy', expectedAt: HOY }),
+        factura({ id: 'era-ayer', expectedAt: '2026-10-09' }),
+      ]),
+    ).toEqual(['era-ayer']);
+  });
+
+  // --- Los bordes que no son "formas de mentir" pero igual se pueden romper.
+
+  it('una fecha futura no está atrasada; una pasada sí', () => {
+    expect(
+      ids([factura({ id: 'futura', expectedAt: '2026-11-02' }), factura({ id: 'pasada' })]),
+    ).toEqual(['pasada']);
+  });
+
+  /**
+   * Sin líneas no se espera nada: un aviso de 0 unidades es ruido. Y una
+   * factura con líneas en CERO es el mismo caso escrito distinto.
+   */
+  it('una factura sin NADA PEDIDO no está atrasada; una con algo pedido sí', () => {
+    expect(
+      ids([
+        factura({ id: 'vacia', lines: [] }),
+        factura({ id: 'en-cero', lines: [{ quantity: 0, unitPrice: 10 }] }),
+        factura({ id: 'con-lineas' }),
+      ]),
+    ).toEqual(['con-lineas']);
+  });
+
+  /**
+   * ⚠️ `expectedAt` se guarda a **medianoche UTC** y llega como instante ISO.
+   * Leerlo en la zona local, al oeste de UTC, lo corre al día ANTERIOR: la
+   * factura que llega hoy aparecería atrasada hace un día.
+   */
+  it('un instante de medianoche UTC se lee como ESE día, no como el anterior', () => {
+    expect(facturasAtrasadas([factura({ expectedAt: `${HOY}T00:00:00.000Z` })], HOY)).toEqual([]);
+    expect(
+      facturasAtrasadas([factura({ expectedAt: new Date('2026-10-09T00:00:00.000Z') })], HOY)[0]
+        ?.diasDeAtraso,
+    ).toBe(1);
+  });
+
+  it('la más atrasada va primero', () => {
+    expect(
+      ids([
+        factura({ id: 'tres-dias', expectedAt: '2026-10-07' }),
+        factura({ id: 'treinta-dias', expectedAt: '2026-09-10' }),
+        factura({ id: 'un-dia', expectedAt: '2026-10-09' }),
+      ]),
+    ).toEqual(['treinta-dias', 'tres-dias', 'un-dia']);
+  });
+
+  /** Un "hoy" inventado haría que TODO (o nada) se vea atrasado, sin avisar. */
+  it('un "hoy" que no existe en el calendario lanza', () => {
+    expect(() => facturasAtrasadas([factura()], '2026-02-30')).toThrow(/2026-02-30/);
+    expect(() => facturasAtrasadas([factura()], 'ayer')).toThrow(/ayer/);
+  });
+
+  it('sin facturas no hay atraso', () => {
+    expect(facturasAtrasadas([], HOY)).toEqual([]);
   });
 });

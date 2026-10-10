@@ -1025,7 +1025,44 @@ en el repo web: se sobrescribe al sincronizar.
         `purchase-invoices.service.spec.ts` — cada test de recepción afirma
         sobre **las DOS tablas** (`Printer` creada **y** `Material` no), que es
         justo lo que faltaba para que el bug se viera.
-    - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md`.
+    - ⚠️ **LO QUE NO LLEGÓ** (2026-10-10, shared 0.39.0) —
+      `facturasAtrasadas(facturas, hoy)` en `shared/calc/purchase-invoice.ts`.
+      `expectedAt` se guardaba desde el día uno y **nadie lo miraba**:
+      encargabas algo para el martes, no llegaba, y la app no decía nada.
+      Pantallas: Compras (la factura se destaca y dice hace cuánto) y el aviso
+      del Dashboard.
+      - ⚠️ **`hoy` ENTRA COMO PARÁMETRO** (`'AAAA-MM-DD'`, día LOCAL de quien
+        mira; `todayKey()` en el panel) y no se lee adentro, como
+        `cashChainCuts` y `campaignLifecycle`. Un test contra el reloj pasa hoy
+        y falla solo algún martes.
+      - ⚠️ **Lo recibido NO se recalcula**: sale de `invoiceTotals` +
+        `invoiceStatus`, la única definición de "llegó todo". Una segunda
+        cuenta diría algo distinto de la insignia de al lado.
+      - Las **cuatro formas de que el aviso mienta**, cada una con su test Y
+        SU HERMANO ALCANZABLE (sin el hermano, una función que devolviera
+        siempre vacío pasaría los cuatro): anulada, ya recibida entera, sin
+        `expectedAt` (no se prometió nada) y **esperada HOY** (el día no
+        terminó; avisar a las 9 de algo que llega a las 5 enseña a ignorar el
+        aviso). La comparación es **estricta**: `dia >= hoy` no cuenta.
+      - ⚠️ **Lo que destapó la verificación por mutación, y vale para
+        cualquier guarda nueva:** la de "ya llegó todo" era **código muerto**.
+        Estaba escrita junto a `porRecibir <= 0`, que es verdadera en ese caso
+        también, así que borrar el chequeo de `RECIBIDA` **no tumbaba un solo
+        test** —la mutación obligatoria daba 0—. La segunda pasó a ser
+        `pedido <= 0`, que es lo que de verdad quiere decir (una factura sin
+        líneas no está "sin recibir": no tiene nada que recibir), y ahora las
+        dos hacen falta. Una guarda muerta de las que deciden si un aviso
+        miente es peor que no tenerla: parece que la regla está puesta.
+      - Las 7 mutaciones tumban 1 test cada una, salvo mover el `>=` a `>`
+        (3). Tests: `purchase-invoice.spec.ts` (12 nuevos) y
+        `stock.spec.ts` (`daysBetween`, 4).
+      - **`daysBetween(desde, hasta)`** se suma a las conversiones de fecha de
+        `stock.ts`: en **UTC** y **lanzando** con un día que no existe. Restar
+        dos `new Date()` locales cruza mal el borde del día al oeste de UTC.
+      - **No hay endpoint nuevo**: el panel ya recibe las facturas con sus
+        líneas en `GET /purchase-invoices`.
+    - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md` y
+      `docs/superpowers/plans/2026-10-10-fases-4-y-5.md` (tarea 2).
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio
     con 12 hojas (Resumen, Ventas, Encargos, Gastos, Inventario, Stock mensual,

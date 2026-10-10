@@ -13,6 +13,7 @@
  */
 import Decimal from 'decimal.js';
 import { D, toCents } from './money';
+import { daysBetween, isCalendarDay } from './stock';
 
 /** Una línea: cuántos se pidieron, a cuánto, y cuántos ya llegaron. */
 export interface InvoiceLineInput {
@@ -112,4 +113,118 @@ export function invoiceStatus(t: InvoiceTotals): InvoiceStatus {
     t.recibido <= 0 ? 'SIN_RECIBIR' : t.porRecibir > 0 ? 'PARCIAL' : 'RECIBIDA';
 
   return { pago, mercaderia };
+}
+
+// ----- Lo que no llegó -----
+//
+// `expectedAt` ("¿cuándo llega?") se guardaba desde el día uno y NADIE lo
+// miraba: encargabas algo para el martes, no llegaba, y la app no decía nada.
+// Encontrarlo dependía de que al dueño se le ocurriera revisar la lista.
+
+/** Una factura, vista por la única pregunta de acá: "¿esto ya llegó?". */
+export interface FacturaParaAtraso {
+  id: string;
+  /**
+   * La fecha prometida. Es una **fecha de negocio**: se guarda a medianoche
+   * UTC y llega como instante ISO (o `Date`), así que se lee en UTC.
+   * `null` = no se prometió ninguna.
+   */
+  expectedAt: string | Date | null;
+  /** Anulada; `null` = viva. */
+  voidedAt: string | Date | null;
+  lines: InvoiceLineInput[];
+}
+
+/** Una factura que no llegó cuando dijeron. */
+export interface FacturaAtrasada {
+  id: string;
+  /** El día que habían prometido, como `'AAAA-MM-DD'`. */
+  expectedAt: string;
+  /** Cuántos días pasaron desde ese día. **Siempre ≥ 1**: hoy no es atraso. */
+  diasDeAtraso: number;
+  /** Unidades que todavía faltan llegar. */
+  porRecibir: number;
+}
+
+/**
+ * Los abonos NO deciden si la mercadería llegó.
+ *
+ * ⚠️ Es la regla central de este módulo: la plata y la mercadería son dos
+ * cuentas separadas, y una factura pagada entera y sin llegar es justo el caso
+ * que este aviso existe para encontrar. Por eso `invoiceTotals` se llama con
+ * la lista de abonos vacía: el eje `mercaderia` no los mira, y pedírselos a
+ * quien llama sería pedir un dato que no cambia la respuesta.
+ */
+const SIN_ABONOS: InvoicePaymentInput[] = [];
+
+/** Un día de negocio guardado, leído en UTC: `'2026-10-05'`. */
+const diaDeNegocio = (v: string | Date): string =>
+  (typeof v === 'string' ? v : v.toISOString()).slice(0, 10);
+
+/**
+ * Las facturas que no llegaron cuando dijeron, de la más atrasada a la menos.
+ *
+ * ⚠️ **`hoy` ENTRA COMO PARÁMETRO** (`'AAAA-MM-DD'`, el día de quien mira la
+ * pantalla) y no se lee adentro. Una función que preguntara el reloj no se
+ * podría testear: el test pasaría hoy y fallaría solo algún martes, y quien lo
+ * viera fallar no tendría cómo saber por qué.
+ *
+ * ⚠️ **Lo recibido NO se recalcula acá**: sale de `invoiceTotals` +
+ * `invoiceStatus`, que son la única definición de "llegó todo" en el proyecto.
+ * Una segunda cuenta diría algo distinto de la insignia que la factura muestra
+ * al lado, el día que una de las dos cambie.
+ *
+ * Las cuatro formas de que este aviso mienta, y por qué ninguna cuenta:
+ * - **Anulada**: esa factura ya no existe como compromiso.
+ * - **Recibida entera**: llegó, aunque haya llegado tarde. Lo que se avisa es
+ *   lo que FALTA, no un historial de demoras.
+ * - **Sin fecha esperada**: no se prometió nada, así que no se puede
+ *   incumplir. Avisar ahí sería inventar una promesa que nadie hizo.
+ * - **Esperada HOY**: el día todavía no terminó. Avisar a las 9 de la mañana
+ *   de algo que llega a las 5 de la tarde enseña a ignorar el aviso.
+ */
+export function facturasAtrasadas(
+  facturas: FacturaParaAtraso[],
+  hoy: string,
+): FacturaAtrasada[] {
+  if (!isCalendarDay(hoy)) {
+    throw new Error(`Hoy inválido: "${hoy}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+
+  const atrasadas: FacturaAtrasada[] = [];
+  for (const f of facturas) {
+    if (f.voidedAt != null) continue;
+    if (f.expectedAt == null) continue;
+
+    const dia = diaDeNegocio(f.expectedAt);
+    // Una fecha que no se entiende no es una promesa incumplida: es un dato
+    // roto, y tratarla como atraso sería avisar de algo que nadie prometió.
+    if (!isCalendarDay(dia)) continue;
+    // ESTRICTO: el día de hoy no cuenta todavía.
+    if (dia >= hoy) continue;
+
+    const totales = invoiceTotals(f.lines, SIN_ABONOS);
+    // Ya llegó todo: llegó tarde, pero llegó. Lo que se avisa es lo que FALTA.
+    if (invoiceStatus(totales).mercaderia === 'RECIBIDA') continue;
+    // Y no se pidió nada: una factura sin líneas (o con todo en cero) no está
+    // "sin recibir", está sin nada que recibir, y un aviso de 0 unidades es
+    // ruido.
+    //
+    // ⚠️ Las dos guardas son DISTINTAS a propósito y las dos hacen falta. La
+    // segunda estuvo escrita como `porRecibir <= 0`, que es verdadera en los
+    // dos casos y dejaba a la primera **sin efecto**: la verificación por
+    // mutación lo destapó —borrar el chequeo de `RECIBIDA` no tumbaba un solo
+    // test—. Código muerto en una guarda de las que deciden si un aviso miente
+    // es peor que no tenerla: parece que la regla está puesta.
+    if (totales.pedido <= 0) continue;
+
+    atrasadas.push({
+      id: f.id,
+      expectedAt: dia,
+      diasDeAtraso: daysBetween(dia, hoy),
+      porRecibir: totales.porRecibir,
+    });
+  }
+
+  return atrasadas.sort((a, b) => b.diasDeAtraso - a.diasDeAtraso);
 }
