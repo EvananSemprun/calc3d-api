@@ -288,15 +288,62 @@ cada uno). Va como tarea propia, con su test de ataque por puerta.
 
 ---
 
-## Cierre de la fase
+## Cierre de la fase — hecho el 2026-10-10
 
-- [ ] `pnpm -r lint` y `pnpm -r test` en los dos repos, **leyendo la salida**
-      (un commit del 2026-10-09 se fue con 2 errores de lint porque nadie leyó
-      la línea que los decía).
-- [ ] ⚠️ Si el total de tests **baja** sin que falle nada, una suite no
-      compiló. Pasó el 2026-10-09: 400 → 393 y el resumen seguía diciendo
-      "passed".
-- [ ] La suite de seguridad en verde: la fase toca dinero.
-- [ ] Verificación en el navegador contra el panel local (5180) de las tres
-      pantallas tocadas.
-- [ ] Avisar al dueño. **El push lo decide él.**
+| | |
+|---|---|
+| `calc3d-api` · shared | **472** tests / 31 suites ✅ (empezó en 423/28) |
+| `calc3d-api` · apps/api | **502** / 28 suites ✅ (empezó en 448/28) |
+| lint api | 0 errores · 119 warnings de `any` en specs, la misma línea base |
+| lint + build web | limpios ✅ |
+| `shared` | **0.37.0**, idéntico en los dos repos (`diff -r` vacío) |
+
+Ninguna suite perdió tests ni dejó de compilar en ninguna de las ocho tareas.
+
+### La pasada visual (panel local, datos de prueba creados y borrados)
+
+Recorrido completo contra la base LOCAL: factura nueva pidiendo **una impresora
+que no existía** → recibirla → deshacer la recepción → borrar todo.
+
+- El formulario pregunta **"¿Filamento o impresora?"** y el aviso cambia con la
+  respuesta. Al recibir una impresora **no pide gramos de rollo**.
+- Al recibir: nace la **impresora** con el precio de la compra (`$300`, 5000 h
+  por defecto) y **0 fichas de filamento** — el bug de la Tarea 2, muerto.
+  El gasto sale `EQUIPMENT` + inversión, enlazado a la impresora.
+- En Gastos, esa fila: marca **"de factura"**, **sin tacho** y el selector de
+  "quién pagó" `disabled` (medido: `aria-disabled`), con 7 columnas y la de
+  Proveedor en su lugar.
+- **Deshacer recepción**: el gasto desaparece, `received` vuelve a 0, **la
+  impresora se queda en el catálogo** y el saldo de caja queda **idéntico:
+  $133.22 antes y después**.
+- Dashboard: la cadena dice *"venías con $133.22 · este mes $0.00 · te queda
+  $133.22"*; con el filtro en **ayer** dice *"cerró con $133.22 al 9/10/2026 ·
+  hoy en caja $133.22"*; con **Todo** la cadena no se dibuja. El rojo quedó en
+  el saldo: "Resultado de la operación" en −$132.47 **no** se pinta de alarma.
+- La dona muestra **dos tramos** y su total es exactamente "Ventas + Cobrado de
+  encargos" ($2.071,25 + $354,43 = $2.425,68), con los colores alineados a los
+  otros gráficos.
+- A **375 px**: la página **no** scrollea de lado (medido: `scrollWidth` =
+  `clientWidth` = 375). La tabla de Gastos mide **884 px dentro de un
+  contenedor de 341** y se recorre con su scroll propio, igual que antes de
+  sumarle la columna. ⚠️ **Confirma el pendiente**: esa pantalla es la única
+  lista de finanzas sin vista de tarjetas, y se nota.
+
+Los datos de prueba se borraron: 0 facturas, 0 líneas, 0 gastos de factura, 0
+impresoras de prueba, y el saldo de la base local sigue en $133.22.
+
+### Lo que queda anotado para después
+
+- **8 campos de fecha más** (`SaleCreateSchema`, `ExpenseCreateSchema`,
+  `PaymentCreateSchema`, `LoanPaymentCreateSchema`, los tres de facturas de
+  compra…) usan `z.string().min(1)` y aceptan el 30 de febrero igual que las
+  tres que cerró la Tarea 8. **Es el mismo agujero por otra puerta y más
+  ancho**; quedó afuera porque apretarlos cambia el contrato de 8 DTOs que hoy
+  también admiten ISO con hora. Tarea propia, con su test de ataque por puerta.
+- `apps/web` **sigue sin runner de tests**: `vitest` instalado y sin cablear.
+  Por eso toda la lógica nueva vive en funciones puras de `shared`.
+- Gastos necesita **vista de tarjetas** en el teléfono.
+- Los dos filtros de Gastos no se persisten, a diferencia del resto del panel.
+
+> **Estado: terminada el 2026-10-10.** Ocho tareas, 22 commits en `main` entre
+> los dos repos. **Sin push: el despliegue lo decide el dueño.**
