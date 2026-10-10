@@ -495,12 +495,26 @@ en el repo web: se sobrescribe al sincronizar.
     (`businessCash(ledger, hasta)`). Lo pide la **cadena del Dashboard**
     ("venías con $X · este mes $Y · te queda $Z") para que los tres números
     salgan de UNA definición, la de Caja.
-    - ⚠️ **La fecha es obligatoria y tiene que existir en el calendario**
-      (`CashBalanceQuerySchema` = `FECHA.refine(isCalendarDay)`). El regex a
-      secas NO alcanza: el recorte del motor compara TEXTO, así que
+    - ⚠️ **La fecha es obligatoria y tiene que existir en el calendario.** El
+      regex a secas NO alcanza: el recorte del motor compara TEXTO, así que
       `at=2026-13-01` deja entrar todo 2026 y el "saldo hasta esa fecha" vuelve
       a ser el saldo entero — un número que parece bueno y miente sin avisar.
       Lo mismo si faltara: no puede valer por "toda la historia".
+      ⚠️ **El chequeo del calendario vive en la constante `FECHA`**
+      (`schemas/api.ts`), no en cada uso. Hasta el 2026-10-10 el `refine`
+      estaba suelto en `CashBalanceQuerySchema` y sus **gemelas de escritura
+      quedaban abiertas**: `'2026-02-30'` entraba por `OwnerMovementCreateSchema`
+      y por el upsert de conciliaciones, y Prisma lo guardaba **corrido al 2 de
+      marzo** — el movimiento quedaba en otro mes, el saldo "hasta el 28/2" no
+      lo contaba y después aparecía como faltante sin causa visible. Un `date:
+      FECHA` nuevo ya nace cerrado. Regresión:
+      `schemas/fecha-calendario.spec.ts` (las tres puertas, con su hermano
+      alcanzable) y `cash/cash.service.spec.ts` (contra el pipe REAL + metadata
+      de Nest de `addMovement` y `saveReconciliation`).
+      ⚠️ **Los otros `date` de `api.ts` NO usan `FECHA`**: son
+      `z.string().min(1)` (ventas, gastos, abonos, cuotas, facturas) y siguen
+      aceptando un día inventado. Pendiente aparte; ver "Lo que falta" del plan
+      de la Fase 1.
     - ⚠️ Es una ruta **literal**, declarada ANTES de las paramétricas del
       controlador (la regla que avisan sus propios comentarios).
     - `previousDay` / `isCalendarDay` viven en `shared/calc/stock.ts`, con el
@@ -509,9 +523,30 @@ en el repo web: se sobrescribe al sincronizar.
     - `cashChain(antes, ahora)` (`shared/calc/cash.ts`) arma la cadena y
       **deriva el del medio** de los otros dos, así `Z = X + Y` al centavo. Con
       `antes = null` devuelve `null` (filtro en "Todo": no hay un "antes").
-    - Tests: `cash.spec.ts` y `stock.spec.ts` (shared),
-      `cash/cash.service.spec.ts` (saldo recortado, aislamiento con su hermano
-      alcanzable y la fecha muriendo en el pipe real).
+    - ⚠️ **`cashChainCuts(from, to, hoy)` decide QUÉ DOS CORTES pedir**
+      (shared 0.37.0, 2026-10-10). Los dos extremos son el MISMO
+      `businessCash` con otra fecha de corte: **no son dos definiciones de
+      saldo**. Hasta ese día el extremo derecho era el saldo de HOY, siempre, y
+      con un rango pasado el tramo del medio **se comía lo posterior**: elegías
+      septiembre y ese tramo traía octubre entero adentro. La razón que se había
+      dado para no arreglarlo —"tiene que dar el mismo número que la tarjeta
+      Saldo en caja"— no se sostenía.
+      - Un rango **ABIERTO** (termina hoy o después) corta en `end: null`, o sea
+        en el saldo de hoy, **no en su `to`**: el 31 de octubre todavía no
+        llegó. Así la pantalla normal no cambia ni paga una consulta de más, y
+        su extremo derecho sigue siendo al centavo el de la tarjeta.
+      - Un rango **CERRADO** (`to < hoy`) corta en su `to` y devuelve
+        `closed: true`, para que **la palabra acompañe al número**: "cerró con"
+        y no "te queda". La tarjeta "Saldo en caja" **no se toca**: sigue siendo
+        el saldo de hoy, y son dos números distintos a propósito.
+      - ⚠️ `hoy` lo calcula QUIEN LLAMA, en día **LOCAL** (`todayKey()` en el
+        panel): el motor es puro y no decide husos. Con un "hoy" en UTC, desde
+        las 20:00 de Caracas el mes en curso se leería como cerrado.
+    - Tests: `cash.spec.ts` y `stock.spec.ts` (shared) — incluido el armado de
+      punta a punta con un libro de agosto/septiembre/octubre donde septiembre
+      tiene que dar +50 y no +10 —, `cash/cash.service.spec.ts` (saldo
+      recortado, aislamiento con su hermano alcanzable y la fecha muriendo en el
+      pipe real).
   - **ABM de contrapartes y cuentas (fase 2, 2026-10-05, shared 0.22.0)** —
     `cash/counterparties.service.ts` y `cash/cash-accounts.service.ts`, cada uno
     en su archivo (`cash.service.ts` ya tiene 480 lineas con el resumen, las

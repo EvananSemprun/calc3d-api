@@ -590,7 +590,26 @@ export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 
 // ---------- Caja ----------
 
-const FECHA = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD');
+/**
+ * UN DÍA DE NEGOCIO: `AAAA-MM-DD` **que exista en el calendario**.
+ *
+ * ⚠️ El regex solo valida la FORMA, y eso no alcanza: `'2026-02-30'` la pasa y
+ * `new Date()` lo **corre al 2 de marzo** sin avisar. Entra por los movimientos
+ * de caja y por el upsert de conciliaciones —dinero, y escrito por el cliente—,
+ * así que el movimiento queda fechado en otro mes: el saldo "hasta el 28 de
+ * febrero" no lo cuenta y después aparece como un faltante sin causa visible.
+ * `'2026-13-01'` es peor todavía en el recorte del motor, que compara TEXTO:
+ * deja entrar todo 2026 y el "saldo hasta esa fecha" vuelve a ser el saldo
+ * entero (ver `CashBalanceQuerySchema`).
+ *
+ * ⚠️ El chequeo del calendario va ACÁ, en la constante, no en cada uso: una
+ * puerta cerrada con su gemela abierta al lado no cierra nada. Todo lo que use
+ * `FECHA` lo hereda, y un `date: FECHA` nuevo nace cerrado.
+ */
+const FECHA = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD')
+  .refine(isCalendarDay, 'Ese día no existe en el calendario');
 
 /** Plata PURA entre el bolsillo de la contraparte y la caja (no es un gasto). */
 export const OwnerMovementCreateSchema = z.object({
@@ -699,16 +718,17 @@ export type CashShortfallPlanQueryDto = z.infer<typeof CashShortfallPlanQuerySch
 /**
  * La query de `GET /cash/balance`: el saldo del negocio HASTA ese día.
  *
- * ⚠️ La fecha es OBLIGATORIA y tiene que ser un día que EXISTA. Faltarla o
- * mandar basura no puede caer en "toda la historia": ese número parece bueno,
- * así que miente en silencio en vez de avisar. Y el regex de `FECHA` no
- * alcanza: `2026-13-01` lo pasa y, como el recorte del motor compara TEXTO
- * (`fecha <= hasta`), deja entrar todo 2026 — el saldo "hasta esa fecha"
- * vuelve a ser el saldo entero, que es exactamente el modo de fallar que esta
- * validación existe para cerrar.
+ * ⚠️ La fecha es OBLIGATORIA. Faltarla no puede caer en "toda la historia":
+ * ese número parece bueno, así que miente en silencio en vez de avisar.
+ *
+ * Que el día EXISTA lo garantiza `FECHA` desde el 2026-10-10 (antes el refine
+ * vivía acá suelto, y sus gemelas de escritura quedaban abiertas). El motivo
+ * sigue valiendo: `2026-13-01` pasa cualquier regex de AAAA-MM-DD y, como el
+ * recorte del motor compara TEXTO (`fecha <= hasta`), deja entrar todo 2026 —
+ * el saldo "hasta esa fecha" vuelve a ser el saldo entero.
  */
 export const CashBalanceQuerySchema = z.object({
-  at: FECHA.refine(isCalendarDay, 'Ese día no existe en el calendario'),
+  at: FECHA,
 });
 export type CashBalanceQueryDto = z.infer<typeof CashBalanceQuerySchema>;
 

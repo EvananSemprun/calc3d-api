@@ -1,6 +1,7 @@
 import {
   businessCash,
   cashChain,
+  cashChainCuts,
   cashEntries,
   CASH_SIGN,
   type CashCategory,
@@ -613,5 +614,155 @@ describe('cashChain', () => {
    */
   it('sin un "antes" no hay cadena', () => {
     expect(cashChain(null, 102.83)).toBeNull();
+  });
+});
+
+/**
+ * EL TRAMO DEL MEDIO NO SE COME LO QUE VINO DESPUÉS (2026-10-10, Tarea 8.1).
+ *
+ * La cadena pedía el saldo de **HOY** como extremo derecho, siempre. Con el mes
+ * en curso eso está bien; con un rango ya cerrado miente: elegías septiembre y
+ * la pantalla decía "venías con $X al 31/8 · en el rango $Y", pero ese Y traía
+ * octubre entero adentro.
+ *
+ * La razón que se había dado para no arreglarlo —"Z tiene que ser el mismo
+ * número que la tarjeta Saldo en caja"— no se sostiene: el saldo al final del
+ * rango no es otra definición, es el MISMO `businessCash` con otra fecha de
+ * corte. Y la tarjeta sigue siendo el saldo de hoy a propósito: son dos
+ * números distintos, y cada uno dice cuál es.
+ *
+ * `cashChainCuts` es la pieza que decide QUÉ saldos pedir y si el periodo ya
+ * cerró. Vive acá, en una función pura, porque es la decisión que estaba mal:
+ * dejarla en el JSX del Dashboard la volvía a dejar sin test.
+ */
+describe('cashChainCuts', () => {
+  const HOY = '2026-10-10';
+
+  it('un rango YA CERRADO corta en su propio fin, no en hoy', () => {
+    const cortes = cashChainCuts('2026-09-01', '2026-09-30', HOY);
+
+    expect(cortes).toEqual({ before: '2026-08-31', end: '2026-09-30', closed: true });
+  });
+
+  it('el rango EN CURSO se mide contra hoy: el mismo número que la tarjeta de saldo', () => {
+    // "Este mes" va hasta el 31, que todavía no llegó. Pedir el saldo "al 31"
+    // sería pedir el futuro; el saldo de hoy ES el cierre provisorio.
+    expect(cashChainCuts('2026-10-01', '2026-10-31', HOY)).toEqual({
+      before: '2026-09-30',
+      end: null,
+      closed: false,
+    });
+  });
+
+  it('un rango que termina HOY todavía no cerró: queda abierto hasta la medianoche', () => {
+    expect(cashChainCuts('2026-10-01', HOY, HOY)).toEqual({
+      before: '2026-09-30',
+      end: null,
+      closed: false,
+    });
+  });
+
+  it('"ayer" es un periodo cerrado: con eso se quedó al cierre, no es lo que tiene hoy', () => {
+    expect(cashChainCuts('2026-10-09', '2026-10-09', HOY)).toEqual({
+      before: '2026-10-08',
+      end: '2026-10-09',
+      closed: true,
+    });
+  });
+
+  it('un rango sin fin llega hasta hoy', () => {
+    expect(cashChainCuts('2026-09-01', undefined, HOY)).toEqual({
+      before: '2026-08-31',
+      end: null,
+      closed: false,
+    });
+  });
+
+  /**
+   * Con el filtro en "Todo" no hay un "antes" y la cadena no se dibuja; el
+   * `before: null` es lo que `cashChain` convierte en `null`.
+   */
+  it('sin inicio no hay cadena', () => {
+    for (const sin of [undefined, null, '']) {
+      expect(cashChainCuts(sin, '2026-09-30', HOY)).toEqual({
+        before: null,
+        end: null,
+        closed: false,
+      });
+    }
+  });
+
+  /**
+   * Red de seguridad: el rango sale de un `<input type="date">`, así que
+   * siempre es un día real, pero `previousDay` LANZA con un día inventado y acá
+   * eso sería una pantalla en blanco en vez de una cadena menos.
+   */
+  it('un día que no existe no revienta la pantalla: no hay cadena', () => {
+    expect(cashChainCuts('2026-02-30', '2026-02-28', HOY)).toEqual({
+      before: null,
+      end: null,
+      closed: false,
+    });
+  });
+
+  it('un fin inventado se trata como "sin fin": se mide contra hoy', () => {
+    expect(cashChainCuts('2026-09-01', '2026-09-31', HOY)).toEqual({
+      before: '2026-08-31',
+      end: null,
+      closed: false,
+    });
+  });
+});
+
+/**
+ * LA CADENA ARMADA DE PUNTA A PUNTA, con números puestos a mano.
+ *
+ * Es el test con dientes: un libro con movimientos en agosto, septiembre y
+ * octubre, y la cadena de **septiembre** tiene que decir lo que pasó en
+ * septiembre. Con el extremo derecho en "el saldo de hoy" —como estaba— el
+ * tramo del medio se comía los −40 de octubre.
+ */
+describe('la cadena de un rango pasado no absorbe lo posterior', () => {
+  const HOY = '2026-10-10';
+
+  /** 100 en agosto, +50 en septiembre, −40 en octubre. */
+  const libro = (): CashLedger => {
+    const l = vacio();
+    l.sales = [
+      { date: '2026-08-15', amount: 100 },
+      { date: '2026-09-10', amount: 50 },
+    ];
+    l.expenses = [
+      { date: '2026-10-05', amount: 40, payer: null, isInvestment: false, isFilament: false, refundable: true },
+    ];
+    return l;
+  };
+
+  it('septiembre es +50, no +10', () => {
+    const l = libro();
+    const cortes = cashChainCuts('2026-09-01', '2026-09-30', HOY);
+
+    const antes = businessCash(l, cortes.before!).balance;
+    const alFinal = businessCash(l, cortes.end!).balance;
+    const c = cashChain(antes, alFinal)!;
+
+    expect(c.before).toBe(100); // lo de agosto
+    expect(c.delta).toBe(50); // SOLO septiembre
+    expect(c.after).toBe(150); // el cierre de septiembre
+    expect(c.before + c.delta).toBe(c.after);
+
+    // Y el saldo de HOY es otro número, a propósito: la tarjeta sigue siendo éste.
+    expect(businessCash(l).balance).toBe(110);
+    expect(c.after).not.toBe(businessCash(l).balance);
+  });
+
+  it('el mes en curso sí cierra en el saldo de hoy', () => {
+    const l = libro();
+    const cortes = cashChainCuts('2026-10-01', '2026-10-31', HOY);
+
+    expect(cortes.end).toBeNull(); // = el saldo de hoy, el de la tarjeta
+    const c = cashChain(businessCash(l, cortes.before!).balance, businessCash(l).balance)!;
+
+    expect(c).toEqual({ before: 150, delta: -40, after: 110 });
   });
 });

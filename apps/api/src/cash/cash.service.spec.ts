@@ -1801,3 +1801,78 @@ describe('GET /cash/balance — la fecha es un día real o es 400', () => {
     expect(args.some((a) => a?.pipes?.some((pp) => pp instanceof ZodValidationPipe))).toBe(true);
   });
 });
+
+/**
+ * EL 30 DE FEBRERO MUERE EN EL PIPE DE LAS PUERTAS DE ESCRITURA (Tarea 8.2).
+ *
+ * El regex de `FECHA` validaba la forma y no el calendario: `'2026-02-30'`
+ * pasaba y Prisma lo guardaba **corrido al 2 de marzo**. Es dinero y es una
+ * entrada del cliente, así que el test ejecuta el ataque por las DOS puertas de
+ * escritura y, aparte, fija por metadata real de Nest que la ruta tenga el pipe
+ * puesto: contra el schema pelado no se detecta a quien saque el pipe.
+ *
+ * ⚠️ Cada rechazo viene con su **hermano alcanzable**: el mismo cuerpo con un
+ * día real tiene que seguir entrando, o una guarda que rechace todo pasaría.
+ */
+describe('Las puertas de escritura de caja rechazan un día que no existe', () => {
+  const DIAS_INVENTADOS = ['2026-02-30', '2026-02-29', '2026-13-01', '2026-11-31', '2026-10-32'];
+
+  describe('POST /cash/movements', () => {
+    const pipe = new ZodValidationPipe(OwnerMovementCreateSchema);
+    const cuerpo = (date: string) => ({
+      date,
+      kind: 'CONTRIBUTION',
+      amount: 50,
+      concept: 'Puso plata de su bolsillo',
+    });
+
+    it('un día inventado es 400', () => {
+      for (const basura of DIAS_INVENTADOS) {
+        expect(() => pipe.transform(cuerpo(basura))).toThrow(BadRequestException);
+      }
+    });
+
+    it('el hermano alcanzable: con un día real el movimiento entra', () => {
+      expect(pipe.transform(cuerpo('2026-10-10'))).toMatchObject({ date: '2026-10-10', amount: 50 });
+      expect(pipe.transform(cuerpo('2024-02-29'))).toMatchObject({ date: '2024-02-29' });
+    });
+
+    it('la ruta valida el body con ZodValidationPipe (metadata real de Nest)', () => {
+      const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'addMovement') as
+        | Record<string, { index: number; data?: string; pipes: unknown[] }>
+        | undefined;
+      const args = Object.values(meta ?? {});
+
+      if (!args.length) throw new Error('falta el método addMovement en el controlador');
+      expect(args.some((a) => a?.pipes?.some((pp) => pp instanceof ZodValidationPipe))).toBe(true);
+    });
+  });
+
+  describe('PUT /cash/reconciliations', () => {
+    const pipe = new ZodValidationPipe(CashReconciliationUpsertSchema);
+    const cuerpo = (date: string) => ({ accountId: 'acc-1', date, totalAmount: 120 });
+
+    it('un día inventado es 400', () => {
+      for (const basura of DIAS_INVENTADOS) {
+        expect(() => pipe.transform(cuerpo(basura))).toThrow(BadRequestException);
+      }
+    });
+
+    it('el hermano alcanzable: con un día real la conciliación entra', () => {
+      expect(pipe.transform(cuerpo('2026-10-10'))).toMatchObject({
+        date: '2026-10-10',
+        totalAmount: 120,
+      });
+    });
+
+    it('la ruta valida el body con ZodValidationPipe (metadata real de Nest)', () => {
+      const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'saveReconciliation') as
+        | Record<string, { index: number; data?: string; pipes: unknown[] }>
+        | undefined;
+      const args = Object.values(meta ?? {});
+
+      if (!args.length) throw new Error('falta el método saveReconciliation en el controlador');
+      expect(args.some((a) => a?.pipes?.some((pp) => pp instanceof ZodValidationPipe))).toBe(true);
+    });
+  });
+});

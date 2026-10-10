@@ -27,6 +27,7 @@
  * un detalle que suma distinto que su propio total.
  */
 
+import { isCalendarDay, previousDay } from './stock';
 
 /**
  * QUIEN PUSO LA PLATA de un asiento, por TIPO de contraparte.
@@ -340,4 +341,61 @@ export function cashChain(balanceBefore: number | null, balanceNow: number): Cas
   const before = round2(balanceBefore);
   const after = round2(balanceNow);
   return { before, delta: round2(after - before), after };
+}
+
+/**
+ * QUÉ DOS SALDOS PEDIR para la cadena de un rango, y si ese rango YA CERRÓ.
+ *
+ * Los dos extremos son el MISMO `businessCash` con distinta fecha de corte: no
+ * son dos definiciones de saldo, es una con dos cortes.
+ */
+export interface CashChainCuts {
+  /** Corte del saldo PREVIO (el día anterior al inicio). `null` = no hay cadena. */
+  before: string | null;
+  /**
+   * Corte del saldo FINAL. `null` = **el saldo de hoy**, sin corte: el rango
+   * todavía está abierto y su cierre no llegó.
+   */
+  end: string | null;
+  /**
+   * El rango TERMINÓ antes de hoy. Lo que dice la cadena es con cuánto quedó al
+   * cerrar ese periodo, **no** lo que hay hoy en la cuenta: la palabra de la
+   * pantalla tiene que acompañar al número ("cerró con", no "te queda").
+   */
+  closed: boolean;
+}
+
+/**
+ * EL TRAMO DEL MEDIO NO PUEDE COMERSE LO QUE VINO DESPUÉS (2026-10-10).
+ *
+ * La cadena usaba el saldo de **HOY** como extremo derecho, siempre. Con el mes
+ * en curso está bien; con un rango ya cerrado miente: elegís septiembre y dice
+ * "venías con $X al 31/8 · en el rango $Y", con octubre entero metido en ese Y.
+ *
+ * ⚠️ El rango ABIERTO (el que termina hoy o más adelante) corta en `null`, o
+ * sea en el saldo de hoy, y NO en su `to`: el 31 de octubre todavía no llegó,
+ * así que "el saldo al 31" sería pedirle el saldo al futuro. De paso, el
+ * extremo derecho de la pantalla normal queda idéntico al de la tarjeta "Saldo
+ * en caja" sin una consulta de más.
+ *
+ * ⚠️ `today` lo calcula QUIEN LLAMA, en día LOCAL (`todayKey()` en el panel).
+ * El motor es puro y no decide husos: desde las 20:00 de Caracas, un "hoy" en
+ * UTC daría el día siguiente y el mes en curso se leería como cerrado.
+ *
+ * Sin `from` —filtro en "Todo", o un rango a medio escribir— no hay un "antes"
+ * y no hay cadena: un `before: 0` afirmaría que el negocio arrancó en cero
+ * justo ahí. Un día que no existe en el calendario se trata igual, porque
+ * `previousDay` lanza y eso sería una pantalla en blanco en vez de una cadena
+ * de menos.
+ */
+export function cashChainCuts(
+  from: string | null | undefined,
+  to: string | null | undefined,
+  today: string,
+): CashChainCuts {
+  if (!from || !isCalendarDay(from)) return { before: null, end: null, closed: false };
+  const before = previousDay(from);
+  // Un `to` ausente o inventado se lee como "hasta hoy": el rango sigue abierto.
+  const cerrado = !!to && isCalendarDay(to) && to < today;
+  return { before, end: cerrado ? to! : null, closed: cerrado };
 }

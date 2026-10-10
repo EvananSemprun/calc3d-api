@@ -271,6 +271,21 @@ conciliaciones. Es una entrada del usuario y es dinero.
       puerta cerrada con su gemela abierta al lado no cierra nada.
 - [ ] `git commit`.
 
+**Lo que falta (encontrado al cerrar 8.2, el 2026-10-10 — NO arreglado).**
+`FECHA` tenía **3** usos y los 3 quedaron cerrados, pero `schemas/api.ts` tiene
+**8 campos de fecha más que NO usan `FECHA`**: son `z.string().min(1)` y
+aceptan cualquier texto, el 30 de febrero incluido. Todos mueven plata:
+`SaleCreateSchema`, `ExpenseCreateSchema`, `ExpenseWithDefinitionSchema`,
+`PaymentCreateSchema` (abono de encargo), `LoanPaymentCreateSchema`,
+`PurchaseInvoiceUpsertSchema`, `PurchaseInvoicePaymentSchema` y
+`PurchaseReceiveSchema` (+ los `endDate`/`expectedAt` opcionales).
+
+Es el **mismo agujero por otra puerta**, y más ancho. Se dejó afuera a
+propósito, no por descuido: esos campos hoy admiten también un ISO con hora, así
+que apretarlos a `FECHA` es un cambio de contrato de 8 DTOs con su propio riesgo
+de regresión (hay que revisar qué manda el panel y los scripts de importación en
+cada uno). Va como tarea propia, con su test de ataque por puerta.
+
 ---
 
 ## Cierre de la fase
