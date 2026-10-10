@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   CashAccountUpsertSchema,
+  CashBalanceQuerySchema,
   CashCategorySchema,
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
@@ -19,6 +20,7 @@ import {
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   type CashAccountUpsertDto,
+  type CashBalanceQueryDto,
   type CashCategoryDto,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
@@ -41,6 +43,32 @@ export class CashController {
   @Get()
   summary(@CurrentUser() user: AuthUser) {
     return this.service.summary(user.organizationId);
+  }
+
+  /**
+   * EL SALDO HASTA UN DÍA: con cuánto venía el negocio al cerrar esa fecha.
+   *
+   * Lo usa la cadena del Dashboard ("venías con $X · este mes $Y · te queda
+   * $Z") para que los tres números salgan de UNA sola definición, la de Caja.
+   *
+   * ⚠️ Es una ruta LITERAL, así que va declarada ANTES de las paramétricas de
+   * abajo (`breakdown/:category`, `reconciliations/:id/plan`) — la regla que
+   * avisan sus propios comentarios. Hoy no hay colisión real (las otras dos
+   * tienen más segmentos), pero el día que aparezca un `@Get(':algo')` suelto
+   * esta tiene que seguir estando arriba o Nest la toma como un id. Es el
+   * tropiezo que este repo ya tuvo con `GET /printers/recovery` y
+   * `GET /orders/payments`.
+   *
+   * ⚠️ La fecha se valida en el pipe y es OBLIGATORIA: una inválida —o
+   * ausente— no puede devolver el saldo de toda la historia como si nada. Ese
+   * número parece bueno, así que miente sin que nada avise.
+   */
+  @Get('balance')
+  balanceAt(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(CashBalanceQuerySchema)) query: CashBalanceQueryDto,
+  ) {
+    return this.service.balanceAt(user.organizationId, query.at);
   }
 
   /**

@@ -1,6 +1,8 @@
 import {
   businessDateKey,
   canCloseMonth,
+  isCalendarDay,
+  previousDay,
   monthCloseDay,
   monthConsumption,
   monthKey,
@@ -138,6 +140,49 @@ describe('mes del conteo', () => {
   it('previousMonth retrocede un mes, incluso cruzando el año', () => {
     expect(previousMonth('2026-09')).toBe('2026-08');
     expect(previousMonth('2026-01')).toBe('2025-12');
+  });
+});
+
+/**
+ * EL DÍA ANTERIOR. Es la aritmética de "con cuánto venías": el saldo con el que
+ * arranca un periodo es el que había al CERRAR el día de antes.
+ *
+ * ⚠️ Va en UTC, como el resto de las fechas de negocio. Hecha con `new Date()`
+ * en la zona LOCAL, al oeste de UTC la fecha nace un día antes y la cuenta se
+ * corre entera — el mismo error que ya imprimió el día previo en los documentos.
+ */
+describe('previousDay', () => {
+  it('retrocede un día dentro del mes', () => {
+    expect(previousDay('2026-10-10')).toBe('2026-10-09');
+  });
+
+  it('el primero del mes cae en el último del anterior, con los días que tenga', () => {
+    expect(previousDay('2026-10-01')).toBe('2026-09-30');
+    expect(previousDay('2026-03-01')).toBe('2026-02-28');
+    // 2024 es bisiesto: el 29 existe y es el día anterior al 1 de marzo.
+    expect(previousDay('2024-03-01')).toBe('2024-02-29');
+  });
+
+  it('el 1 de enero cruza el año', () => {
+    expect(previousDay('2026-01-01')).toBe('2025-12-31');
+  });
+
+  it('una fecha que no existe LANZA en vez de inventar un día', () => {
+    expect(() => previousDay('2026-02-30')).toThrow();
+    expect(() => previousDay('2026-13-01')).toThrow();
+    expect(() => previousDay('10/10/2026')).toThrow();
+    expect(() => previousDay('')).toThrow();
+  });
+
+  it('isCalendarDay separa los días reales de los inventados', () => {
+    expect(isCalendarDay('2026-10-10')).toBe(true);
+    expect(isCalendarDay('2024-02-29')).toBe(true);
+    expect(isCalendarDay('2026-02-29')).toBe(false);
+    expect(isCalendarDay('2026-13-01')).toBe(false);
+    expect(isCalendarDay('2026-00-10')).toBe(false);
+    expect(isCalendarDay('2026-10-32')).toBe(false);
+    expect(isCalendarDay('2026-10')).toBe(false);
+    expect(isCalendarDay('')).toBe(false);
   });
 });
 

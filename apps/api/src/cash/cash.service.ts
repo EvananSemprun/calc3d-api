@@ -321,6 +321,30 @@ export class CashService {
   }
 
   /**
+   * EL SALDO DEL NEGOCIO HASTA UN DÍA (inclusive): con cuánta plata venía el
+   * negocio al cerrar esa fecha.
+   *
+   * Es lo que hace posible la cadena del Dashboard —"venías con $X · este mes
+   * $Y · te queda $Z"— con UNA sola definición de caja. El motor ya sabía
+   * recortar por fecha (`businessCash(ledger, hasta)`, el mismo corte que usa
+   * el esperado de una conciliación); lo que faltaba era exponerlo.
+   *
+   * ⚠️ `at` llega del cliente y se valida en el PIPE. Si una fecha inválida
+   * cayera acá, el recorte compara TEXTO y devolvería el saldo entero: un
+   * número que parece bueno. Por eso el schema exige un día que exista, y por
+   * eso la fecha NO es opcional — faltarla no puede valer por "toda la
+   * historia".
+   *
+   * ⚠️ Pasa el `at` a `businessCash`. Sin eso devuelve el saldo de toda la
+   * historia, la pantalla muestra el mismo número dos veces y la cadena da
+   * $0 de movimiento en el periodo.
+   */
+  async balanceAt(organizationId: string, at: string) {
+    const d = await this.datos(organizationId);
+    return { at, balance: businessCash(d.ledger, at) };
+  }
+
+  /**
    * El detalle de UNA línea de "De dónde sale el saldo".
    *
    * ⚠️ NO reclasifica: le pide los asientos a `cashEntries`, el MISMO que usa

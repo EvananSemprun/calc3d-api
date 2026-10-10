@@ -1,4 +1,11 @@
-import { businessCash, cashEntries, CASH_SIGN, type CashCategory, type CashLedger } from './cash';
+import {
+  businessCash,
+  cashChain,
+  cashEntries,
+  CASH_SIGN,
+  type CashCategory,
+  type CashLedger,
+} from './cash';
 
 /** Lo mínimo para que cada test solo escriba lo que le importa. */
 const vacio = (): CashLedger => ({
@@ -546,5 +553,65 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
 
     expect(detalle.map((e) => e.amount)).toEqual([30]);
     expect(detalle[0].id).toBe('ab-1');
+  });
+});
+
+/**
+ * LA CADENA DE CAJA: "venías con $X · este mes $Y · te queda $Z".
+ *
+ * Nació de un bug con nombre y apellido (2026-10-10): el Dashboard mostraba
+ * juntas "Resultado de caja −61.20" y "Saldo en caja 102.83". El −61.20 era
+ * cobrado del mes menos gastos del mes —tres definiciones distintas de
+ * "octubre" en una pantalla— y el dueño lo leyó como un saldo. Según la caja de
+ * verdad, octubre fue −30.39: venía con 133.22 y le quedaban 102.83.
+ *
+ * ⚠️ Por eso el del MEDIO se DERIVA de los otros dos. Calcularlo por su propio
+ * camino es exactamente cómo nació el bug: dos caminos no cierran entre sí el
+ * día que uno cambia, y una pantalla de dinero que se contradice es peor que no
+ * tener la cadena.
+ */
+describe('cashChain', () => {
+  it('el del medio sale de los otros dos, y los tres cierran', () => {
+    const c = cashChain(133.22, 102.83);
+
+    expect(c).toEqual({ before: 133.22, delta: -30.39, after: 102.83 });
+    expect(c!.before + c!.delta).toBeCloseTo(c!.after, 10);
+  });
+
+  it('un periodo que SUMA plata da un medio positivo', () => {
+    expect(cashChain(100, 250)).toEqual({ before: 100, delta: 150, after: 250 });
+  });
+
+  it('un periodo sin movimientos deja el medio en cero', () => {
+    expect(cashChain(102.83, 102.83)).toEqual({ before: 102.83, delta: 0, after: 102.83 });
+  });
+
+  it('arrancar de cero no es un caso especial', () => {
+    expect(cashChain(0, 45.5)).toEqual({ before: 0, delta: 45.5, after: 45.5 });
+  });
+
+  /**
+   * Los dos extremos se redondean ANTES de restar, no después: redondeando el
+   * resultado de la resta, `before + delta` puede dar un centavo más que
+   * `after` (0.125 y 0.25 lo hacen) y la cadena deja de cerrar en pantalla.
+   */
+  it('redondea los extremos antes de restar, así la cadena cierra al centavo', () => {
+    const c = cashChain(0.125, 0.25)!;
+
+    expect(c.before + c.delta).toBeCloseTo(c.after, 10);
+    expect(c).toEqual({ before: 0.13, delta: 0.12, after: 0.25 });
+  });
+
+  it('la resta no arrastra ruido de coma flotante', () => {
+    expect(cashChain(0.3, 0.1)!.delta).toBe(-0.2);
+  });
+
+  /**
+   * ⚠️ Con el filtro en "Todo" —o con un rango sin inicio— NO hay un "antes":
+   * la cadena no significa nada y la pantalla muestra solo el saldo. Devolver
+   * `before: 0` sería afirmar que el negocio arrancó en cero justo ahí.
+   */
+  it('sin un "antes" no hay cadena', () => {
+    expect(cashChain(null, 102.83)).toBeNull();
   });
 });

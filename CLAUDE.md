@@ -479,6 +479,29 @@ en el repo web: se sobrescribe al sincronizar.
     - Rutas: `GET /cash`, `POST/DELETE /cash/movements`,
       `PUT /cash/reconciliations`, `POST /cash/reconciliations/:id/confirm`,
       `POST /cash/reconciliations/:id/void`.
+  - **El saldo HASTA una fecha (2026-10-10, shared 0.35.0)** —
+    `GET /cash/balance?at=AAAA-MM-DD` devuelve `{ at, balance: BusinessCash }`
+    con el mismo corte que ya usaba el esperado de una conciliación
+    (`businessCash(ledger, hasta)`). Lo pide la **cadena del Dashboard**
+    ("venías con $X · este mes $Y · te queda $Z") para que los tres números
+    salgan de UNA definición, la de Caja.
+    - ⚠️ **La fecha es obligatoria y tiene que existir en el calendario**
+      (`CashBalanceQuerySchema` = `FECHA.refine(isCalendarDay)`). El regex a
+      secas NO alcanza: el recorte del motor compara TEXTO, así que
+      `at=2026-13-01` deja entrar todo 2026 y el "saldo hasta esa fecha" vuelve
+      a ser el saldo entero — un número que parece bueno y miente sin avisar.
+      Lo mismo si faltara: no puede valer por "toda la historia".
+    - ⚠️ Es una ruta **literal**, declarada ANTES de las paramétricas del
+      controlador (la regla que avisan sus propios comentarios).
+    - `previousDay` / `isCalendarDay` viven en `shared/calc/stock.ts`, con el
+      resto de las conversiones de fecha, y van en **UTC**: con `new Date()`
+      local, al oeste de UTC la cadena se corre un día entero.
+    - `cashChain(antes, ahora)` (`shared/calc/cash.ts`) arma la cadena y
+      **deriva el del medio** de los otros dos, así `Z = X + Y` al centavo. Con
+      `antes = null` devuelve `null` (filtro en "Todo": no hay un "antes").
+    - Tests: `cash.spec.ts` y `stock.spec.ts` (shared),
+      `cash/cash.service.spec.ts` (saldo recortado, aislamiento con su hermano
+      alcanzable y la fecha muriendo en el pipe real).
   - **ABM de contrapartes y cuentas (fase 2, 2026-10-05, shared 0.22.0)** —
     `cash/counterparties.service.ts` y `cash/cash-accounts.service.ts`, cada uno
     en su archivo (`cash.service.ts` ya tiene 480 lineas con el resumen, las

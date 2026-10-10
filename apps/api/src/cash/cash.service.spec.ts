@@ -4,6 +4,7 @@ import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import {
   CASH_SIGN,
   CashAccountUpsertSchema,
+  CashBalanceQuerySchema,
   CashCategorySchema,
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
@@ -1622,5 +1623,181 @@ describe('CashService — a quién se le debe', () => {
     );
 
     expect(conSocia).toBe(conDueno);
+  });
+});
+
+/**
+ * EL SALDO HASTA UNA FECHA — lo que hace posible la cadena del Dashboard
+ * ("venías con $X · este mes $Y · te queda $Z").
+ *
+ * El motor ya sabía recortar por fecha (`businessCash(ledger, hasta)`); lo que
+ * faltaba era exponerlo. Antes de esto, el Dashboard calculaba el "este mes"
+ * por su propio camino —cobrado del mes menos gastos del mes— y daba −61.20 al
+ * lado de un saldo de 102.83: ignoraba los aportes del dueño, las devoluciones
+ * y las compras a crédito. Dos definiciones de "octubre" en una pantalla.
+ *
+ * Los números son los de `tablasCompletas()`, a mano:
+ *   hasta el 04/09 → 100 + 30 cobrado − 10 gasto − 25 filamento = 95
+ *   hasta el 05/09 → entra la venta de 50 del día 5 = 145
+ *   toda la historia = −340 (el resto de los asientos son del 06 al 12)
+ */
+describe('CashService.balanceAt — el saldo HASTA una fecha', () => {
+  it('cuenta hasta ese día INCLUSIVE y no mira lo que viene después', async () => {
+    const r = await servicioFalso(tablasCompletas()).balanceAt(ORG, '2026-09-05');
+
+    expect(r.balance.balance).toBe(145);
+  });
+
+  /**
+   * ⚠️ Este es el que le da dientes al de arriba: si `balanceAt` ignorara la
+   * fecha devolvería −340 y los 145 serían una coincidencia imposible de notar.
+   * Clavar los dos números deja ver que son distintos a propósito.
+   */
+  it('el saldo de TODA la historia es otro número: la fecha recorta de verdad', async () => {
+    const t = tablasCompletas();
+    const [hasta, todo] = await Promise.all([
+      servicioFalso(t).balanceAt(ORG, '2026-09-05'),
+      servicioFalso(t).summary(ORG),
+    ]);
+
+    expect(todo.balance.balance).toBe(-340);
+    expect(hasta.balance.balance).not.toBe(todo.balance.balance);
+  });
+
+  it('un día más atrás deja afuera la venta de ese día', async () => {
+    const r = await servicioFalso(tablasCompletas()).balanceAt(ORG, '2026-09-04');
+
+    expect(r.balance.balance).toBe(95);
+    expect(r.balance.collected).toBe(130);
+    expect(r.balance.filament).toBe(25);
+    // La impresora es del 06: todavía no salió de la caja.
+    expect(r.balance.equipment).toBe(0);
+  });
+
+  it('antes del primer movimiento el negocio arranca en cero', async () => {
+    const r = await servicioFalso(tablasCompletas()).balanceAt(ORG, '2026-08-31');
+
+    expect(r.balance.balance).toBe(0);
+  });
+
+  it('devuelve la fecha que se pidió, para que la pantalla sepa de qué día habla', async () => {
+    const r = await servicioFalso(tablasCompletas()).balanceAt(ORG, '2026-09-05');
+
+    expect(r.at).toBe('2026-09-05');
+  });
+
+  /**
+   * LA CADENA CIERRA de punta a punta: el saldo inicial que devuelve este
+   * endpoint, más lo que el periodo movió, da el saldo final del resumen. Es la
+   * invariante que la pantalla promete (`Z = X + Y`), medida sobre los dos
+   * números que de verdad viajan por la red.
+   */
+  it('saldo inicial + lo del periodo = saldo final', async () => {
+    const t = tablasCompletas();
+    const antes = (await servicioFalso(t).balanceAt(ORG, '2026-09-04')).balance.balance;
+    const final = (await servicioFalso(t).summary(ORG)).balance.balance;
+
+    expect(antes).toBe(95);
+    expect(final).toBe(-340);
+    expect(antes + (final - antes)).toBe(final);
+  });
+});
+
+/**
+ * AISLAMIENTO. El saldo a una fecha arma el ledger entero del negocio: un
+ * escape de scope acá no se nota como una fila de más sino como un número que
+ * incluye la plata del negocio de al lado.
+ */
+describe('CashService.balanceAt — una organización ajena (IDOR)', () => {
+  /** ORG está vacía; OTHER_ORG tiene una venta de 999. */
+  const tablas = (): Tablas => ({
+    counterparty: [
+      { id: 'cp-A', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+      { id: 'cp-B', organizationId: OTHER_ORG, name: 'Dueño B', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [], cashReconciliation: [], loan: [],
+    expense: [], loanPayment: [], ownerMovement: [], debtApplication: [], payment: [],
+    sale: [
+      {
+        id: 'v-ajena', organizationId: OTHER_ORG, date: new Date('2026-09-01'),
+        amount: '999', kind: 'COUNTER', note: 'Venta del otro negocio', source: 'MANUAL',
+      },
+    ],
+  });
+
+  it('el saldo de una organización no incluye la plata de la otra', async () => {
+    const r = await servicioFalso(tablas()).balanceAt(ORG, '2026-09-30');
+
+    expect(r.balance.balance).toBe(0);
+    expect(r.balance.collected).toBe(0);
+  });
+
+  /**
+   * ⚠️ EL HERMANO que vuelve honesto al de arriba: prueba que la venta ES
+   * ALCANZABLE en este mock cuando el `where` la incluye. Sin él, el 0 podría
+   * significar "no había nada que devolver" y pasaría igual con el filtro
+   * quitado — que es como se perdió la fase 2.
+   */
+  it('el mock modela la base: pedido COMO la otra organización, el saldo SÍ es 999', async () => {
+    const r = await servicioFalso(tablas()).balanceAt(OTHER_ORG, '2026-09-30');
+
+    expect(r.balance.balance).toBe(999);
+  });
+
+  it('todas las lecturas del saldo van con el organizationId', async () => {
+    const p = baseFalsa(tablas());
+    await new CashService(p as never).balanceAt(ORG, '2026-09-30');
+
+    for (const m of [p.sale, p.payment, p.expense, p.loanPayment, p.ownerMovement, p.debtApplication]) {
+      expect(m.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+      );
+    }
+  });
+});
+
+/**
+ * LA FECHA LLEGA DEL CLIENTE, así que muere en el PIPE.
+ *
+ * ⚠️ Una fecha inválida NO puede devolver el saldo de toda la historia como si
+ * nada: eso es peor que un error, porque el número que sale parece bueno. Y un
+ * regex de AAAA-MM-DD a secas no alcanza — `2026-13-01` lo pasa y, como el
+ * recorte compara TEXTO, deja entrar todo 2026 y el saldo "hasta esa fecha"
+ * vuelve a ser el saldo entero. Por eso el día tiene que existir de verdad.
+ */
+describe('GET /cash/balance — la fecha es un día real o es 400', () => {
+  const pipe = new ZodValidationPipe(CashBalanceQuerySchema);
+
+  it('un día que no existe en el calendario es 400', () => {
+    for (const basura of ['2026-13-01', '2026-00-10', '2026-02-30', '2026-10-32', '2026-02-29']) {
+      expect(() => pipe.transform({ at: basura })).toThrow(BadRequestException);
+    }
+  });
+
+  it('cualquier cosa que no sea AAAA-MM-DD es 400', () => {
+    for (const basura of ['', 'hoy', '2026-10', '2026/10/10', '10-10-2026', '2026-10-10T00:00:00Z']) {
+      expect(() => pipe.transform({ at: basura })).toThrow(BadRequestException);
+    }
+  });
+
+  it('sin fecha es 400: faltarla no puede valer por "toda la historia"', () => {
+    expect(() => pipe.transform({})).toThrow(BadRequestException);
+    expect(() => pipe.transform({ at: null })).toThrow(BadRequestException);
+  });
+
+  it('un día real pasa, también el 29 de febrero de un año bisiesto', () => {
+    expect(pipe.transform({ at: '2026-10-10' })).toMatchObject({ at: '2026-10-10' });
+    expect(pipe.transform({ at: '2024-02-29' })).toMatchObject({ at: '2024-02-29' });
+  });
+
+  it('la ruta valida la query con ZodValidationPipe (metadata real de Nest)', () => {
+    const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, CashController, 'balanceAt') as
+      | Record<string, { index: number; data?: string; pipes: unknown[] }>
+      | undefined;
+    const args = Object.values(meta ?? {});
+
+    if (!args.length) throw new Error('falta el método balanceAt en el controlador');
+    expect(args.some((a) => a?.pipes?.some((pp) => pp instanceof ZodValidationPipe))).toBe(true);
   });
 });

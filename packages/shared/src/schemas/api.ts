@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OBLIGATION_SOURCES } from '../calc/obligations';
 import { GROWTH_LEVELS, type GrowthLevel } from '../calc/goal';
+import { isCalendarDay } from '../calc/stock';
 
 /**
  * Si un componente del CATÁLOGO se usa por pieza o una sola vez por pedido.
@@ -694,6 +695,22 @@ export const CashShortfallPlanQuerySchema = z
     path: ['targetSourceId'],
   });
 export type CashShortfallPlanQueryDto = z.infer<typeof CashShortfallPlanQuerySchema>;
+
+/**
+ * La query de `GET /cash/balance`: el saldo del negocio HASTA ese día.
+ *
+ * ⚠️ La fecha es OBLIGATORIA y tiene que ser un día que EXISTA. Faltarla o
+ * mandar basura no puede caer en "toda la historia": ese número parece bueno,
+ * así que miente en silencio en vez de avisar. Y el regex de `FECHA` no
+ * alcanza: `2026-13-01` lo pasa y, como el recorte del motor compara TEXTO
+ * (`fecha <= hasta`), deja entrar todo 2026 — el saldo "hasta esa fecha"
+ * vuelve a ser el saldo entero, que es exactamente el modo de fallar que esta
+ * validación existe para cerrar.
+ */
+export const CashBalanceQuerySchema = z.object({
+  at: FECHA.refine(isCalendarDay, 'Ese día no existe en el calendario'),
+});
+export type CashBalanceQueryDto = z.infer<typeof CashBalanceQuerySchema>;
 
 /** Una contraparte: el dueño, un socio o un prestamista externo. */
 export const CounterpartyUpsertSchema = z.object({

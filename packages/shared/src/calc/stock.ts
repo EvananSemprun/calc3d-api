@@ -282,3 +282,47 @@ export function monthCloseDay(month: string): string {
 export function canCloseMonth(month: string, now: Date, timeZone = BUSINESS_TIME_ZONE): boolean {
   return businessDateKey(now, timeZone) >= monthCloseDay(month);
 }
+
+// ----- El día anterior -----
+//
+// La aritmética de "con cuánto venías": el saldo con el que arranca un periodo
+// es el que había al CERRAR el día de antes. Va acá, con el resto de las
+// conversiones de fecha, y NO suelta en cada pantalla.
+
+const DIA_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * true si `AAAA-MM-DD` es un día que EXISTE en el calendario.
+ *
+ * ⚠️ Un regex NO alcanza: `'2026-02-30'` y `'2026-13-01'` pasan cualquier
+ * `\d{4}-\d{2}-\d{2}` y JS los **corre al mes siguiente** sin avisar. Un día
+ * inventado que se acepta en silencio es peor que un error: devuelve una cuenta
+ * que parece buena. Por eso el chequeo es uno solo y vive acá — lo usan tanto
+ * `previousDay` como el schema que valida la fecha que llega del cliente.
+ */
+export function isCalendarDay(day: string): boolean {
+  const m = DIA_RE.exec(day);
+  if (!m) return false;
+  const [a, mes, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const f = new Date(Date.UTC(a, mes - 1, d));
+  return f.getUTCFullYear() === a && f.getUTCMonth() === mes - 1 && f.getUTCDate() === d;
+}
+
+/**
+ * El día anterior a uno dado: `'2026-10-01'` → `'2026-09-30'`.
+ *
+ * ⚠️ Toda la cuenta va en **UTC**, como el resto de las fechas de negocio.
+ * Hecha con `new Date(key)` + `setDate` en la zona LOCAL, al oeste de UTC la
+ * fecha nace un día antes y la cadena entera se corre: es el mismo error que ya
+ * imprimió el día previo en los documentos.
+ */
+export function previousDay(day: string): string {
+  if (!isCalendarDay(day)) {
+    throw new Error(`Fecha inválida: "${day}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+  const m = DIA_RE.exec(day) as RegExpExecArray;
+  // El día 0 de un mes ES el último del anterior, así que el cruce de mes y de
+  // año sale solo (y el 29 de febrero bisiesto también).
+  const f = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - 1));
+  return f.toISOString().slice(0, 10);
+}

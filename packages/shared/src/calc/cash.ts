@@ -301,3 +301,43 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
   };
 }
 
+
+/**
+ * LA CADENA DE UN PERIODO: con cuánto venías, cuánto lo movió, cuánto te queda.
+ *
+ * `after = before + delta` SIEMPRE, al centavo.
+ */
+export interface CashChain {
+  /** Saldo al cerrar el día ANTERIOR al periodo. */
+  before: number;
+  /** Lo que el periodo movió la caja. Se DERIVA: `after − before`. */
+  delta: number;
+  /** Saldo al final del periodo. */
+  after: number;
+}
+
+/**
+ * Arma la cadena de caja de un periodo: "venías con $X · este mes $Y · te
+ * queda $Z".
+ *
+ * ⚠️ El del MEDIO se DERIVA de los otros dos. Calcularlo por su propio camino
+ * —cobrado del mes menos gastos del mes, p. ej.— es exactamente el bug que esta
+ * función vino a cerrar (2026-10-10): esa cuenta ignoraba los aportes del
+ * dueño, las devoluciones y las compras a crédito, así que daba −61.20 al lado
+ * de un saldo de 102.83 y el dueño la leyó como un saldo. Dos caminos distintos
+ * no cierran entre sí el día que uno cambia.
+ *
+ * ⚠️ Los extremos se redondean ANTES de restar. Al revés, `before + delta`
+ * puede dar un centavo más que `after` (0.125 y 0.25 lo hacen) y los tres
+ * números dejan de cerrar en pantalla, que es lo único que la cadena promete.
+ *
+ * Con `balanceBefore` en `null` devuelve `null`: con el filtro en "Todo" —o con
+ * un rango sin inicio— no hay un "antes" y la cadena no significa nada. Un
+ * `before: 0` afirmaría que el negocio arrancó en cero justo ahí.
+ */
+export function cashChain(balanceBefore: number | null, balanceNow: number): CashChain | null {
+  if (balanceBefore == null) return null;
+  const before = round2(balanceBefore);
+  const after = round2(balanceNow);
+  return { before, delta: round2(after - before), after };
+}
