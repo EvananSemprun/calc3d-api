@@ -627,7 +627,7 @@ export const LoanCreateSchema = z.object({
   concept: z.string().optional().nullable(),
   /**
    * ⚠️ Las tres van con `FECHA_OPCIONAL`: siguen siendo opcionales —el panel
-   * manda `nextDueDate || null` y `closedAt` no lo manda nunca— pero el día
+   * manda `nextDueDate || null` y `closedAt: todayKey()` al cerrar— pero el día
    * tiene que existir. `nextDueDate` es el caso que más duele: corrido al mes
    * siguiente es un **compromiso mal fechado**, y la pantalla Deuda lo muestra
    * tal cual como el próximo vencimiento.

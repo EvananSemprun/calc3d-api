@@ -156,6 +156,36 @@ function serialize(l: LoanConPagos, now = new Date()) {
 
 const fecha = (v?: string | null) => (v ? new Date(v) : null);
 
+/**
+ * CERRAR UN PRÉSTAMO QUE TODAVÍA SE DEBE: no se puede, y no es burocracia.
+ *
+ * `closedAt` es lo que **saca la cuota del punto de equilibrio**
+ * (`monthlyLoanPayments` filtra por `!closedAt`) y lo que saca el saldo del
+ * `lenderBalance` de Caja (`cash.service.ts` pide los préstamos con
+ * `closedAt: null`). Cerrar uno debiendo borra esa deuda de las dos pantallas
+ * de dinero sin que nadie la haya pagado.
+ *
+ * ⚠️ Y hay una tercera lectura que NO se movería: el `totals.prestamista` de
+ * `overview` suma TODOS los préstamos, cerrados incluidos. Con un cierre
+ * debiendo, Caja diría $0 y Deuda $750 sobre la misma plata. Con esta guarda un
+ * préstamo cerrado tiene siempre saldo 0, así que las dos coinciden.
+ *
+ * El campo significa literalmente "cuándo se terminó de pagar" —de él sale el
+ * estado PAGADO—, y el caso real (el prestamista perdonó el resto, o se pagó
+ * por fuera) ya tiene un camino que no miente: registrar el pago que falta, o
+ * corregir el capital. Por eso se impide en vez de avisar.
+ *
+ * ⚠️ **Reabrir siempre se puede**: cerrar no es borrar, y un cierre por error
+ * tiene que poder deshacerse.
+ */
+function exigirSaldado(closedAt: string | null | undefined, saldo: number, nombre: string) {
+  if (!closedAt || saldo <= 0) return;
+  throw new ConflictException(
+    `Todavía debés $${saldo} de “${nombre}”: registrá el pago que falta (o corregí el capital) antes de cerrarlo. ` +
+      'Cerrarlo debiendo saca esa deuda del punto de equilibrio y de Caja como si estuviera pagada.',
+  );
+}
+
 @Injectable()
 export class LoansService {
   constructor(
@@ -237,6 +267,9 @@ export class LoansService {
   }
 
   async create(organizationId: string, dto: LoanCreateDto) {
+    // Un préstamo que NACE cerrado nace debiendo todo su capital: sin esto, la
+    // guarda de `update` no cerraría nada (es su gemela alcanzable).
+    exigirSaldado(dto.closedAt, dto.principal, dto.name);
     const loan = await this.prisma.loan.create({
       data: {
         organizationId,
@@ -258,7 +291,10 @@ export class LoansService {
   }
 
   async update(organizationId: string, id: string, dto: LoanUpdateDto) {
-    await this.get(organizationId, id);
+    const actual = await this.get(organizationId, id);
+    // El saldo sale del MISMO `serialize` que dibuja la pantalla: acá no se
+    // vuelve a restar capital menos pagos.
+    exigirSaldado(dto.closedAt, actual.balance, actual.name);
     const loan = await this.prisma.loan.update({
       where: { id },
       data: {

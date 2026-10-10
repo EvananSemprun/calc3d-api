@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { LoanCreateSchema, LoanPaymentCreateSchema, LoanPaymentVoidSchema } from '@calc3d/shared';
+import {
+  LoanCreateSchema,
+  LoanPaymentCreateSchema,
+  LoanPaymentVoidSchema,
+  LoanUpdateSchema,
+} from '@calc3d/shared';
 import { LoansService } from './loans.module';
 import { PurchaseInvoicesService } from '../purchase-invoices/purchase-invoices.module';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
@@ -568,5 +573,97 @@ describe('LoansService — el saldo a favor usado', () => {
       r.totals.prestamista + r.totals.propietario + r.totals.proveedores,
     );
     expect(r.totals.total).toBe(134); // 0 prestamista + 100 propietario + 34 proveedores
+  });
+});
+
+/**
+ * CERRAR UN PRÉSTAMO — y la razón por la que no se puede cerrar debiendo.
+ *
+ * `closedAt` no es un adorno: es lo que **saca la cuota del punto de
+ * equilibrio** (`monthlyLoanPayments` filtra por `!closedAt`) y lo que saca el
+ * saldo del `lenderBalance` de Caja (`cash.service.ts` pide los préstamos con
+ * `closedAt: null`). Cerrar uno que todavía se debe **borra esa deuda de las
+ * dos pantallas de dinero** sin que nadie la pague.
+ *
+ * ⚠️ Y hay una tercera lectura que NO se mueve: el `totals.prestamista` de esta
+ * misma pantalla suma TODOS los préstamos, cerrados incluidos. Con un cierre
+ * debiendo, Caja diría $0 y Deuda $750 — dos verdades sobre la misma plata. Con
+ * el bloqueo, un préstamo cerrado siempre tiene saldo 0 y las dos coinciden.
+ *
+ * La decisión es **impedirlo**, no avisarlo: el campo significa literalmente
+ * "cuándo se terminó de pagar" (y de él se deriva el estado PAGADO), y para el
+ * caso real —el prestamista perdonó el resto, o se pagó por fuera— ya hay un
+ * camino que no miente: registrar el pago que falta, o corregir el capital.
+ */
+describe('LoansService — cerrar un préstamo', () => {
+  const CIERRE = { closedAt: '2026-10-10' };
+
+  it('con saldo pendiente NO se puede cerrar: 409 y el préstamo queda abierto', async () => {
+    const p = baseFalsa({ loans: [PRESTAMO], payments: [pago({ amount: 250 })] });
+
+    // Capital 1000, pagado 250 → debe 750.
+    await expect(
+      service(p).update(ORG, 'l1', LoanUpdateSchema.parse(CIERRE)),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(p._tablas.loan[0].closedAt).toBeNull();
+  });
+
+  it('el mensaje dice cuánto falta y qué hacer', async () => {
+    const p = baseFalsa({ loans: [PRESTAMO], payments: [pago({ amount: 250 })] });
+
+    await expect(service(p).update(ORG, 'l1', LoanUpdateSchema.parse(CIERRE))).rejects.toThrow(
+      /750/,
+    );
+  });
+
+  it('el hermano alcanzable: saldado SÍ se cierra, y queda PAGADO', async () => {
+    const p = baseFalsa({ loans: [PRESTAMO], payments: [pago({ amount: 1000 })] });
+
+    const l = await service(p).update(ORG, 'l1', LoanUpdateSchema.parse(CIERRE));
+
+    expect(l.closedAt).toBe('2026-10-10T00:00:00.000Z');
+    expect(l.status).toBe('PAGADO');
+  });
+
+  /** Cerrar no es borrar: un cierre por error se deshace. */
+  it('reabrir siempre se puede, incluso debiendo', async () => {
+    const p = baseFalsa({
+      loans: [{ ...PRESTAMO, closedAt: d('2026-10-10') }],
+      payments: [pago({ amount: 250 })],
+    });
+
+    const l = await service(p).update(ORG, 'l1', LoanUpdateSchema.parse({ closedAt: null }));
+
+    expect(l.closedAt).toBeNull();
+    expect(l.status).toBe('ACTIVO');
+  });
+
+  /**
+   * ⚠️ LA GEMELA. `POST /loans` también acepta `closedAt`, y un préstamo que
+   * nace cerrado con capital nace debiendo todo: sin esta guarda, la puerta de
+   * `update` no cierra nada.
+   */
+  it('la gemela: tampoco se puede CREAR un préstamo cerrado con capital', async () => {
+    const p = baseFalsa();
+
+    await expect(
+      service(p).create(
+        ORG,
+        LoanCreateSchema.parse({ name: 'Deuda vieja', principal: 400, ...CIERRE }),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(p._tablas.loan).toHaveLength(0);
+  });
+
+  it('el hermano alcanzable de la gemela: sin `closedAt` se crea igual', async () => {
+    const p = baseFalsa();
+
+    const l = await service(p).create(
+      ORG,
+      LoanCreateSchema.parse({ name: 'Deuda vieja', principal: 400 }),
+    );
+
+    expect(l.closedAt).toBeNull();
+    expect(p._tablas.loan).toHaveLength(1);
   });
 });

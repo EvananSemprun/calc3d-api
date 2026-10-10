@@ -548,9 +548,8 @@ en el repo web: se sobrescribe al sincronizar.
         impreso en la nota de entrega** — la fecha corrida se la mostrás al
         cliente. **Medido en el panel, campo por campo**: `startDate:
         form.startDate` (día pelado), `endDate: form.endDate || null`,
-        `deliveryDate || null`, `nextDueDate || null`, y `closedAt` el panel
-        **no lo manda nunca** (`useUpdateLoan` está exportado y sin usar). Cero
-        cambios en el cliente.
+        `deliveryDate || null`, `nextDueDate || null` y `closedAt` (que ese día
+        el panel todavía no mandaba). Cero cambios en el cliente.
       - ⚠️ **`CampaignUpdateSchema.startDate` NO es nullable**: `.partial()`
         la vuelve `.optional()` y nada más. Ausente sí, `null` no — igual que
         antes de cerrarla. Por eso vive en la tabla de puertas obligatorias del
@@ -913,6 +912,36 @@ en el repo web: se sobrescribe al sincronizar.
       aplicada, backfill corrido, y las 4 cifras de Caja, las 9 líneas del saldo,
       el saldo del préstamo y las 19 obligaciones **idénticas** antes y después.
       Lo único que cambia es que el acreedor se completa.
+    - **CERRAR Y REABRIR (2026-10-10)** — `PATCH /loans/:id` con
+      `closedAt: 'AAAA-MM-DD'` cierra y con `closedAt: null` reabre. Lo usa el
+      botón "Cerrar"/"Reabrir" de la pantalla Deuda (`useUpdateLoan`, que estaba
+      exportado y sin usar: un préstamo saldado **no se podía cerrar**).
+      - ⚠️ **Con saldo pendiente NO se cierra: 409** (`exigirSaldado` en
+        `loans.module.ts`, aplicada en `create` Y en `update` — un préstamo que
+        nace cerrado con capital nace debiendo todo, y esa es la gemela).
+        Se IMPIDE en vez de avisar porque `closedAt` significa literalmente
+        "cuándo se terminó de pagar" (de él sale el estado PAGADO) y porque
+        cerrar debiendo **borra la deuda de dos pantallas de dinero**: la cuota
+        sale del nivel 2 del equilibrio (`monthlyLoanPayments` filtra por
+        `!closedAt`) y el saldo sale del `lenderBalance` de Caja
+        (`cash.service.ts` pide los préstamos con `closedAt: null`). El caso
+        real —se lo perdonaron, se pagó por fuera— ya tiene un camino que no
+        miente: registrar el pago que falta, o corregir el capital.
+      - ⚠️ **Y había una TERCERA lectura que no se movía**: el
+        `totals.prestamista` de `overview` suma TODOS los préstamos, cerrados
+        incluidos. Con un cierre debiendo, Caja diría $0 y Deuda $750 sobre la
+        misma plata. Con la guarda un préstamo cerrado tiene siempre saldo 0,
+        así que las dos coinciden — **el bloqueo es lo que hace que las dos
+        definiciones no se contradigan**, no un trámite.
+      - **Reabrir siempre se puede, incluso debiendo**: cerrar no es borrar.
+      - ⚠️ **Un préstamo saldado pero SIN cerrar sigue exigiendo su cuota** en
+        el nivel 2 todos los meses: es exactamente para eso que hacía falta el
+        botón. Medido: con $200 fijos al 40 % de margen, cerrar un préstamo de
+        cuota $100 baja el nivel 2 de $750 a $500 — y con un solo préstamo el
+        Dashboard **esconde** la línea (`oculto: cuota <= 0`). Regresión:
+        `loans.service.spec.ts` (6 tests, con sus hermanos alcanzables) y, en
+        el panel, `features/loans/equilibrio-al-cerrar.spec.ts` (5) +
+        `pages/Loans.cerrar.spec.tsx` (5, el cableado del botón).
     - ⚠️ **El prestamista nació con el nombre EQUIVOCADO.** El backfill de Caja
       lo creó con `loan.name` ("Deuda impresora P2S") porque no tenía de dónde
       sacar el nombre real: eso es el concepto de la deuda, no quién prestó la

@@ -198,7 +198,9 @@ const PUERTAS_OPCIONALES: { nombre: string; parse: (date: unknown) => unknown }[
   // --- Las tres familias nuevas, en su variante OPCIONAL ---
   // Las seis siguen siendo `.optional().nullable()` a propósito: el panel manda
   // `endDate: form.endDate || null`, `deliveryDate: deliveryDate || null` y
-  // `nextDueDate: nextDueDate || null`, y `closedAt` no lo manda nunca.
+  // `nextDueDate: nextDueDate || null` y, desde que Deuda cierra préstamos,
+  // `closedAt: todayKey()` al cerrar y `closedAt: null` al reabrir — las dos
+  // formas tienen que seguir pasando.
   // Volverlas obligatorias rompería la pantalla sin cerrar nada; lo que se
   // cierra es el día inventado.
   {
