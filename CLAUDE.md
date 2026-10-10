@@ -851,10 +851,10 @@ en el repo web: se sobrescribe al sincronizar.
       default de la base era `true` y toda cuota del propietario generaba
       obligación sin que nadie lo decidiera. Si pagó la caja no genera nada, por
       más que el campo venga en `true`.
-    - `GET /loans/overview` devuelve **las dos deudas** y pide las obligaciones
-      al MISMO `CashService` que usa Caja. Si las recalculara, el día que un
-      filtro cambie las dos pantallas dirían cosas distintas sobre la misma
-      deuda.
+    - `GET /loans/overview` devuelve **las tres deudas** (ver abajo) y pide las
+      obligaciones al MISMO `CashService` que usa Caja. Si las recalculara, el
+      día que un filtro cambie las dos pantallas dirían cosas distintas sobre la
+      misma deuda.
     - **Verificado contra un dump de producción el 2026-10-08**: migración
       aplicada, backfill corrido, y las 4 cifras de Caja, las 9 líneas del saldo,
       el saldo del préstamo y las 19 obligaciones **idénticas** antes y después.
@@ -866,6 +866,52 @@ en el repo web: se sobrescribe al sincronizar.
       producción el 2026-10-09 desde Configuración → Caja → Contrapartes — sin
       tocar la base. Si alguna vez se monta otra organización, el prestamista
       va a nacer igual de mal: el backfill no puede adivinarlo.
+  - **LOS PROVEEDORES EN LA PANTALLA DEUDA (2026-10-10)** — tercer bloque de
+    `GET /loans/overview`, junto al del prestamista y el del propietario. Hasta
+    acá "cuánto debe el negocio" estaba partido: las facturas de compra sin
+    pagar vivían solo en Compras y **no aparecían en ningún total**.
+    - **Nada nuevo se guarda ni se recalcula.** `LoansService` pide las facturas
+      a la MISMA `PurchaseInvoicesService` que usa Compras (que ya les pega
+      `invoiceTotals`) y las agrupa con `deudaPorProveedor()`
+      (`purchase-invoices/deuda-por-proveedor.ts`, puro, 12 tests con números a
+      mano). ⚠️ **Recalcular el saldo de una factura ahí sería una SEGUNDA
+      definición** y el día que una de las dos cambie, Deuda y Compras dirían
+      cosas distintas sobre la misma factura. Es la misma razón por la que las
+      obligaciones salen de `CashService`.
+    - ⚠️ **`overview` devuelve `totals` y el total es la SUMA de sus tres
+      partes** (`prestamista` + `propietario` + `proveedores`). Lo suma el
+      SERVIDOR y el panel solo lo dibuja —con los tres sumandos a la vista—: con
+      dos caminos al mismo número, un total que no cuadra con los bloques que
+      tiene debajo se lee como la verdad, porque nadie suma a ojo. El bloque del
+      prestamista también usa `totals.prestamista` en vez de rehacer el
+      `reduce`. Mutación: un total que se olvida un bloque tumba 4 tests.
+    - ⚠️ **Las dos formas de que el número mienta, y son OPUESTAS.** Una factura
+      **anulada** no se debe (se saltea por `voidedAt`); un abono **anulado** sí
+      vuelve a deberse (lo resuelve `invoiceTotals`, no se reimplementa). Cada
+      una con su test y su mutación: contar las anuladas tumba 4 tests, contar
+      los abonos anulados como pagados tumba 2.
+    - ⚠️ **Lo pagado DE MÁS no es deuda negativa y NO se compensa**: no resta
+      del grupo de ese proveedor ni del de otro. Viaja aparte (`aFavor`,
+      `facturasAFavor`) y la pantalla lo dice con esas palabras, hasta que
+      exista el saldo a favor (Fase 3). Mutación: restarlo tumba 4 tests.
+    - Una factura **sin proveedor anotado** se debe igual, en su propio grupo
+      ("Sin proveedor anotado"). Esconderla por no tener nombre dejaría al
+      bloque diciendo menos de lo que el negocio debe.
+    - La **gestión** (abonar, recibir, anular) **no se duplica**: sigue en
+      Compras. Deuda responde "cuánto" y lleva allá.
+    - ⚠️ `LoansModule` importa `PurchaseInvoicesModule`, así que
+      `LoansService` toma **tres** dependencias; los dos `new LoansService(...)`
+      a mano de `common/multi-tenant.audit.spec.ts` llevan el tercer argumento.
+    - Aislamiento: el test de que las facturas de otra organización no entran va
+      **con su hermano alcanzable** (la misma factura SÍ se ve desde su
+      organización); sin él pasaría igual con el bloque devolviendo vacío
+      siempre. Tests: `loans.service.spec.ts` (24) y
+      `deuda-por-proveedor.spec.ts` (12).
+    - ⚠️ **Pendiente (no es mío de arreglar):** `useInvoiceMutation` de
+      `calc3d-web/apps/web/src/features/purchases/api.ts` **no invalida
+      `['loans']`**, así que abonar una factura con Deuda abierta en otra
+      pestaña deja el bloque viejo hasta el próximo montaje. Es una línea en esa
+      lista de claves.
   - **Facturas de compra (2026-10-09, shared 0.32.0)** (`purchase-invoices/`):
     lo pedido, lo abonado y lo recibido, para **filamento e impresoras**.
     ⚠️ **LA REGLA: los abonos son la PLATA; la recepción es la MERCADERÍA.** Un

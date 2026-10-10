@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  D,
   LoanCreateSchema,
   LoanPaymentCreateSchema,
   LoanPaymentVoidSchema,
@@ -22,6 +23,7 @@ import {
   loanPaid,
   loanProgress,
   payOffEstimate,
+  toCents,
   type LoanCreateDto,
   type LoanPaymentVoidDto,
   type PaymentFrequency,
@@ -34,6 +36,11 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { CashModule } from '../cash/cash.module';
 import { CashService } from '../cash/cash.service';
+import {
+  PurchaseInvoicesModule,
+  PurchaseInvoicesService,
+} from '../purchase-invoices/purchase-invoices.module';
+import { deudaPorProveedor } from '../purchase-invoices/deuda-por-proveedor';
 
 /**
  * DEUDA — los préstamos con los que se compró equipo, y sus pagos.
@@ -154,6 +161,12 @@ export class LoansService {
   constructor(
     private prisma: PrismaService,
     private cash: CashService,
+    /**
+     * Las facturas de compra, para el TERCER bloque de la pantalla. Se piden al
+     * mismo servicio que usa Compras: acá no se consulta la tabla por separado
+     * ni se recalcula el saldo de una factura.
+     */
+    private purchaseInvoices: PurchaseInvoicesService,
   ) {}
 
   list(organizationId: string) {
@@ -163,31 +176,53 @@ export class LoansService {
   }
 
   /**
-   * LAS DOS DEUDAS de la pantalla.
+   * LAS TRES DEUDAS de la pantalla.
    *
-   * Son cosas distintas que comparten la palabra "préstamo": lo que le debés al
-   * **prestamista** (capital menos pagos) y lo que el negocio le debe al
-   * **propietario** por lo que puso (equipos, diseñador, aportes). Los pagos
-   * por conciliación caen en la segunda, que es donde de verdad se aplican.
+   * Son cosas distintas que comparten la palabra "deuda": lo que le debés al
+   * **prestamista** (capital menos pagos), lo que el negocio le debe al
+   * **propietario** por lo que puso (equipos, diseñador, aportes) y lo que le
+   * debés a los **proveedores** (facturas de compra sin pagar). Los pagos por
+   * conciliación caen en la segunda, que es donde de verdad se aplican.
    *
-   * ⚠️ Las obligaciones se piden al **mismo servicio que usa Caja**. Si acá se
-   * recalcularan, el día que un filtro cambie las dos pantallas van a decir
-   * cosas distintas sobre la misma deuda — es el motivo por el que el reporte
-   * de Excel también reusa `CashService`.
+   * ⚠️ Las obligaciones se piden al **mismo servicio que usa Caja** y las
+   * facturas al **mismo servicio que usa Compras**. Si acá se recalcularan, el
+   * día que un filtro cambie las pantallas van a decir cosas distintas sobre la
+   * misma deuda — es el motivo por el que el reporte de Excel también reusa
+   * `CashService`.
+   *
+   * ⚠️ **`totals` lo arma el SERVIDOR y el total es la suma de sus tres
+   * partes.** Si el panel sumara por su cuenta habría dos caminos al mismo
+   * número, y un total que no cuadra con los bloques que tiene debajo es peor
+   * que no tener total.
    */
   async overview(organizationId: string) {
-    const [loans, caja] = await Promise.all([
+    const [loans, caja, facturas] = await Promise.all([
       this.list(organizationId),
       this.cash.summary(organizationId),
+      this.purchaseInvoices.list(organizationId),
     ]);
+
+    const prestamista = toCents(loans.reduce((s, l) => s.plus(l.balance), D(0)));
+    const propietario = caja.financing.owedToOwner;
+    const proveedores = deudaPorProveedor(facturas);
+
     return {
       loans,
       /** Lo que el negocio le debe a la contraparte, obligación por obligación. */
       owner: {
         counterparty: caja.counterparty,
         obligations: caja.obligations,
-        total: caja.financing.owedToOwner,
+        total: propietario,
         applicationOrder: caja.applicationOrder,
+      },
+      /** Lo que le debés a cada proveedor. La GESTIÓN de cada factura vive en Compras. */
+      suppliers: proveedores,
+      /** Los tres bloques y su suma. El panel los muestra, no los calcula. */
+      totals: {
+        prestamista,
+        propietario,
+        proveedores: proveedores.total,
+        total: toCents(D(prestamista).plus(propietario).plus(proveedores.total)),
       },
     };
   }
@@ -394,7 +429,7 @@ export class LoansController {
 }
 
 @Module({
-  imports: [CashModule],
+  imports: [CashModule, PurchaseInvoicesModule],
   controllers: [LoansController],
   providers: [LoansService],
   exports: [LoansService],

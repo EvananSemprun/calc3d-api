@@ -443,12 +443,15 @@ describe('Aislamiento multi-tenant — Préstamos', () => {
   });
   const CPS = [{ id: 'cp-ajena', organizationId: OTHER }];
   const cash = { summary: jest.fn() };
+  // El tercer bloque de Deuda (los proveedores) no participa de este test:
+  // `create` no lo toca.
+  const facturas = { list: jest.fn().mockResolvedValue([]) };
   const nuevo = { name: 'X', principal: 100, monthlyPayment: 0, counterpartyId: 'cp-ajena' } as never;
 
   it('LoansService.create no acepta un acreedor de otra organización', async () => {
     const p = baseFalsa(CPS);
 
-    await expect(new LoansService(p as never, cash as never).create(ORG, nuevo)).rejects.toBeInstanceOf(
+    await expect(new LoansService(p as never, cash as never, facturas as never).create(ORG, nuevo)).rejects.toBeInstanceOf(
       NotFoundException,
     );
     expect(p.counterparty.findFirst).toHaveBeenCalledWith(
@@ -461,7 +464,7 @@ describe('Aislamiento multi-tenant — Préstamos', () => {
     // siempre — o sea, con y sin el scope.
     const p = baseFalsa(CPS);
 
-    const l = await new LoansService(p as never, cash as never).create(OTHER, nuevo);
+    const l = await new LoansService(p as never, cash as never, facturas as never).create(OTHER, nuevo);
 
     expect(l.id).toBe('l1');
   });

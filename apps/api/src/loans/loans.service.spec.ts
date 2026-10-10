@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { LoanCreateSchema, LoanPaymentCreateSchema, LoanPaymentVoidSchema } from '@calc3d/shared';
 import { LoansService } from './loans.module';
+import { PurchaseInvoicesService } from '../purchase-invoices/purchase-invoices.module';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 
 const ORG = 'org-A';
@@ -62,7 +63,76 @@ const cashFalso = () => ({
   }),
 });
 
-const service = (p: unknown, c: unknown = cashFalso()) => new LoansService(p as never, c as never);
+/**
+ * Las facturas llegan por la `PurchaseInvoicesService` **de verdad**, no por un
+ * mock que devuelva saldos escritos a mano.
+ *
+ * ⚠️ Es la diferencia entre probar el agrupador y probar la pantalla: el saldo
+ * de una factura y la regla del abono anulado viven en `invoiceTotals`, y un
+ * mock con `saldo: 40` ya adentro pasaría igual si alguien rompiera esa regla
+ * en el camino. Así, un abono anulado contado como pagado tumba un test.
+ */
+const facturasFalsas = (facturas: Record<string, unknown>[] = []) =>
+  new PurchaseInvoicesService(
+    {
+      purchaseInvoice: {
+        findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(
+            facturas.filter((f) =>
+              Object.entries(where).every(([k, v]) => (f as Record<string, unknown>)[k] === v),
+            ),
+          ),
+        ),
+      },
+    } as never,
+    {} as never,
+  );
+
+const service = (p: unknown, c: unknown = cashFalso(), f: unknown = facturasFalsas()) =>
+  new LoansService(p as never, c as never, f as never);
+
+/** Una factura cruda, como sale de Prisma: sin cuentas hechas. */
+const FACTURA_CRUDA = {
+  id: 'f1',
+  organizationId: ORG,
+  date: d('2026-10-09'),
+  expectedAt: null,
+  reference: null,
+  notes: null,
+  supplier: { id: 'prov-a', name: 'StratoFill' },
+  voidedAt: null,
+  voidReason: null,
+  source: 'MANUAL',
+  lines: [] as Record<string, unknown>[],
+  payments: [] as Record<string, unknown>[],
+};
+
+const lineaCruda = (quantity: number, unitPrice: number) => ({
+  id: `linea-${quantity}x${unitPrice}`,
+  materialId: null,
+  material: null,
+  printerId: null,
+  printer: null,
+  nombreNuevo: null,
+  nuevoTipo: null,
+  quantity,
+  unitPrice,
+  received: 0,
+});
+
+const abonoCrudo = (amount: number, voidedAt: Date | null = null) => ({
+  id: `abono-${amount}`,
+  date: d('2026-10-09'),
+  amount,
+  counterpartyId: null,
+  counterparty: null,
+  accountId: null,
+  note: null,
+  voidedAt,
+  voidReason: null,
+});
+
+const facturaCruda = (over: Record<string, unknown> = {}) => ({ ...FACTURA_CRUDA, ...over });
 
 const PRESTAMO = {
   id: 'l1',
@@ -259,7 +329,7 @@ describe('LoansService — mass-assignment', () => {
   });
 });
 
-describe('LoansService — las dos deudas', () => {
+describe('LoansService — las tres deudas', () => {
   it('overview reusa CashService en vez de recalcular las obligaciones', async () => {
     const p = baseFalsa({ loans: [PRESTAMO] });
     const cash = cashFalso();
@@ -272,5 +342,150 @@ describe('LoansService — las dos deudas', () => {
     expect(r.owner.total).toBe(100);
     expect(r.owner.obligations).toHaveLength(1);
     expect(r.loans).toHaveLength(1);
+  });
+
+  /**
+   * ⚠️ **EL TOTAL DE LA PANTALLA ES LA SUMA DE SUS TRES BLOQUES.** Números a
+   * mano: un total que no cuadra con las partes que tiene debajo es peor que no
+   * tener total, porque se lee como la verdad y nadie va a sumar a ojo.
+   */
+  it('el total es la suma de los tres bloques, al centavo', async () => {
+    // Prestamista: capital 1000 − un pago de 250 = 750.
+    const p = baseFalsa({ loans: [PRESTAMO], payments: [pago({ amount: 250 })] });
+    // Propietario: 100 (lo que devuelve el CashService falso).
+    // Proveedores: una factura de 2 × 12.50 = 25, con un abono de 10 → 15.
+    const facturas = facturasFalsas([
+      facturaCruda({ lines: [lineaCruda(2, 12.5)], payments: [abonoCrudo(10)] }),
+    ]);
+
+    const r = await service(p, cashFalso(), facturas).overview(ORG);
+
+    expect(r.totals.prestamista).toBe(750);
+    expect(r.totals.propietario).toBe(100);
+    expect(r.totals.proveedores).toBe(15);
+    // 750 + 100 + 15 = 865.
+    expect(r.totals.total).toBe(865);
+    expect(r.totals.total).toBe(
+      r.totals.prestamista + r.totals.propietario + r.totals.proveedores,
+    );
+  });
+
+  it('el bloque de proveedores sale de las facturas, proveedor por proveedor', async () => {
+    const facturas = facturasFalsas([
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40)], payments: [] }),
+      facturaCruda({
+        id: 'f2',
+        supplier: { id: 'prov-b', name: 'Filamentos del Sur' },
+        lines: [lineaCruda(1, 60)],
+        payments: [abonoCrudo(20)],
+      }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
+
+    // 40 a StratoFill, 40 (60 − 20) a Filamentos del Sur.
+    expect(r.suppliers.total).toBe(80);
+    expect(r.suppliers.groups).toHaveLength(2);
+    expect(r.suppliers.groups.map((g) => g.supplierName).sort()).toEqual([
+      'Filamentos del Sur',
+      'StratoFill',
+    ]);
+  });
+
+  it('sin facturas pendientes el bloque queda vacío y el total no se mueve', async () => {
+    const p = baseFalsa({ loans: [PRESTAMO], payments: [pago({ amount: 250 })] });
+
+    const r = await service(p).overview(ORG);
+
+    expect(r.suppliers.groups).toHaveLength(0);
+    expect(r.suppliers.total).toBe(0);
+    expect(r.totals.total).toBe(850);
+  });
+});
+
+describe('LoansService — las dos formas de que el número mienta', () => {
+  it('una factura ANULADA no se debe: no entra en el bloque ni en el total', async () => {
+    const facturas = facturasFalsas([
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40)] }),
+      facturaCruda({
+        id: 'f2',
+        lines: [lineaCruda(1, 1000)],
+        voidedAt: d('2026-10-09'),
+        voidReason: 'cargada dos veces',
+      }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
+
+    // Los $1000 anulados no existen: le debés 40.
+    expect(r.suppliers.total).toBe(40);
+    expect(r.totals.proveedores).toBe(40);
+    expect(r.totals.total).toBe(140);
+  });
+
+  /**
+   * ⚠️ Pasa por `invoiceTotals` de verdad: contar un abono anulado como pagado
+   * tumba este test. Es la otra forma de que el número mienta, y al revés que la
+   * anterior — acá la deuda tiene que VOLVER.
+   */
+  it('un abono ANULADO sí se vuelve a deber', async () => {
+    const vigente = facturasFalsas([
+      facturaCruda({ lines: [lineaCruda(1, 50)], payments: [abonoCrudo(30)] }),
+    ]);
+    const anulado = facturasFalsas([
+      facturaCruda({ lines: [lineaCruda(1, 50)], payments: [abonoCrudo(30, d('2026-10-10'))] }),
+    ]);
+
+    const conAbono = await service(baseFalsa(), cashFalso(), vigente).overview(ORG);
+    const sinAbono = await service(baseFalsa(), cashFalso(), anulado).overview(ORG);
+
+    expect(conAbono.suppliers.total).toBe(20);
+    // Anulado el abono, los 30 vuelven a deberse: 50 enteros.
+    expect(sinAbono.suppliers.total).toBe(50);
+    expect(sinAbono.totals.total).toBe(150);
+  });
+
+  /**
+   * ⚠️ **Lo pagado DE MÁS no es deuda negativa.** No resta de lo que debés en
+   * otra factura ni baja el total de la pantalla: se muestra aparte.
+   */
+  it('lo pagado de más se muestra aparte y NO compensa', async () => {
+    const facturas = facturasFalsas([
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 50)] }),
+      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 10)], payments: [abonoCrudo(30)] }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
+
+    // Debe 50 y pagó 20 de más en otra factura: NO se netean a 30.
+    expect(r.suppliers.total).toBe(50);
+    expect(r.suppliers.aFavor).toBe(20);
+    expect(r.totals.proveedores).toBe(50);
+    expect(r.totals.total).toBe(150);
+  });
+});
+
+describe('LoansService — el tercer bloque es de ESTA organización', () => {
+  it('las facturas de otra organización no entran en la deuda', async () => {
+    const facturas = facturasFalsas([
+      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999)] }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
+
+    expect(r.suppliers.total).toBe(0);
+    expect(r.suppliers.groups).toHaveLength(0);
+  });
+
+  it('y esa MISMA factura sí se ve desde su propia organización', async () => {
+    // Sin este hermano, el test de arriba pasaría aunque el bloque devolviera
+    // siempre vacío — o sea, con y sin el filtro por organización.
+    const facturas = facturasFalsas([
+      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999)] }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(OTRA);
+
+    expect(r.suppliers.total).toBe(999);
   });
 });
