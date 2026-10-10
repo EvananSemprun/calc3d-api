@@ -24,13 +24,21 @@
  * que el 30 de febrero quedaba guardado el 2 de marzo. Por eso esta tabla las
  * lista TODAS y no solo las de caja.
  */
+import type { ZodTypeAny } from 'zod';
+import * as API from './api';
 import {
+  CampaignCreateSchema,
+  CampaignUpdateSchema,
   CashBalanceQuerySchema,
   CashReconciliationUpsertSchema,
   ExpenseCreateSchema,
   ExpenseUpdateSchema,
   ExpenseWithDefinitionSchema,
+  LoanCreateSchema,
   LoanPaymentCreateSchema,
+  LoanUpdateSchema,
+  OrderCreateSchema,
+  OrderUpdateSchema,
   OwnerMovementCreateSchema,
   PaymentCreateSchema,
   PurchaseInvoicePaymentSchema,
@@ -135,6 +143,25 @@ const PUERTAS: { nombre: string; parse: (date: string) => unknown }[] = [
     nombre: 'PATCH /expenses/:id (ExpenseUpdateSchema)',
     parse: (date) => ExpenseUpdateSchema.parse({ date }),
   },
+  // --- Las TRES familias que quedaron afuera el 2026-10-10 ---
+  // No mueven plata del ledger, y por eso se habían dejado para después. Pero
+  // el día corrido se guarda igual: una campaña arrancada el 2 de marzo cuando
+  // se escribió el 30 de febrero mide su rendimiento sobre la ventana
+  // equivocada, y las otras dos son peores (ver abajo).
+  {
+    nombre: 'POST /campaigns · startDate (CampaignCreateSchema)',
+    parse: (startDate) =>
+      CampaignCreateSchema.parse({ name: 'Promo llaveros', startDate }),
+  },
+  {
+    /**
+     * Va acá y no en `PUERTAS_OPCIONALES` porque `.partial()` la vuelve
+     * `.optional()` pero **no nullable**: ausente sí, `null` no — igual que
+     * antes de cerrarla. El panel manda siempre un día (`form.startDate`).
+     */
+    nombre: 'PATCH /campaigns/:id · startDate (hereda por .partial())',
+    parse: (startDate) => CampaignUpdateSchema.parse({ startDate }),
+  },
 ];
 
 /**
@@ -167,6 +194,53 @@ const PUERTAS_OPCIONALES: { nombre: string; parse: (date: unknown) => unknown }[
   {
     nombre: 'POST /purchase-invoices/:id/lines/:lineId/receive · date (por defecto, hoy)',
     parse: (date) => PurchaseReceiveSchema.parse({ quantity: 1, date }),
+  },
+  // --- Las tres familias nuevas, en su variante OPCIONAL ---
+  // Las seis siguen siendo `.optional().nullable()` a propósito: el panel manda
+  // `endDate: form.endDate || null`, `deliveryDate: deliveryDate || null` y
+  // `nextDueDate: nextDueDate || null`, y `closedAt` no lo manda nunca.
+  // Volverlas obligatorias rompería la pantalla sin cerrar nada; lo que se
+  // cierra es el día inventado.
+  {
+    nombre: 'POST /campaigns · endDate (null = en curso)',
+    parse: (endDate) =>
+      CampaignCreateSchema.parse({ name: 'Promo llaveros', startDate: '2026-10-10', endDate }),
+  },
+  {
+    nombre: 'PATCH /campaigns/:id · endDate (hereda por .partial())',
+    parse: (endDate) => CampaignUpdateSchema.parse({ endDate }),
+  },
+  {
+    nombre: 'POST /loans · startDate (desde cuándo corre la deuda)',
+    parse: (startDate) =>
+      LoanCreateSchema.parse({ name: 'Deuda impresora', principal: 400, startDate }),
+  },
+  {
+    // Un vencimiento corrido al mes siguiente es un compromiso MAL FECHADO: el
+    // dueño cree que paga el 30 de febrero y la app lo muestra en marzo.
+    nombre: 'POST /loans · nextDueDate (el compromiso pactado)',
+    parse: (nextDueDate) =>
+      LoanCreateSchema.parse({ name: 'Deuda impresora', principal: 400, nextDueDate }),
+  },
+  {
+    nombre: 'POST /loans · closedAt (cuándo se terminó de pagar)',
+    parse: (closedAt) =>
+      LoanCreateSchema.parse({ name: 'Deuda impresora', principal: 400, closedAt }),
+  },
+  {
+    nombre: 'PATCH /loans/:id · nextDueDate (hereda por .partial())',
+    parse: (nextDueDate) => LoanUpdateSchema.parse({ nextDueDate }),
+  },
+  {
+    // SALE IMPRESO en la nota de entrega: una fecha inventada se la mostrás al
+    // cliente, corrida al día que el calendario sí tiene.
+    nombre: 'POST /orders · deliveryDate (sale en la nota de entrega)',
+    parse: (deliveryDate) =>
+      OrderCreateSchema.parse({ clientId: 'cli-1', deliveryDate }),
+  },
+  {
+    nombre: 'PATCH /orders/:id · deliveryDate (hereda por .partial())',
+    parse: (deliveryDate) => OrderUpdateSchema.parse({ deliveryDate }),
   },
 ];
 
@@ -274,5 +348,58 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
         expect(r.error.issues.map((i) => i.message).join(' ')).toMatch(/calendario/i);
       }
     }
+  });
+
+  /**
+   * Y las TRES familias que quedaron afuera ese día. Mismo mensaje: el dueño
+   * tiene que leer que el día no existe, no que el formato esté mal.
+   */
+  it('las tres familias nuevas (campaña, préstamo, entrega) hablan del calendario', () => {
+    const errores = [
+      CampaignCreateSchema.safeParse({ name: 'x', startDate: '2026-02-30' }),
+      CampaignCreateSchema.safeParse({ name: 'x', startDate: '2026-10-10', endDate: '2026-02-30' }),
+      LoanCreateSchema.safeParse({ name: 'x', principal: 1, startDate: '2026-02-30' }),
+      LoanCreateSchema.safeParse({ name: 'x', principal: 1, nextDueDate: '2026-02-30' }),
+      LoanCreateSchema.safeParse({ name: 'x', principal: 1, closedAt: '2026-02-30' }),
+      OrderCreateSchema.safeParse({ clientId: 'c1', deliveryDate: '2026-02-30' }),
+    ];
+
+    expect(errores).toHaveLength(6);
+    for (const r of errores) {
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.map((i) => i.message).join(' ')).toMatch(/calendario/i);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ EL INVENTARIO, para que no vuelva a quedar una gemela abierta. Recorre
+   * TODOS los schemas de entrada exportados y exige que ningún campo con
+   * pinta de fecha (`*Date`, `date`, `closedAt`, `expectedAt`, `at`) acepte un
+   * día que no existe. Un campo nuevo que se declare `z.string()` a secas
+   * aparece acá y no en la lista de arriba, que hay que acordarse de ampliar.
+   */
+  it('NINGÚN campo de fecha de NINGÚN schema de entrada acepta el 30 de febrero', () => {
+    const PARECE_FECHA = /(^|[a-z])(date|at)$/i;
+    const abiertos: string[] = [];
+
+    for (const [nombre, schema] of Object.entries(API as Record<string, unknown>)) {
+      if (!nombre.endsWith('Schema')) continue;
+      // Un `*View`/`*Response` describe lo que SALE, no lo que entra: nadie
+      // valida con él un cuerpo del cliente, y su `updatedAt` es un instante
+      // real con hora, no un día de negocio.
+      if (nombre.endsWith('ViewSchema') || nombre.endsWith('ResponseSchema')) continue;
+      const def = (schema as { _def?: { typeName?: string; shape?: () => Record<string, ZodTypeAny> } })
+        ._def;
+      if (def?.typeName !== 'ZodObject' || typeof def.shape !== 'function') continue;
+
+      for (const [campo, tipo] of Object.entries(def.shape())) {
+        if (!PARECE_FECHA.test(campo)) continue;
+        if (tipo.safeParse('2026-02-30').success) abiertos.push(`${nombre}.${campo}`);
+      }
+    }
+
+    expect(abiertos).toEqual([]);
   });
 });

@@ -19,9 +19,12 @@ import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import {
+  CampaignCreateSchema,
   ExpenseCreateSchema,
   ExpenseWithDefinitionSchema,
+  LoanCreateSchema,
   LoanPaymentCreateSchema,
+  OrderCreateSchema,
   PaymentCreateSchema,
   PurchaseInvoicePaymentSchema,
   PurchaseInvoiceUpsertSchema,
@@ -35,6 +38,7 @@ import { ExpensesController } from '../expenses/expenses.controller';
 import { OrdersController } from '../orders/orders.module';
 import { LoansController } from '../loans/loans.module';
 import { PurchaseInvoicesController } from '../purchase-invoices/purchase-invoices.module';
+import { CampaignsController } from '../campaigns/campaigns.module';
 
 /** El 30 de febrero no existe; el 28 sí. Un cuerpo por puerta, igual salvo la fecha. */
 const INVENTADO = '2026-02-30';
@@ -119,6 +123,74 @@ function bodyDeLaRuta(controller: Puerta['controller'], metodo: string) {
     | undefined;
   return Object.entries(meta ?? {}).find(([clave]) => clave.startsWith('3:'))?.[1];
 }
+
+/**
+ * LAS TRES FAMILIAS QUE NO MUEVEN PLATA DEL LEDGER, y que por eso habían
+ * quedado afuera. El día corrido se guarda igual, y dos de las tres duelen:
+ * un `nextDueDate` en marzo cuando se escribió el 30 de febrero es un
+ * compromiso MAL FECHADO, y un `deliveryDate` inventado **sale impreso en la
+ * nota de entrega**: la fecha corrida se la mostrás al cliente.
+ *
+ * ⚠️ Van en su propia tabla porque su fecha es OPCIONAL (salvo el inicio de
+ * campaña): el hermano alcanzable no es solo el día real, es también el "sin
+ * fecha", que el panel manda todos los días (`deliveryDate || null`).
+ */
+const PUERTAS_SIN_DINERO: (Puerta & { campo: string; opcional: boolean })[] = [
+  {
+    ruta: 'POST /campaigns · startDate',
+    controller: CampaignsController,
+    metodo: 'create',
+    schema: CampaignCreateSchema,
+    campo: 'startDate',
+    opcional: false,
+    cuerpo: (date) => ({ name: 'Promo llaveros', startDate: date }),
+  },
+  {
+    ruta: 'POST /campaigns · endDate',
+    controller: CampaignsController,
+    metodo: 'create',
+    schema: CampaignCreateSchema,
+    campo: 'endDate',
+    opcional: true,
+    cuerpo: (date) => ({ name: 'Promo llaveros', startDate: REAL, endDate: date }),
+  },
+  {
+    ruta: 'POST /loans · startDate',
+    controller: LoansController,
+    metodo: 'create',
+    schema: LoanCreateSchema,
+    campo: 'startDate',
+    opcional: true,
+    cuerpo: (date) => ({ name: 'Deuda impresora', principal: 400, startDate: date }),
+  },
+  {
+    ruta: 'POST /loans · nextDueDate',
+    controller: LoansController,
+    metodo: 'create',
+    schema: LoanCreateSchema,
+    campo: 'nextDueDate',
+    opcional: true,
+    cuerpo: (date) => ({ name: 'Deuda impresora', principal: 400, nextDueDate: date }),
+  },
+  {
+    ruta: 'POST /loans · closedAt',
+    controller: LoansController,
+    metodo: 'create',
+    schema: LoanCreateSchema,
+    campo: 'closedAt',
+    opcional: true,
+    cuerpo: (date) => ({ name: 'Deuda impresora', principal: 400, closedAt: date }),
+  },
+  {
+    ruta: 'POST /orders · deliveryDate',
+    controller: OrdersController,
+    metodo: 'create',
+    schema: OrderCreateSchema,
+    campo: 'deliveryDate',
+    opcional: true,
+    cuerpo: (date) => ({ clientId: 'cli-1', deliveryDate: date }),
+  },
+];
 
 describe('El día que no existe muere en el pipe de las ocho puertas de dinero', () => {
   it('son ocho, no siete: si se suma una puerta de dinero, se suma acá', () => {
@@ -207,4 +279,52 @@ describe('El día que no existe muere en el pipe de las ocho puertas de dinero',
       }
     });
   });
+});
+
+describe('Y las tres familias que no mueven plata, por el mismo camino real', () => {
+  it('son seis campos en tres familias: campaña, préstamo y entrega', () => {
+    expect(PUERTAS_SIN_DINERO).toHaveLength(6);
+  });
+
+  for (const puerta of PUERTAS_SIN_DINERO) {
+    describe(puerta.ruta, () => {
+      const pipe = new ZodValidationPipe(puerta.schema);
+
+      it('el ataque: el 30 de febrero se rechaza con 400', () => {
+        expect(() => pipe.transform(puerta.cuerpo(INVENTADO))).toThrow(BadRequestException);
+      });
+
+      it('el hermano alcanzable: el 28 de febrero pasa', () => {
+        expect(() => pipe.transform(puerta.cuerpo(REAL))).not.toThrow();
+      });
+
+      if (puerta.opcional) {
+        it('el otro hermano: sin fecha sigue pasando (es lo que manda el panel)', () => {
+          for (const vacio of [null, '', undefined]) {
+            expect(() =>
+              pipe.transform(puerta.cuerpo(vacio as unknown as string)),
+            ).not.toThrow();
+          }
+        });
+      }
+
+      it('la ruta valida el cuerpo con ZodValidationPipe (metadata real de Nest)', () => {
+        const body = bodyDeLaRuta(puerta.controller, puerta.metodo);
+
+        if (!body) throw new Error(`falta @Body(new ZodValidationPipe(...)) en ${puerta.ruta}`);
+        expect(body.pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+      });
+
+      it('el pipe que la ruta tiene puesto también rechaza el día inventado', () => {
+        const body = bodyDeLaRuta(puerta.controller, puerta.metodo);
+        const real = body?.pipes.find((p) => p instanceof ZodValidationPipe) as
+          | ZodValidationPipe<unknown>
+          | undefined;
+
+        if (!real) throw new Error(`falta @Body(new ZodValidationPipe(...)) en ${puerta.ruta}`);
+        expect(() => real.transform(puerta.cuerpo(INVENTADO))).toThrow(BadRequestException);
+        expect(() => real.transform(puerta.cuerpo(REAL))).not.toThrow();
+      });
+    });
+  }
 });

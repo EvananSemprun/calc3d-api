@@ -538,15 +538,37 @@ en el repo web: se sobrescribe al sincronizar.
         (api), que prueba el `ZodValidationPipe` REAL y además lee la metadata
         de Nest: un schema cerrado con la ruta sin pipe no cierra nada y los
         tipos no lo notan.
-      - ⚠️ **Siguen flojas, fuera del alcance de esa tarea**: las fechas que no
-        mueven plata del ledger — `CampaignCreateSchema.startDate`/`endDate`,
-        `LoanCreateSchema` (`startDate`/`nextDueDate`/`closedAt`) y
-        `OrderCreateSchema.deliveryDate`. **Medido**: el panel les manda
-        `AAAA-MM-DD` o `null`/`''` igual que a las otras ocho, así que se
-        cierran con `FECHA`/`FECHA_OPCIONAL` **en una línea cada una, sin tocar
-        el cliente**. Vale la pena hacerlo: un `nextDueDate` corrido al mes
-        siguiente es un compromiso mal fechado, y un `deliveryDate` inventado
-        sale impreso en la nota de entrega.
+      - ✅ **Y las TRES familias que faltaban se cerraron el 2026-10-10
+        (shared 0.42.0)**: `CampaignCreateSchema.startDate` (con `FECHA`) y
+        `.endDate`, `LoanCreateSchema.startDate`/`nextDueDate`/`closedAt` y
+        `OrderCreateSchema.deliveryDate` (todas con `FECHA_OPCIONAL`, porque
+        siguen siendo opcionales). No mueven plata del ledger pero el día se
+        corre igual: un `nextDueDate` en marzo cuando se escribió el 30 de
+        febrero es un **compromiso mal fechado**, y el `deliveryDate` **sale
+        impreso en la nota de entrega** — la fecha corrida se la mostrás al
+        cliente. **Medido en el panel, campo por campo**: `startDate:
+        form.startDate` (día pelado), `endDate: form.endDate || null`,
+        `deliveryDate || null`, `nextDueDate || null`, y `closedAt` el panel
+        **no lo manda nunca** (`useUpdateLoan` está exportado y sin usar). Cero
+        cambios en el cliente.
+      - ⚠️ **`CampaignUpdateSchema.startDate` NO es nullable**: `.partial()`
+        la vuelve `.optional()` y nada más. Ausente sí, `null` no — igual que
+        antes de cerrarla. Por eso vive en la tabla de puertas obligatorias del
+        spec y no en la de opcionales.
+      - ⚠️ **El que impide que vuelva a quedar una gemela abierta es el
+        INVENTARIO**, no la lista escrita a mano: el último test de
+        `fecha-calendario.spec.ts` recorre TODOS los schemas exportados por
+        `api.ts` y falla si un campo `*Date`/`*At`/`date` acepta
+        `'2026-02-30'`. Excluye `*ViewSchema`/`*ResponseSchema` a propósito
+        (describen lo que SALE; su `updatedAt` es un instante con hora, no un
+        día de negocio). Un campo nuevo flojo aparece ahí **sin que nadie
+        tenga que acordarse de ampliar la tabla**.
+      - ⚠️ **Lo que queda afuera y por qué**: los filtros de lectura
+        `?from&to` (`/sales`, `/expenses`, `/orders/payments`,
+        `/filament/purchases`) son `@Query('from') from?: string` **sin DTO
+        ni pipe**. Un día inventado ahí devuelve una lista mal filtrada, pero
+        **no persiste nada**; cerrarlos es otra tarea (hace falta un
+        `RangoQuerySchema` y tocar cuatro controladores).
     - ⚠️ Es una ruta **literal**, declarada ANTES de las paramétricas del
       controlador (la regla que avisan sus propios comentarios).
     - `previousDay` / `isCalendarDay` viven en `shared/calc/stock.ts`, con el

@@ -32,6 +32,14 @@ const CatalogScopeSchema = z.enum(['PER_PIECE', 'PER_ORDER']);
  * puerta cerrada con su gemela abierta al lado no cierra nada. Todo lo que use
  * `FECHA` lo hereda, y un `date: FECHA` nuevo nace cerrado.
  *
+ * ⚠️ **Y ya no quedan campos de fecha afuera.** Las ocho puertas de dinero se
+ * cerraron con shared 0.41.0 y las tres familias que no mueven plata —campaña,
+ * préstamo y fecha de entrega de un encargo— con 0.42.0. Lo que vigila que no
+ * se abra una gemela nueva es el inventario de
+ * `fecha-calendario.spec.ts`, que recorre TODOS los schemas de entrada
+ * exportados por este archivo y falla si un campo `*Date`/`*At`/`date` acepta
+ * el 30 de febrero.
+ *
  * ⚠️ **Y vive ARRIBA DE TODO a propósito.** Es un `const`, así que un schema
  * declarado antes que ella reventaría al cargar el módulo ("Cannot access
  * 'FECHA' before initialization"): el único orden que funciona es este.
@@ -52,8 +60,11 @@ const FECHA = z
 
 /**
  * La misma fecha, para los campos donde **"sin fecha" es un valor legítimo**:
- * el `endDate` de un gasto de período, el `expectedAt` de una factura y la
- * fecha de una recepción (sin ella, el servidor usa hoy).
+ * el `endDate` de un gasto de período, el `expectedAt` de una factura, la
+ * fecha de una recepción (sin ella, el servidor usa hoy) y —desde el
+ * 2026-10-10, shared 0.42.0— las tres familias que no mueven plata del
+ * ledger: el `endDate` de una campaña, el `deliveryDate` de un encargo y el
+ * `startDate`/`nextDueDate`/`closedAt` de un préstamo.
  *
  * ⚠️ Acepta `''` además de `null` y ausente porque **ya los aceptaba**: un
  * `<input type="date">` vacío manda `''` y los servicios lo tratan desde
@@ -330,8 +341,17 @@ export const CampaignCreateSchema = z.object({
   platform: CampaignPlatformSchema.default('OTHER'),
   objective: CampaignObjectiveSchema.optional().nullable(),
   status: CampaignStatusSchema.default('ACTIVE'),
-  startDate: z.string().min(1, 'La fecha de inicio es obligatoria'),
-  endDate: z.string().optional().nullable(),
+  /**
+   * ⚠️ Van con `FECHA`/`FECHA_OPCIONAL` como las puertas de dinero (cerradas el
+   * 2026-10-10). No mueven plata del ledger, pero el día se corre igual: la
+   * ventana de la campaña decide qué ventas le cuentan en `period`, así que un
+   * inicio escrito el 30 de febrero mide el rendimiento sobre marzo.
+   * **Medido**: el panel manda `startDate: form.startDate` (`<Input
+   * type="date">`, por defecto `todayKey()`) y `endDate: form.endDate || null`
+   * — día pelado o `null`.
+   */
+  startDate: FECHA,
+  endDate: FECHA_OPCIONAL,
   budget: z.number().min(0).optional().nullable(),
   notes: z.string().optional().nullable(),
   /** Lo que reporta la plataforma; con esto sale el costo por conversación. */
@@ -434,7 +454,15 @@ export type OrderLineDto = z.infer<typeof OrderLineSchema>;
 
 export const OrderCreateSchema = z.object({
   clientId: z.string().min(1, 'El cliente es obligatorio'),
-  deliveryDate: z.string().optional().nullable(),
+  /**
+   * ⚠️ `FECHA_OPCIONAL` y no `FECHA`: un encargo sin fecha de entrega es
+   * normal (el panel manda `deliveryDate || null` y tiene una vista propia
+   * para los que no la tienen). Lo que se cierra es el día inventado, y acá
+   * duele más que en otras partes: **esta fecha SALE IMPRESA en la nota de
+   * entrega** (`documents/delivery-note.service.ts`), así que un 30 de febrero
+   * corrido al 2 de marzo se lo mostrás al cliente.
+   */
+  deliveryDate: FECHA_OPCIONAL,
   status: OrderStatusSchema.default('QUOTED'),
   notes: z.string().optional().nullable(),
   lines: z.array(OrderLineSchema).default([]),
@@ -597,14 +625,21 @@ export const LoanCreateSchema = z.object({
   counterpartyId: z.string().min(1).optional().nullable(),
   /** Qué se financió, en palabras del dueño. */
   concept: z.string().optional().nullable(),
-  startDate: z.string().optional().nullable(),
+  /**
+   * ⚠️ Las tres van con `FECHA_OPCIONAL`: siguen siendo opcionales —el panel
+   * manda `nextDueDate || null` y `closedAt` no lo manda nunca— pero el día
+   * tiene que existir. `nextDueDate` es el caso que más duele: corrido al mes
+   * siguiente es un **compromiso mal fechado**, y la pantalla Deuda lo muestra
+   * tal cual como el próximo vencimiento.
+   */
+  startDate: FECHA_OPCIONAL,
   /**
    * Solo si el dueño la sabe. **No se calcula a partir de la frecuencia**: sin
    * calendario pactado, una fecha inventada se lee como un compromiso.
    */
-  nextDueDate: z.string().optional().nullable(),
+  nextDueDate: FECHA_OPCIONAL,
   /** Fecha en que se terminó de pagar; null = abierto. */
-  closedAt: z.string().optional().nullable(),
+  closedAt: FECHA_OPCIONAL,
   notes: z.string().optional().nullable(),
   /** El equipo que se compró con el préstamo, si fue para uno. */
   printerId: z.string().optional().nullable(),
