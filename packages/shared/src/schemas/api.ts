@@ -975,15 +975,31 @@ export const PurchaseVoidSchema = z.object({
 export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;
 
 /**
- * Recibir parte de una línea: cuántos llegaron.
+ * Recibir parte de una línea: cuántos llegaron y **a cuánto**.
  *
- * ⚠️ El MONTO no viaja: sale de `cantidad × precio unitario` de la línea. Si
- * lo mandara el cliente, dos recepciones de la misma línea podrían sumar algo
- * distinto del total de la factura y nadie se enteraría. Si el proveedor te
- * cobró otra cosa, se corrige la línea antes de recibir.
+ * ⚠️ El MONTO sigue sin viajar: sale de `cantidad × precio unitario`. Si lo
+ * mandara el cliente, dos recepciones de la misma línea podrían sumar algo
+ * distinto del total de la factura y nadie se enteraría.
+ *
+ * ⚠️ Lo que SÍ viaja ahora es el **precio** (`unitPrice`, opcional). Antes, si
+ * el proveedor te cobraba otra cosa, había que corregir la línea **antes** de
+ * recibir — y con algo ya recibido no se podía por ninguna puerta. Ahora la
+ * línea guarda lo que PEDISTE y cada recepción lo que COSTÓ.
  */
 export const PurchaseReceiveSchema = z.object({
   quantity: z.number().int().positive('¿Cuántos llegaron?'),
+  /**
+   * EL PRECIO QUE DE VERDAD TE COBRARON, por unidad, en ESTA entrega.
+   *
+   * ⚠️ **Opcional**: sin él se usa el de la línea, que es el caso normal
+   * (llegó a lo pactado). Exigirlo obligaría a retipear el mismo número en
+   * cada recepción, que es como se cuela un error de dedo en una cifra que
+   * cambia el total de la factura.
+   *
+   * Cero se acepta —un rollo regalado es un dato verdadero—; negativo no: una
+   * factura no es el lugar para una devolución.
+   */
+  unitPrice: z.number().min(0, 'El precio no puede ser negativo').optional().nullable(),
   /** Cuándo llegó. Por defecto, hoy. */
   date: FECHA_OPCIONAL,
   /** Para una ficha que nace en esta recepción. */

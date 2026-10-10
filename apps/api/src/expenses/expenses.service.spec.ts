@@ -697,6 +697,22 @@ describe('ExpensesService — corregir y borrar una compra', () => {
     expect(precioEscrito()).toEqual([['m1', 15]]);
   });
 
+  /**
+   * ⚠️ **EL PRECIO QUE TE COBRARON AL RECIBIR es el que queda para cotizar.**
+   * Una recepción de factura informa su precio y el gasto nace por 6 × $7,50 =
+   * $45; esta regla lee el MONTO de la última compra, así que el rollo tiene
+   * que quedar en **$7,50** y no en los $7 que se habían pedido. Si quedara el
+   * pedido, la calculadora cotizaría con un precio que nadie pagó — la pérdida
+   * de margen silenciosa que esta regla vino a evitar.
+   */
+  it('una recepción de 6 rollos por $45 deja el precio en 7,50, no en el pedido', async () => {
+    conCompras({ m1: { amount: 45, quantity: 6 } });
+
+    await service.recalcularPrecioDelRollo(ORG, 'm1');
+
+    expect(precioEscrito()).toEqual([['m1', 7.5]]);
+  });
+
   // El hermano: sin esto, lo de arriba pasaría con un servicio que escribiera
   // el precio SIEMPRE, incluso sin compras.
   it('sin compras con rollos no se escribe ningún precio', async () => {

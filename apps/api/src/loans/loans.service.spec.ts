@@ -118,6 +118,12 @@ const lineaCruda = (quantity: number, unitPrice: number) => ({
   quantity,
   unitPrice,
   received: 0,
+  /**
+   * Las recepciones de la línea: sus gastos, que el `include` de Compras trae.
+   * Acá siempre vacías porque nada llegó todavía — y una línea sin recibir vale
+   * lo PEDIDO, que es lo único que mira la deuda con el proveedor.
+   */
+  expenses: [] as Record<string, unknown>[],
 });
 
 const abonoCrudo = (amount: number, voidedAt: Date | null = null) => ({

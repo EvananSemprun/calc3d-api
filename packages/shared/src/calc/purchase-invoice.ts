@@ -15,12 +15,36 @@ import Decimal from 'decimal.js';
 import { D, toCents } from './money';
 import { daysBetween, isCalendarDay } from './stock';
 
+/**
+ * UNA RECEPCIÓN: cuántos llegaron y **a cuánto salieron de verdad**.
+ *
+ * ⚠️ Pediste 10 a $7 y el proveedor te facturó $7,50. La línea guarda **lo que
+ * pediste** —es el pedido, y no se reescribe— y cada recepción guarda **lo que
+ * costó**. Hasta que esto existió había que corregir la línea ANTES de
+ * recibir, y si ya habías recibido algo no se podía por ninguna puerta.
+ */
+export interface InvoiceReceiptInput {
+  quantity: number;
+  /** El precio que de verdad te cobraron por unidad en ESA entrega. */
+  unitPrice: number;
+}
+
 /** Una línea: cuántos se pidieron, a cuánto, y cuántos ya llegaron. */
 export interface InvoiceLineInput {
   quantity: number;
   unitPrice: number;
   /** Cuántos de esos ya llegaron. Se recorta a [0, quantity]. */
   received?: number;
+  /**
+   * Las entregas de esta línea, cada una con **el precio que te cobraron**.
+   *
+   * ⚠️ **No es una segunda definición de `received`.** Las unidades las sigue
+   * diciendo `received` y nada más; esto solo pone PRECIO a las que ya
+   * llegaron. Una recepción que pretenda cubrir más unidades que las recibidas
+   * se recorta, y lo recibido que no tenga recepción registrada (un dato de
+   * antes de que esto existiera) vale el precio PEDIDO.
+   */
+  recepciones?: InvoiceReceiptInput[];
 }
 
 /** Un abono. Uno anulado NO cuenta, pero sigue existiendo en el historial. */
@@ -30,7 +54,10 @@ export interface InvoicePaymentInput {
 }
 
 export interface InvoiceTotals {
-  /** Σ cantidad × precio unitario. */
+  /**
+   * Lo que cuesta la factura: el precio **real** de lo ya recibido más el
+   * **pedido** de lo que falta. Ya NO es `Σ cantidad × precio pedido`.
+   */
   total: number;
   /** Σ abonos NO anulados. */
   pagado: number;
@@ -55,6 +82,37 @@ const recibidoDe = (l: InvoiceLineInput): number =>
   Math.min(Math.max(Math.trunc(l.received ?? 0), 0), Math.max(Math.trunc(l.quantity), 0));
 
 /**
+ * LO QUE CUESTA UNA LÍNEA: el precio REAL de lo que ya llegó y el PEDIDO para
+ * lo que falta.
+ *
+ * ⚠️ Hasta la fase 2 esto era `cantidad × precio pedido` y nada más, así que
+ * una factura que te cobraron a otro precio solo se podía arreglar corrigiendo
+ * la línea **antes** de recibir: después quedaba mintiendo para siempre.
+ *
+ * ⚠️ **Lo que una recepción NO cubre vale lo pedido**, y eso incluye dos casos
+ * distintos a propósito: lo que todavía no llegó (no hay precio real porque no
+ * hay entrega) y lo recibido sin recepción registrada (toda la base anterior a
+ * esto). Así un total viejo sigue dando el mismo número que daba ayer.
+ */
+const dineroDeLinea = (l: InvoiceLineInput): Decimal => {
+  const pedido = Math.max(l.quantity, 0);
+  const recibido = recibidoDe(l);
+
+  let cubiertos = 0;
+  let dinero = D(0);
+  for (const r of l.recepciones ?? []) {
+    // `received` sigue siendo la única definición de cuántos llegaron: una
+    // recepción que diga más se recorta, no agranda lo recibido.
+    const unidades = Math.min(Math.max(Math.trunc(r.quantity), 0), recibido - cubiertos);
+    if (unidades <= 0) continue;
+    dinero = dinero.plus(D(unidades).times(Math.max(r.unitPrice, 0)));
+    cubiertos += unidades;
+  }
+
+  return dinero.plus(D(pedido - cubiertos).times(Math.max(l.unitPrice, 0)));
+};
+
+/**
  * Las cuentas de una factura.
  *
  * ⚠️ Una línea con cantidad o precio negativo se trata como 0: una factura no
@@ -65,10 +123,7 @@ export function invoiceTotals(
   lines: InvoiceLineInput[],
   payments: InvoicePaymentInput[],
 ): InvoiceTotals {
-  const total = lines.reduce(
-    (s, l) => s.plus(D(Math.max(l.quantity, 0)).times(Math.max(l.unitPrice, 0))),
-    D(0),
-  );
+  const total = lines.reduce((s, l) => s.plus(dineroDeLinea(l)), D(0));
   const pagado = payments.reduce((s, p) => (p.voided ? s : s.plus(Math.max(p.amount, 0))), D(0));
 
   const diferencia = total.minus(pagado);

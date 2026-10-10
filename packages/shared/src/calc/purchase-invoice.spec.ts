@@ -98,6 +98,192 @@ describe('invoiceTotals', () => {
  * es lo normal cuando encargás algo: un solo "estado" tendría que elegir cuál
  * de las dos verdades contar.
  */
+/**
+ * QUE LA FACTURA REFLEJE LO QUE TE COBRARON.
+ *
+ * Pediste 10 rollos a $7 y el proveedor te factura $7,50. La línea guarda **lo
+ * que pediste**; cada recepción guarda **lo que costó**. El total usa el precio
+ * REAL de lo que ya llegó y el PEDIDO para lo que falta.
+ *
+ * ⚠️ Los números están puestos a mano y son los tres que importan: 6 a $7,50
+ * más 4 pendientes a $7 son **73**, no 70 (ignorar el precio informado) ni 75
+ * (aplicarle el precio real a toda la línea, incluso a lo que no llegó).
+ */
+describe('invoiceTotals — el precio que te cobraron al recibir', () => {
+  /** La línea del caso: 10 pedidos a $7, 6 llegados y facturados a $7,50. */
+  const mixta = () =>
+    invoiceTotals(
+      [
+        {
+          quantity: 10,
+          unitPrice: 7,
+          received: 6,
+          recepciones: [{ quantity: 6, unitPrice: 7.5 }],
+        },
+      ],
+      [],
+    );
+
+  it('6 recibidos a $7,50 + 4 pendientes a $7 = 73', () => {
+    expect(mixta().total).toBe(73);
+  });
+
+  it('…y NO es 70: el precio informado no se puede ignorar', () => {
+    expect(mixta().total).not.toBe(70);
+  });
+
+  it('…ni 75: el precio real no se le aplica a lo que todavía no llegó', () => {
+    expect(mixta().total).not.toBe(75);
+  });
+
+  /** Las unidades no son plata: el precio distinto no mueve el conteo. */
+  it('las unidades siguen siendo 10 pedidas, 6 recibidas, 4 por llegar', () => {
+    const t = mixta();
+    expect(t.pedido).toBe(10);
+    expect(t.recibido).toBe(6);
+    expect(t.porRecibir).toBe(4);
+  });
+
+  /** El saldo y lo pagado de más salen del total NUEVO, no del viejo. */
+  it('abonaste 70 y la factura quedó en 73: faltan 3, y no hay nada a favor', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 6, recepciones: [{ quantity: 6, unitPrice: 7.5 }] }],
+      [{ amount: 70 }],
+    );
+
+    expect(t.total).toBe(73);
+    expect(t.saldo).toBe(3);
+    expect(t.aFavor).toBe(0);
+  });
+
+  it('si te salió más BARATO el saldo baja: 6 a $6,50 + 4 a $7 = 67', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 6, recepciones: [{ quantity: 6, unitPrice: 6.5 }] }],
+      [{ amount: 70 }],
+    );
+
+    expect(t.total).toBe(67);
+    expect(t.saldo).toBe(0);
+    expect(t.aFavor).toBe(3); // 70 abonados sobre 67: pagaste de más
+  });
+
+  /** Dos entregas, dos precios: cada una vale lo suyo. */
+  it('3 a $7,50 + 3 a $8 + 4 pendientes a $7 = 74,50', () => {
+    const t = invoiceTotals(
+      [
+        {
+          quantity: 10,
+          unitPrice: 7,
+          received: 6,
+          recepciones: [
+            { quantity: 3, unitPrice: 7.5 },
+            { quantity: 3, unitPrice: 8 },
+          ],
+        },
+      ],
+      [],
+    );
+
+    expect(t.total).toBe(74.5); // 22,50 + 24 + 28
+  });
+
+  /** El caso normal: llegó a lo pactado y el total es el de siempre. */
+  it('una recepción al precio pedido no cambia nada: 10 × $7 = 70', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 10, recepciones: [{ quantity: 10, unitPrice: 7 }] }],
+      [],
+    );
+
+    expect(t.total).toBe(70);
+  });
+
+  /**
+   * ⚠️ **Retrocompatible**: una línea recibida SIN recepciones registradas es
+   * todo lo que hay en la base de antes de esto. Vale el precio pedido, que es
+   * exactamente lo que valía ayer: si cambiara, cada factura vieja del negocio
+   * pasaría a decir otro número de un día para el otro.
+   */
+  it('lo recibido sin recepción registrada vale el precio PEDIDO: 70', () => {
+    expect(invoiceTotals([{ quantity: 10, unitPrice: 7, received: 6 }], []).total).toBe(70);
+  });
+
+  /**
+   * ⚠️ `received` sigue siendo la ÚNICA definición de cuántos llegaron. Una
+   * recepción que diga más unidades de las recibidas se recorta: si no, el
+   * precio real se aplicaría a mercadería que la línea considera pendiente.
+   */
+  it('una recepción que dice más de lo recibido se recorta: 2 a $7,50 + 8 a $7 = 71', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 2, recepciones: [{ quantity: 6, unitPrice: 7.5 }] }],
+      [],
+    );
+
+    expect(t.total).toBe(71); // 15 + 56
+  });
+
+  /** Y lo que la recepción no cubre no se queda sin precio. */
+  it('lo recibido que la recepción no cubre vale lo pedido: 4×7,50 + 6×7 = 72', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 6, recepciones: [{ quantity: 4, unitPrice: 7.5 }] }],
+      [],
+    );
+
+    expect(t.total).toBe(72); // 30 + 42
+  });
+
+  /** Igual que una línea negativa: una recepción negativa no resta del total. */
+  it('un precio de recepción negativo se trata como 0, no resta', () => {
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 7, received: 2, recepciones: [{ quantity: 2, unitPrice: -5 }] }],
+      [],
+    );
+
+    expect(t.total).toBe(56); // 0 + 8×7
+  });
+
+  it('una recepción de cero unidades no se come el lugar de la siguiente', () => {
+    const t = invoiceTotals(
+      [
+        {
+          quantity: 4,
+          unitPrice: 7,
+          received: 2,
+          recepciones: [
+            { quantity: 0, unitPrice: 99 },
+            { quantity: 2, unitPrice: 7.5 },
+          ],
+        },
+      ],
+      [],
+    );
+
+    expect(t.total).toBe(29); // 15 + 2×7
+  });
+
+  /** Tres rollos a 19,99 son 59,97, también viniendo de una recepción. */
+  it('el precio real también se redondea al centavo', () => {
+    const t = invoiceTotals(
+      [{ quantity: 3, unitPrice: 18, received: 3, recepciones: [{ quantity: 3, unitPrice: 19.99 }] }],
+      [],
+    );
+
+    expect(t.total).toBe(59.97);
+  });
+
+  /** Varias líneas: cada una con su propio precio real. */
+  it('dos líneas, una con precio real y otra sin: 73 + 24 = 97', () => {
+    const t = invoiceTotals(
+      [
+        { quantity: 10, unitPrice: 7, received: 6, recepciones: [{ quantity: 6, unitPrice: 7.5 }] },
+        { quantity: 2, unitPrice: 12 },
+      ],
+      [],
+    );
+
+    expect(t.total).toBe(97);
+  });
+});
+
 describe('invoiceStatus', () => {
   const estado = (l: Parameters<typeof invoiceTotals>[0], p: Parameters<typeof invoiceTotals>[1]) =>
     invoiceStatus(invoiceTotals(l, p));

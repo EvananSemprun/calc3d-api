@@ -135,6 +135,11 @@ cada recepción guarda **lo que costó**.
 Va **última** porque toca el mismo módulo que media app y conviene que entre con
 el resto ya estable.
 
+- [x] Hecha el 2026-10-10 (shared **0.44.0**), **sin migración**: la recepción no
+      estrena tabla, su registro ES el `Expense` que ya nacía al recibir. El
+      detalle y las decisiones, en la fase 2 del spec.
+- [x] `git commit` en los dos repos.
+
 ---
 
 ## Orden y choques

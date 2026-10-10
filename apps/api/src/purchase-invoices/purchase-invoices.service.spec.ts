@@ -3,6 +3,7 @@ import {
   PurchaseInvoiceLineSchema,
   PurchaseInvoiceUpsertSchema,
   businessCash,
+  purchaseCostPerRoll,
   type CashLedger,
 } from '@calc3d/shared';
 import { PurchaseInvoicesService } from './purchase-invoices.module';
@@ -85,7 +86,17 @@ function makePrisma(factura?: Record<string, unknown>, gastos: Record<string, un
       ),
       findMany: jest.fn(() => Promise.resolve([])),
       create: jest.fn(({ data }: any) =>
-        Promise.resolve({ ...FACTURA_VACIA, ...data, lines: data.lines?.create ?? [], payments: [] }),
+        Promise.resolve({
+          ...FACTURA_VACIA,
+          ...data,
+          // Las líneas vuelven con `expenses` porque el `include` las trae: una
+          // factura recién creada no tiene ninguna recepción todavía.
+          lines: (data.lines?.create ?? []).map((l: Record<string, unknown>) => ({
+            expenses: [],
+            ...l,
+          })),
+          payments: [],
+        }),
       ),
       update: jest.fn(() => Promise.resolve(FACTURA_VACIA)),
       delete: jest.fn(() => Promise.resolve({})),
@@ -148,6 +159,21 @@ const linea = (over: Record<string, unknown> = {}) => ({
   received: 0,
   material: { id: 'mat-mio', name: 'PLA Negro' },
   printer: null,
+  /**
+   * ⚠️ **Las recepciones de la línea SON sus gastos.** Cada recepción creó uno,
+   * con su cantidad y su monto: ahí está guardado lo que COSTÓ. El `include`
+   * los trae y `serializar` deriva de ellos el precio real de cada entrega.
+   */
+  expenses: [] as Record<string, unknown>[],
+  ...over,
+});
+
+/** Una recepción, como la devuelve el `include`: su cantidad y lo que costó. */
+const recepcion = (quantity: number, unitPrice: number, over: Record<string, unknown> = {}) => ({
+  id: `g-${quantity}x${unitPrice}`,
+  date: new Date('2026-10-10'),
+  quantity,
+  amount: Math.round(quantity * unitPrice * 10000) / 10000,
   ...over,
 });
 
@@ -462,6 +488,371 @@ describe('PurchaseInvoicesService — recibir', () => {
     const p = conLinea();
     await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1 } as never);
     expect(p.expense.create.mock.calls[0][0].data.providerId).toBe('prov-mio');
+  });
+});
+
+/**
+ * QUE LA FACTURA REFLEJE LO QUE TE COBRARON (fase 2).
+ *
+ * Pediste 10 rollos a $7 y el proveedor te factura $7,50. **La línea guarda lo
+ * que PEDISTE y cada recepción lo que COSTÓ.** Hasta acá había que corregir la
+ * línea antes de recibir, y con algo ya recibido no se podía por ninguna puerta.
+ *
+ * ⚠️ **La recepción no estrena tabla: su registro ES el gasto** que ya creaba.
+ * Ahí viven la cantidad y el monto, o sea el precio real. Guardarlo otra vez al
+ * lado sería una segunda verdad sobre la misma entrega, y el día que una de las
+ * dos cambie la factura y el gasto dirían cosas distintas de la misma compra.
+ */
+describe('PurchaseInvoicesService — recibir al precio que te cobraron', () => {
+  const conLinea = (over: Record<string, unknown> = {}) =>
+    makePrisma({
+      ...FACTURA_VACIA,
+      supplierId: 'prov-mio',
+      lines: [linea({ quantity: 10, unitPrice: 7, ...over })],
+    });
+
+  it('6 a $7,50 informados crean el gasto por 45, no por los 42 de la línea', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 6, unitPrice: 7.5 } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.amount).toBe(45);
+    expect(gasto.quantity).toBe(6);
+  });
+
+  /** El caso normal: no informas nada y vale lo pactado. */
+  it('sin precio informado se usa el de la línea: 6 × $7 = 42', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 6 } as never);
+
+    expect(p.expense.create.mock.calls[0][0].data.amount).toBe(42);
+  });
+
+  /** Un rollo regalado es un dato verdadero, y 0 no es "no informó nada". */
+  it('un precio informado de 0 se respeta: el gasto es 0, no el de la línea', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 2, unitPrice: 0 } as never);
+
+    expect(p.expense.create.mock.calls[0][0].data.amount).toBe(0);
+  });
+
+  /**
+   * ⚠️ **La línea NO se reescribe.** Es el pedido: lo que acordaste a $7 sigue
+   * siendo $7, y por eso lo que falta llegar se sigue valuando a ese precio.
+   * Pisarla dejaría la factura sin memoria de lo pactado.
+   */
+  it('informar otro precio no toca el precio PEDIDO de la línea', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 6, unitPrice: 7.5 } as never);
+
+    const escrituras = p.purchaseInvoiceLine.update.mock.calls.map(
+      ([c]: [{ data: unknown }]) => c.data,
+    );
+    expect(escrituras).toEqual([{ received: 6 }]);
+  });
+
+  /**
+   * ⚠️ **El precio de cotización sigue al precio REAL.** Lo fija
+   * `recalcularPrecioDelRollo` leyendo el MONTO de la última compra, así que
+   * informar $7,50 tiene que dejar $7,50 y no los $7 que pediste: si no, la
+   * calculadora cotizaría con un precio que nadie pagó.
+   */
+  it('el monto del gasto ÷ sus rollos da el precio real: 45 ÷ 6 = 7,50', async () => {
+    const p = conLinea();
+    const exp = expensesFalso();
+
+    await servicio(p, exp).receive(ORG, 'f1', 'l1', { quantity: 6, unitPrice: 7.5 } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(purchaseCostPerRoll(gasto.amount, gasto.quantity)).toBe(7.5);
+    expect(exp.recalcularPrecioDelRollo).toHaveBeenCalledWith(ORG, 'mat-mio');
+  });
+
+  /** La ficha que nace al recibir nace con lo que COSTÓ, no con lo pedido. */
+  it('un filamento nuevo nace con el precio informado, no con el de la línea', async () => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      lines: [
+        linea({
+          materialId: null,
+          material: null,
+          nombreNuevo: 'PLA Turquesa',
+          nuevoTipo: 'MATERIAL',
+          quantity: 2,
+          unitPrice: 19,
+        }),
+      ],
+    });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 2, unitPrice: 21.5 } as never);
+
+    const ficha = (p.material.create.mock.calls[0][0] as { data: { rollPrice: number } }).data;
+    expect(ficha.rollPrice).toBe(21.5);
+    expect(p.printer.create).not.toHaveBeenCalled();
+  });
+
+  it('una impresora nueva también nace con el precio informado', async () => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      lines: [
+        linea({
+          materialId: null,
+          material: null,
+          nombreNuevo: 'Impresora A2',
+          nuevoTipo: 'PRINTER',
+          quantity: 1,
+          unitPrice: 300,
+        }),
+      ],
+    });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, unitPrice: 325 } as never);
+
+    const maquina = (p.printer.create.mock.calls[0][0] as { data: { price: number } }).data;
+    expect(maquina.price).toBe(325);
+    expect(p.material.create).not.toHaveBeenCalled();
+  });
+
+  it('el precio informado no habilita recibir más de lo que falta', async () => {
+    const p = conLinea({ received: 8 });
+
+    await expect(
+      servicio(p).receive(ORG, 'f1', 'l1', { quantity: 3, unitPrice: 7.5 } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(p.expense.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * EL TOTAL DE LA FACTURA, con lo recibido a su precio real.
+ *
+ * ⚠️ Los números están **clavados**: 6 recibidos a $7,50 más 4 pendientes a $7
+ * son **73**. No 70 (ignorar lo que te cobraron) ni 75 (cobrarle el precio real
+ * a mercadería que todavía no llegó).
+ */
+describe('PurchaseInvoicesService — el total con el precio real', () => {
+  const conRecepciones = (
+    recepciones: Record<string, unknown>[],
+    over: Record<string, unknown> = {},
+    payments: Record<string, unknown>[] = [],
+  ) =>
+    makePrisma({
+      ...FACTURA_VACIA,
+      lines: [linea({ quantity: 10, unitPrice: 7, received: 6, expenses: recepciones, ...over })],
+      payments,
+    });
+
+  it('6 a $7,50 + 4 pendientes a $7 = 73', async () => {
+    const f = await servicio(conRecepciones([recepcion(6, 7.5)])).get(ORG, 'f1');
+
+    expect(f.total).toBe(73);
+    expect(f.pedido).toBe(10);
+    expect(f.recibido).toBe(6);
+    expect(f.porRecibir).toBe(4);
+  });
+
+  it('abonados 70 sobre una factura de 73: faltan 3', async () => {
+    const f = await servicio(
+      conRecepciones([recepcion(6, 7.5)], {}, [
+        {
+          id: 'ab1',
+          date: new Date('2026-10-05'),
+          amount: 70,
+          counterpartyId: null,
+          counterparty: null,
+          accountId: null,
+          note: null,
+          voidedAt: null,
+          voidReason: null,
+        },
+      ]),
+    ).get(ORG, 'f1');
+
+    expect(f.total).toBe(73);
+    expect(f.saldo).toBe(3);
+    expect(f.aFavor).toBe(0);
+    expect(f.status.pago).toBe('PARCIAL');
+  });
+
+  /** Sin recepciones registradas (toda la base de antes) el total no se mueve. */
+  it('una línea recibida sin recepciones sigue dando 70', async () => {
+    const f = await servicio(conRecepciones([])).get(ORG, 'f1');
+
+    expect(f.total).toBe(70);
+  });
+
+  /** Dos entregas a precios distintos, cada una con el suyo. */
+  it('3 a $7,50 + 3 a $8 + 4 pendientes a $7 = 74,50', async () => {
+    const f = await servicio(conRecepciones([recepcion(3, 7.5), recepcion(3, 8)])).get(ORG, 'f1');
+
+    expect(f.total).toBe(74.5);
+  });
+
+  /**
+   * ⚠️ La pantalla tiene que poder AVISAR, así que la recepción viaja con su
+   * precio. Un total que cambia sin decir por qué es un número que miente de la
+   * peor manera: la que no se nota.
+   */
+  it('cada línea viaja con sus recepciones y el precio de cada una', async () => {
+    const f = await servicio(conRecepciones([recepcion(6, 7.5)])).get(ORG, 'f1');
+
+    expect(f.lines[0].recepciones).toEqual([
+      { id: 'g-6x7.5', date: '2026-10-10T00:00:00.000Z', quantity: 6, unitPrice: 7.5 },
+    ]);
+  });
+
+  /**
+   * Un gasto sin cantidad no dice a cuánto salió la unidad: sus unidades valen
+   * lo pedido en vez de valer 0, que haría desaparecer plata del total.
+   */
+  it('una recepción sin cantidad no vale 0: esas unidades valen lo pedido', async () => {
+    const f = await servicio(
+      conRecepciones([recepcion(6, 7.5, { quantity: null, amount: 45 })]),
+    ).get(ORG, 'f1');
+
+    expect(f.total).toBe(70);
+  });
+});
+
+/**
+ * DESHACER UNA RECEPCIÓN QUE TENÍA SU PROPIO PRECIO.
+ *
+ * ⚠️ Con dos entregas a precios distintos, deshacer tiene que revertir **la que
+ * corresponde** —la última— y no una cualquiera: borrar la barata dejaría la
+ * factura cobrando la cara por mercadería que se fue.
+ */
+describe('PurchaseInvoicesService — deshacer con precios distintos por recepción', () => {
+  const gastoDe = (id: string, quantity: number, unitPrice: number, date: string) => ({
+    id,
+    organizationId: ORG,
+    purchaseInvoiceLineId: 'l1',
+    date: new Date(date),
+    createdAt: new Date(date + 'T10:00:00Z'),
+    quantity,
+    amount: Math.round(quantity * unitPrice * 10000) / 10000,
+    materialId: 'mat-mio',
+    printerId: null,
+  });
+
+  it('borra la ÚLTIMA entrega (4 a $8) y no la primera (6 a $7,50)', async () => {
+    const gastos = [
+      gastoDe('g-barata', 6, 7.5, '2026-10-05'),
+      gastoDe('g-cara', 4, 8, '2026-10-09'),
+    ];
+    const p = makePrisma(
+      {
+        ...FACTURA_VACIA,
+        lines: [linea({ quantity: 10, unitPrice: 7, received: 10, expenses: gastos })],
+      },
+      gastos,
+    );
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.expense.delete).toHaveBeenCalledWith({ where: { id: 'g-cara' } });
+    expect(p.expense.delete).not.toHaveBeenCalledWith({ where: { id: 'g-barata' } });
+    // 10 recibidos − los 4 de ESA entrega.
+    expect(p.purchaseInvoiceLine.update.mock.calls[0][0].data.received).toBe(6);
+  });
+
+  /**
+   * El número CLAVADO del total después de deshacer: se va la entrega de 4 a $8
+   * (32) y queda 6 a $7,50 + 4 pendientes a $7 = **73**. Se mide sobre el
+   * estado que dejó el servicio, no sobre uno escrito a mano al lado.
+   */
+  it('el total vuelve a 73: lo que quedó, a su precio, y lo pendiente al pedido', async () => {
+    const gastos = [
+      gastoDe('g-barata', 6, 7.5, '2026-10-05'),
+      gastoDe('g-cara', 4, 8, '2026-10-09'),
+    ];
+    const lineas = [linea({ quantity: 10, unitPrice: 7, received: 10, expenses: gastos })];
+    const p = makePrisma({ ...FACTURA_VACIA, lines: lineas }, gastos);
+
+    // 6×7,5 + 4×8 = 77 antes de deshacer.
+    expect((await servicio(p).get(ORG, 'f1')).total).toBe(77);
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    // El mock no reescribe la factura leída: se la deja como la dejó el
+    // servicio (un gasto menos, 6 recibidos) y se vuelve a preguntar.
+    lineas[0].received = 6;
+    expect((await servicio(p).get(ORG, 'f1')).total).toBe(73);
+  });
+});
+
+/**
+ * ⚠️ **EL PRECIO REAL NO MUEVE LA CAJA.** El gasto que nace al recibir lleva su
+ * marca de factura: su plata ya se contó al abonar. Que el monto cambie porque
+ * te cobraron otra cosa **no puede** mover el saldo — si lo moviera, volvería la
+ * doble carga que la factura vino a evitar, ahora por una cifra distinta.
+ *
+ * El número está **CLAVADO**: $30,00 antes y después.
+ */
+describe('PurchaseInvoicesService — el precio real tampoco mueve la caja', () => {
+  const caja = (gastos: Record<string, unknown>[]): CashLedger => ({
+    sales: [{ id: 'v1', date: '2026-10-02', amount: 100 }],
+    orderPayments: [],
+    expenses: gastos.map((g) => ({
+      id: g.id as string,
+      date: '2026-10-10',
+      amount: Number(g.amount),
+      payer: null,
+      isInvestment: false,
+      isFilament: true,
+      refundable: true,
+      fromInvoice: g.purchaseInvoiceLineId != null,
+    })),
+    // ESTO es lo que movió la plata: los $70 abonados.
+    purchasePayments: [
+      { id: 'ab1', date: '2026-10-05', amount: 70, payer: null, refundable: true, filamentShare: 1 },
+    ],
+    loanPayments: [],
+    movements: [],
+  });
+
+  const gastoReal = {
+    id: 'g-real',
+    organizationId: ORG,
+    purchaseInvoiceLineId: 'l1',
+    date: new Date('2026-10-10'),
+    createdAt: new Date('2026-10-10T10:00:00Z'),
+    quantity: 6,
+    // 6 × $7,50: el precio que te cobraron, no los $42 que pediste.
+    amount: 45,
+    materialId: 'mat-mio',
+    printerId: null,
+  };
+
+  it('el saldo queda IDÉNTICO antes y después de deshacer: $30,00', async () => {
+    const gastos = [{ ...gastoReal }];
+    const p = makePrisma(
+      {
+        ...FACTURA_VACIA,
+        lines: [linea({ quantity: 10, unitPrice: 7, received: 6, expenses: gastos })],
+      },
+      gastos,
+    );
+
+    expect(businessCash(caja(gastos)).balance).toBe(30); // 100 cobrados − 70 abonados
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(gastos).toHaveLength(0);
+    expect(businessCash(caja(gastos)).balance).toBe(30);
+  });
+
+  /**
+   * El contrafáctico, para que el 30 tenga dientes: sin la marca, ese gasto de
+   * $45 —el precio REAL, no los $42 del pedido— sí movería la caja.
+   */
+  it('si se perdiera la marca, el saldo bajaría los 45 REALES: −15', () => {
+    const sinMarca = caja([{ id: 'g-real', amount: 45, purchaseInvoiceLineId: null }]);
+
+    expect(businessCash(sinMarca).balance).toBe(-15); // 100 − 70 − 45
   });
 });
 

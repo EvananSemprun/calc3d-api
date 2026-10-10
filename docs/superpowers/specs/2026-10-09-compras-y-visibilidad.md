@@ -218,16 +218,37 @@ recibir, y si ya recibiste algo no se puede.
 costó**. El total de la factura usa el precio real de lo ya recibido y el
 pedido para lo que falta.
 
-- [ ] `PurchaseReceiveSchema` acepta `unitPrice` opcional. Sin él, se usa el de
+- [x] `PurchaseReceiveSchema` acepta `unitPrice` opcional. Sin él, se usa el de
       la línea (el caso normal: llegó a lo pactado).
-- [ ] `invoiceTotals` recibe, por línea, las recepciones con su precio. El total
+- [x] `invoiceTotals` recibe, por línea, las recepciones con su precio. El total
       deja de ser `Σ cantidad × precio pedido`.
-- [ ] ⚠️ Tests con números puestos a mano: 6 a $7.50 + 4 pendientes a $7 = 73,
+- [x] ⚠️ Tests con números puestos a mano: 6 a $7.50 + 4 pendientes a $7 = 73,
       no 70 ni 75.
-- [ ] La pantalla avisa cuando el precio informado difiere del pedido: es un
+- [x] La pantalla avisa cuando el precio informado difiere del pedido: es un
       dato que cambia el total de la factura, no puede pasar en silencio.
-- [ ] Mutación: ignorar el precio informado y usar el de la línea tiene que
-      tumbar un test.
+- [x] Mutación: ignorar el precio informado y usar el de la línea tiene que
+      tumbar un test. (Tumba 5.)
+
+**Cerrada el 2026-10-10 (shared 0.44.0), SIN migración.** La decisión que lo
+explica: **una recepción no estrena tabla, su registro ES el `Expense`** que ya
+nacía al recibir. Ahí estaban guardados su cantidad y su monto, o sea el precio
+real: lo que faltaba era mirarlos. Guardar el precio otra vez al lado habría
+sido una segunda verdad sobre la misma entrega, y el día que una de las dos
+cambie la factura y el gasto dirían cosas distintas de la misma compra.
+
+- El total de la línea es `Σ(entregas: unidades × su precio) + pendientes ×
+  precio pedido`. ⚠️ **Lo que una recepción no cubre vale lo PEDIDO**, y eso
+  incluye lo recibido sin recepción registrada (toda la base anterior): una
+  factura vieja sigue dando el mismo número que daba ayer.
+- ⚠️ **`received` sigue siendo la única definición de cuántos llegaron**; las
+  recepciones solo ponen PRECIO. El motor las recorta contra él.
+- El precio de cotización del rollo sigue al **monto del gasto**, así que
+  informar $7,50 deja $7,50 (`recalcularPrecioDelRollo`, sin tocar nada).
+- La ficha que nace al recibir nace con el precio **informado**, no con el
+  pedido.
+- ⚠️ **`?? ` y no `||`** al resolver el precio: un precio informado de **0** es
+  un dato verdadero (un rollo regalado) y con `||` se habría leído como "no
+  informó nada".
 
 ---
 

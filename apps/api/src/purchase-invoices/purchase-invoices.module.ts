@@ -19,6 +19,7 @@ import {
   PurchaseVoidSchema,
   invoiceStatus,
   invoiceTotals,
+  purchaseCostPerRoll,
   type PurchaseInvoicePaymentDto,
   type PurchaseInvoiceUpsertDto,
   type PurchaseReceiveDto,
@@ -40,6 +41,29 @@ const incluir = {
     include: {
       material: { select: { id: true, name: true } },
       printer: { select: { id: true, name: true } },
+      /**
+       * LAS RECEPCIONES DE LA LÍNEA.
+       *
+       * ⚠️ **Una recepción no tiene tabla propia: su registro ES el gasto** que
+       * nace al recibir. Ahí están su cantidad y su monto, o sea **lo que de
+       * verdad te cobraron**. Guardar el precio otra vez al lado sería una
+       * segunda verdad sobre la misma entrega, y el día que una de las dos
+       * cambie la factura y el gasto dirían cosas distintas de la misma compra.
+       * Por eso no hubo migración en la fase 2: el dato ya estaba guardado, lo
+       * que faltaba era mirarlo.
+       *
+       * En orden ASCENDENTE: la primera entrega primero, como la leería
+       * cualquiera. Deshacer, en cambio, busca la ÚLTIMA y usa su propio
+       * `orderBy` descendente.
+       */
+      expenses: {
+        select: { id: true, date: true, quantity: true, amount: true },
+        // El `as` no es decorativo: el `as const` de abajo volvería `readonly`
+        // a este arreglo y Prisma pide uno mutable en `orderBy`.
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] as Array<
+          { date: 'asc' } | { createdAt: 'asc' }
+        >,
+      },
     },
   },
   payments: {
@@ -95,6 +119,25 @@ export class PurchaseInvoicesService {
       received: l.received,
       /** Lo que falta llegar de ESTA línea. */
       porRecibir: Math.max(l.quantity - l.received, 0),
+      /**
+       * CADA ENTREGA, CON EL PRECIO QUE TE COBRARON.
+       *
+       * ⚠️ El precio por unidad se deriva con **`purchaseCostPerRoll`**, la
+       * misma función que fija el precio de cotización del rollo. Dividir acá a
+       * mano sería una segunda cuenta para la misma pregunta ("¿a cuánto salió
+       * la unidad?") y el día que una redondee distinto, la factura y la
+       * calculadora no coincidirían.
+       *
+       * ⚠️ La pantalla necesita esto para **avisar** cuando el precio informado
+       * difiere del pedido: cambia el total de la factura, y un total que se
+       * mueve sin decir por qué miente de la peor manera, la que no se nota.
+       */
+      recepciones: l.expenses.map((e) => ({
+        id: e.id,
+        date: e.date.toISOString(),
+        quantity: e.quantity ?? 0,
+        unitPrice: purchaseCostPerRoll(n(e.amount), e.quantity ?? 0),
+      })),
     }));
     const payments = f.payments.map((p) => ({
       id: p.id,
@@ -108,8 +151,17 @@ export class PurchaseInvoicesService {
       voidReason: p.voidReason,
     }));
 
+    // ⚠️ **El total ya NO es `Σ cantidad × precio pedido`.** Cada línea viaja con
+    // sus recepciones, así que lo ya recibido vale lo que COSTÓ y lo que falta
+    // sigue valiendo lo que PEDISTE. `received` sigue siendo la única definición
+    // de cuántos llegaron: el motor recorta las recepciones contra él.
     const totals = invoiceTotals(
-      lines.map((l) => ({ quantity: l.quantity, unitPrice: l.unitPrice, received: l.received })),
+      lines.map((l) => ({
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        received: l.received,
+        recepciones: l.recepciones,
+      })),
       payments.map((p) => ({ amount: p.amount, voided: p.voidedAt != null })),
     );
 
@@ -323,6 +375,13 @@ export class PurchaseInvoicesService {
    * lo mandara el cliente, dos recepciones de la misma línea podrían sumar
    * algo distinto del total de la factura sin que nadie se entere.
    *
+   * ⚠️ El **precio** sí viaja, y es opcional (`dto.unitPrice`): pediste 10 a $7
+   * y te facturaron $7,50. La línea conserva lo PEDIDO y esta recepción guarda
+   * lo que COSTÓ —en el monto de su gasto—, así que el total de la factura y el
+   * precio de cotización del rollo salen del precio real sin reescribir el
+   * pedido. Antes había que corregir la línea ANTES de recibir, y con algo ya
+   * recibido no se podía por ninguna puerta.
+   *
    * ⚠️ Todo en UNA transacción: un gasto creado sin subir `received` dejaría
    * la línea pidiendo de nuevo lo que ya llegó, y volver a recibirla cargaría
    * el filamento dos veces en el inventario.
@@ -348,7 +407,18 @@ export class PurchaseInvoicesService {
     }
 
     const fecha = dto.date ? new Date(dto.date) : new Date();
-    const monto = Math.round(dto.quantity * n(linea.unitPrice) * 10000) / 10000;
+    /**
+     * ⚠️ **EL PRECIO QUE TE COBRARON.** Sin informar nada se usa el de la
+     * línea, que es el caso normal (llegó a lo pactado). `?? ` y no `||`: un
+     * precio informado de **0** es un dato verdadero —un rollo regalado— y con
+     * `||` se habría leído como "no informó nada" y cobrado el pedido.
+     *
+     * ⚠️ **La línea NO se reescribe.** Es el pedido, y lo que falta llegar se
+     * sigue valuando a ese precio; pisarla dejaría la factura sin memoria de lo
+     * que habías acordado.
+     */
+    const precio = dto.unitPrice ?? n(linea.unitPrice);
+    const monto = Math.round(dto.quantity * precio * 10000) / 10000;
 
     // ⚠️ Una línea que pide algo nuevo y NO dice qué es no se adivina: adivinar
     // "filamento" es justo lo que dejaba un rollo llamado "Impresora A2". El
@@ -369,8 +439,9 @@ export class PurchaseInvoicesService {
         if (linea.nuevoTipo === 'PRINTER') {
           // Nace con el precio de la compra; horas de vida y consumo quedan en
           // el default y se corrigen desde el catálogo de impresoras.
+          // Nace con lo que COSTÓ, no con lo que pediste.
           const nueva = await tx.printer.create({
-            data: { organizationId, name: linea.nombreNuevo, price: n(linea.unitPrice) },
+            data: { organizationId, name: linea.nombreNuevo, price: precio },
           });
           impId = nueva.id;
           // ⚠️ Repuntar la línea no es cosmético: el gasto de abajo decide
@@ -383,7 +454,7 @@ export class PurchaseInvoicesService {
             data: {
               organizationId,
               name: linea.nombreNuevo,
-              rollPrice: n(linea.unitPrice),
+              rollPrice: precio,
               ...(dto.rollGrams ? { rollGrams: dto.rollGrams } : {}),
             },
           });

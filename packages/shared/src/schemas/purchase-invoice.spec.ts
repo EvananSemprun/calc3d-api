@@ -1,4 +1,4 @@
-import { PurchaseInvoiceLineSchema } from './api';
+import { PurchaseInvoiceLineSchema, PurchaseReceiveSchema } from './api';
 
 /**
  * ⚠️ **"Algo que todavía no tenés" tiene que decir QUÉ es.**
@@ -89,5 +89,54 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({ ...ficha, quantity: 1, unitPrice: 10 }).success,
     ).toBe(true);
+  });
+});
+
+/**
+ * EL PRECIO QUE TE COBRARON, al recibir.
+ *
+ * ⚠️ Es **opcional** a propósito: el caso normal es que llegue a lo pactado, y
+ * entonces no hay nada que informar y se usa el de la línea. Exigirlo obligaría
+ * a retipear el mismo número en cada recepción, que es como se cuela un error.
+ *
+ * ⚠️ Y lo que NO viaja sigue siendo el **monto**: sale de cantidad × precio. Si
+ * el cliente mandara el total, dos recepciones podrían sumar algo distinto de
+ * la factura y nadie se enteraría.
+ */
+describe('PurchaseReceiveSchema: el precio real de la entrega', () => {
+  it('sin precio se acepta: llegó a lo pactado', () => {
+    const r = PurchaseReceiveSchema.safeParse({ quantity: 6 });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.unitPrice ?? null).toBeNull();
+  });
+
+  it('con el precio que te cobraron se acepta y llega como número', () => {
+    const r = PurchaseReceiveSchema.safeParse({ quantity: 6, unitPrice: 7.5 });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.unitPrice).toBe(7.5);
+  });
+
+  /** Un rollo regalado es un dato verdadero: $0 entra. */
+  it('un precio de 0 se acepta', () => {
+    expect(PurchaseReceiveSchema.safeParse({ quantity: 1, unitPrice: 0 }).success).toBe(true);
+  });
+
+  /** Una factura no es el lugar para una devolución. */
+  it('un precio negativo se rechaza', () => {
+    expect(PurchaseReceiveSchema.safeParse({ quantity: 1, unitPrice: -1 }).success).toBe(false);
+  });
+
+  it('un precio que no es número se rechaza', () => {
+    expect(PurchaseReceiveSchema.safeParse({ quantity: 1, unitPrice: '7.5' }).success).toBe(false);
+  });
+
+  /** ⚠️ El MONTO no viaja: un `amount` en el cuerpo se descarta. */
+  it('un monto en el cuerpo no se guarda: el precio lo decide la cantidad', () => {
+    const r = PurchaseReceiveSchema.safeParse({ quantity: 6, unitPrice: 7.5, amount: 1 });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect('amount' in r.data).toBe(false);
   });
 });

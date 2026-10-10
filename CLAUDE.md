@@ -1053,6 +1053,73 @@ en el repo web: se sobrescribe al sincronizar.
         algo recibido, con confirmación que dice qué pasa **y qué no** (la plata
         no se mueve, la ficha se queda). `useUnreceiveLine` comparte
         `useInvoiceMutation` con `useReceiveLine`: invalida las mismas claves.
+    - ⚠️ **QUE LA FACTURA REFLEJE LO QUE TE COBRARON** (2026-10-10, shared
+      0.44.0, **sin migración**). Pediste 10 rollos a $7 y el proveedor te
+      factura $7,50: **la línea guarda lo que PEDISTE y cada recepción lo que
+      COSTÓ**. Hasta acá había que corregir la línea **antes** de recibir, y con
+      algo ya recibido no se podía por ninguna puerta.
+      - ⚠️ **Una recepción no tiene tabla propia: su registro ES el `Expense`**
+        que ya nacía al recibir. Ahí viven su cantidad y su monto, o sea el
+        precio real; lo que faltaba era mirarlos (el `include` de las líneas trae
+        ahora sus `expenses`). Guardar el precio otra vez al lado sería una
+        segunda verdad sobre la misma entrega, y el día que una de las dos cambie
+        la factura y el gasto dirían cosas distintas de la misma compra. Por eso
+        **no hubo migración**.
+      - `PurchaseReceiveSchema` gana **`unitPrice` opcional** (≥ 0). Sin él se
+        usa el de la línea: el caso normal es que llegue a lo pactado, y
+        exigirlo obligaría a retipear el mismo número en cada recepción. **El
+        MONTO sigue sin viajar**: sale de cantidad × precio.
+      - ⚠️ **`?? ` y no `||`** al resolver el precio: **0 es un dato verdadero**
+        (un rollo regalado) y con `||` se habría leído como "no informó nada".
+      - `invoiceTotals` recibe por línea sus `recepciones` y el total pasa a ser
+        `Σ(entregas: unidades × su precio) + pendientes × precio pedido`. ⚠️ **Lo
+        que una recepción no cubre vale lo PEDIDO**, y eso incluye lo recibido
+        **sin recepción registrada** (toda la base anterior): una factura vieja
+        sigue dando el mismo número que daba ayer. Número clavado: 6 a $7,50 + 4
+        pendientes a $7 = **73**, no 70 ni 75.
+      - ⚠️ **`received` sigue siendo la ÚNICA definición de cuántos llegaron**;
+        las recepciones solo ponen PRECIO, y el motor las recorta contra él. Sin
+        ese recorte, el precio real se aplicaría a mercadería que la línea
+        considera pendiente.
+      - El precio por unidad de una entrega se deriva con **`purchaseCostPerRoll`**,
+        la MISMA función que fija el precio de cotización del rollo: dividir a
+        mano sería una segunda cuenta para la misma pregunta. Un gasto **sin
+        cantidad** no dice a cuánto salió la unidad, así que sus unidades valen
+        lo pedido en vez de valer 0 (que haría desaparecer plata del total).
+      - **El precio de cotización sigue al REAL sin tocar nada**:
+        `recalcularPrecioDelRollo` lee el MONTO de la última compra, así que
+        informar $7,50 deja $7,50 y no los $7 del pedido. Regresión con número
+        clavado en `expenses.service.spec.ts` (45 ÷ 6 = 7,50).
+      - La **ficha que nace al recibir** (filamento o impresora) nace con el
+        precio **informado**. Y la **línea NO se reescribe**: es el pedido, y lo
+        que falta llegar se sigue valuando a ese precio.
+      - ⚠️ **El precio real tampoco mueve la caja.** El gasto nace marcado con su
+        línea, así que su plata ya se contó al abonar: que el monto cambie no
+        puede mover el saldo. Número **clavado** en
+        `purchase-invoices.service.spec.ts` ($30,00 antes y después de deshacer),
+        con su contrafáctico (sin la marca, −$15, o sea los **45 reales** y no
+        los 42 del pedido).
+      - **Deshacer** sigue revirtiendo **la que corresponde**: con dos entregas a
+        precios distintos borra la última (4 a $8) y el total vuelve de 77 a
+        **73**, medido sobre el estado que dejó el servicio.
+      - Las líneas viajan al panel con `recepciones` (id, fecha, cantidad,
+        precio) para que **la pantalla pueda avisar**: un total que se mueve sin
+        decir por qué miente de la peor manera, la que no se nota.
+      - Regresión: `purchase-invoice.spec.ts` (shared, 15 con números a mano),
+        `schemas/purchase-invoice.spec.ts` (6), `purchase-invoices.service.spec.ts`
+        (18) y 1 en `expenses.service.spec.ts`. Las mutaciones y cuántos tumba
+        cada una: ignorar el precio informado **5**, el total valuando al pedido
+        **11 en shared + 4 en api**, no mandarle las recepciones al motor **4**,
+        el precio de la entrega sin dividir **5**, lo recibido sin recepción
+        valiendo 0 **3 + 2**, recortar contra lo pedido en vez de lo recibido
+        **1**, la ficha nueva naciendo con el pedido **1**, el schema aceptando
+        negativo **1**.
+      - ⚠️ **El `orderBy` de ese `include` lleva un `as` a mano**: el `as const`
+        de `incluir` volvería `readonly` al arreglo y Prisma pide uno mutable.
+      - ⚠️ **Dos mocks de otros specs hubo que completarlos** (`loans.service.spec.ts`
+        y el `create` de `purchase-invoice`): sus líneas no traían `expenses` y el
+        `include` ahora las trae. Un mock que no modela lo que trae la consulta
+        rompe en cuanto la consulta crece.
     - ⚠️ **"Algo que todavía no tenés" dice QUÉ es** (`nuevoTipo`
       `MATERIAL|PRINTER`, shared 0.34.0, migración
       `20261011120000_que_nace_al_recibir`, aditiva). Hasta acá la recepción
