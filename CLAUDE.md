@@ -1456,6 +1456,30 @@ en el repo web: se sobrescribe al sincronizar.
   tarda ~50 s en despertarla (aceptado por el dueño: solo usa el panel). Si algún
   día se publica la tienda, eso no sirve para un cliente: ping a `/api/health`
   cada 10 min (no toca la base) o pasar a un plan pago.
+- ✅ **`GET /api/health` DICE QUÉ VERSIÓN ESTÁ SIRVIENDO** (2026-10-10). Devuelve
+  `{ ok: true, ts, version }` y, **solo si el entorno expone
+  `RENDER_GIT_COMMIT`**, un `commit` de 7 caracteres (si no lo expone, el campo
+  **no está**: no se inventa un `'unknown'` ni se agrega configuración nueva).
+  `version` es `SHARED_VERSION`, **importado**, nunca un literal.
+  - **Así se verifica un despliegue**: comparar ese `version` con el
+    `packages/shared/package.json` del commit que se empujó. Antes devolvía
+    `{ ok, ts }` y no había forma de saberlo: el despliegue de esa tarde se
+    "verificó" **esperando ocho minutos por reloj**, que es suponer con cara de
+    comprobar. `ts` no sirve — cambia en cada request, con la versión vieja o
+    con la nueva. **Por eso subir `SHARED_VERSION` en cada cambio de shared no
+    es burocracia: es lo que hace verificable el despliegue.**
+  - ⚠️ **Sigue público, sin JWT, sin tocar la base y sin nada sensible.** Render
+    lo pega como `healthCheckPath` cada pocos minutos: una consulta acá
+    despertaría el cómputo sola. El controlador no recibe colaboradores a
+    propósito. Nada de variables de entorno, rutas, nombres de base ni
+    `DATABASE_URL` — su spec mete secretos en `process.env` y exige que no
+    aparezcan en la respuesta.
+  - ⚠️ **NO importar el `package.json` de shared desde `apps/api/src`.** Un
+    `import` de un archivo fuera de `src` le corre el `rootDir` a `tsc` y el
+    build pasa de `dist/src/main.js` a `dist/apps/api/src/main.js`; **el
+    Dockerfile arranca el primero**, así que el contenedor no levanta. Medido al
+    compilar el 2026-10-10. Si hace falta leerlo en un test, `readFileSync` en
+    ejecución. Regresión: `health.controller.spec.ts`.
 - **El `Dockerfile` (arreglado el 2026-10-01, verificado en un clon limpio):**
   - **Node 22**: pnpm 11 (`packageManager`) exige Node ≥ 22.13. Con `node:20`
     moría en `pnpm install` con *"No such built-in module: node:sqlite"*.
