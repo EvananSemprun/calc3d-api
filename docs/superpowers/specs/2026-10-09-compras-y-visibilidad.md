@@ -30,6 +30,7 @@ compra. Cada fase se despliega sola.
 | A7 | El Dashboard muestra el mes como **cadena de caja** (venías con X → el mes → te queda Y). El orden en que se "gasta" la plata vieja o nueva **no se implementa**: no cambia ningún número. |
 | A8 | "Mostrador vs encargo" tiene que sumar **los abonos de encargos**, no solo las ventas `ENCARGO` del Excel. |
 | A9 | Una recepción se puede **deshacer**: sin eso, la guarda de A6 deja la fila congelada para siempre. |
+| A10 | En Gastos, los KPIs se calculan sobre **lo que se ve**, y el filtro no ofrece proveedores sin gastos en el rango. |
 | C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
 | C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
 | C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
@@ -177,6 +178,21 @@ se mandan unos a otros en círculo. No existe "des-recibir".
       nunca movió plata.
 - [ ] ⚠️ La ficha creada al recibir **no se borra**: puede estar en uso.
 - [ ] El mensaje de anular la factura deja de mandar a una puerta cerrada.
+
+### 1.6 En Gastos, los totales de lo que se ve (A10)
+
+Apareció al terminar 1.2, el 2026-10-10: la tabla muestra las filas filtradas y
+los tres KPIs suman todas. Con el filtro de proveedor puesto, ves 2 gastos y un
+"Total del periodo" de los 87. El `CLAUDE.md` del repo web ya fija lo
+contrario para Ventas.
+
+- [ ] Los tres KPIs sobre las filas visibles.
+- [ ] ⚠️ Y la **etiqueta** acompaña: "Total del periodo" con un filtro puesto ya
+      no es el total del periodo.
+- [ ] Las opciones del filtro salen de las filas cargadas, como en Compras de
+      filamento, para que no se pueda elegir un valor que deje la tabla vacía.
+- [ ] El texto del vacío distingue "no hay gastos" de "el filtro no deja pasar
+      nada".
 
 ---
 

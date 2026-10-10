@@ -192,6 +192,43 @@ cantidad. Es el inverso exacto de `receive()`, no un borrado libre.
 
 ---
 
+## Tarea 7 — En Gastos, los totales de lo que se ve
+
+**Por qué.** Apareció al terminar la Tarea 3, el 2026-10-10. La tabla muestra
+las filas filtradas (`visibleRows`) y los tres KPIs suman **todas**
+(`rows`):
+
+```
+línea 70:  visibleRows = rows.filter(...)    ← la tabla
+línea 95:  total       = rows.reduce(...)    ← el KPI
+línea 96:  inversion   = rows.filter(...)
+```
+
+Es preexistente, pero el filtro de proveedor que acaba de entrar lo vuelve fácil
+de encontrar: elegís un proveedor, ves 2 gastos y un "Total del periodo" de los
+87. El `CLAUDE.md` del repo web fija lo contrario para Ventas, con estas
+palabras: *"Los tres KPIs se calculan sobre LO QUE SE VE"*.
+
+- [ ] `total`, `inversion` y `operativo` se calculan sobre `visibleRows`.
+- [ ] ⚠️ **La etiqueta tiene que decir la verdad nueva.** "Total del periodo"
+      con un filtro puesto ya no es el total del periodo: o la etiqueta cambia,
+      o se dice qué filtros están activos. Cambiar el número y dejar el cartel
+      viejo es cambiar una mentira por otra.
+- [ ] Las opciones del filtro de proveedor salen de **las filas cargadas**, no
+      del directorio entero (el patrón ya está escrito en
+      `features/filament/PurchasesTab.tsx`, con `uniqueSorted`). Así no se
+      puede elegir un proveedor que deje la tabla vacía.
+- [ ] El texto del vacío distingue "no hay gastos en este periodo" de "ningún
+      gasto pasa el filtro". Hoy dice lo primero en los dos casos, y con un
+      filtro puesto eso es falso.
+- [ ] ⚠️ `apps/web` **no tiene runner de tests** (no hay script `test` ni
+      specs; `vitest` está instalado pero sin cablear). Esto no lleva test:
+      decilo, no simules cobertura. Si la lógica se puede extraer a una función
+      pura testeable en otro lado, mejor.
+- [ ] `git commit`.
+
+---
+
 ## Cierre de la fase
 
 - [ ] `pnpm -r lint` y `pnpm -r test` en los dos repos, **leyendo la salida**
