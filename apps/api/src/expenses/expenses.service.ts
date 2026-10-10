@@ -334,7 +334,7 @@ export class ExpensesService {
   private noSeTocaDesdeGastos(gasto: { purchaseInvoiceLineId: string | null }) {
     if (gasto.purchaseInvoiceLineId) {
       throw new BadRequestException(
-        'Esta compra entró por una factura: se corrige desde Compras, no desde Gastos.',
+        'Esta compra entró por una factura: se corrige desde Compras, deshaciendo la recepción de su línea.',
       );
     }
   }

@@ -836,10 +836,55 @@ en el repo web: se sobrescribe al sincronizar.
       `FilamentPurchase` (shared 0.33.0) y el `purchaseInvoiceLineId` crudo que
       ya viaja en `GET /expenses`. Regresión: `expenses.service.spec.ts`
       (3 rechazos + 2 hermanos alcanzables) y `filament.service.spec.ts`.
-      ⚠️ **Queda un callejón sin salida**: no existe "des-recibir", y
-      `void()` tampoco anula una factura con mercadería recibida, así que esa
-      fila hoy **no se puede corregir por ninguna puerta**. Que no se pueda
-      romper es lo que importa; corregirla es Fase 2.
+      Esa guarda dejó un **callejón sin salida** que se abrió el mismo día con
+      "deshacer una recepción" (ver abajo).
+    - ⚠️ **DESHACER UNA RECEPCIÓN** (2026-10-10,
+      `POST /purchase-invoices/:id/lines/:lineId/unreceive`, **sin cuerpo**).
+      Es la **salida** del callejón: con el gasto de factura intocable desde
+      Gastos, una línea ya recibida no se podía corregir por **ninguna** puerta
+      y los cuatro mensajes se mandaban unos a otros en círculo (Gastos → Compras
+      → anular → "corregilas desde Compras de filamento", que es justo la puerta
+      que se había cerrado). Un mensaje que manda a una puerta cerrada es peor
+      que no tener mensaje: los tres de este módulo + el de `noSeTocaDesdeGastos`
+      se reescribieron para mandar acá.
+      - Es el **inverso exacto de `receive()`**, no un borrado libre: cada
+        recepción creó UN `Expense` con su cantidad, así que esto borra **ese**
+        gasto (el último por `date` y, a igualdad, por `createdAt`) y baja
+        `received` en **esa misma** cantidad, todo en UNA transacción. Después,
+        fuera de ella, `recalcularPrecioDelRollo`: el precio tiene que volver al
+        de la compra anterior, y para eso la borrada ya no puede existir.
+      - ⚠️ **NO mueve la caja.** Ese gasto nunca movió plata (la plata son los
+        abonos; nació marcado para eso), así que borrarlo tampoco puede moverla.
+        Test con número **clavado** en `purchase-invoices.service.spec.ts`: el
+        saldo mide **$25,00** antes y después, sobre el estado que dejó el
+        servicio, más el **contrafáctico** (sin la marca daría $0) para que el
+        25 no sea un número vacío.
+      - ⚠️ **La ficha que nació al recibir NO se borra**: puede estar ya en una
+        cotización o en un pedido. Y la línea **conserva** su enlace a esa ficha,
+        así que volver a recibirla la reusa en vez de crear una duplicada.
+      - ⚠️ **Sin gasto que borrar, 400: no se baja `received` a ciegas.** Y
+        tampoco si el gasto dice más cantidad que lo recibido (dejaría `received`
+        en negativo). Cada guarda tiene su mutación.
+      - ⚠️ **Lo que la verificación por mutación destapó, y vale para cualquier
+        guarda nueva de este módulo:** (1) un `rejects.toBeInstanceOf(
+        BadRequestException)` pelado **no distingue qué guarda saltó** — quitar
+        la de `received === 0` dejaba los 61 verdes porque el caso caía en la
+        siguiente y daba 400 por otro motivo; hay que afirmar el **mensaje**.
+        (2) El filtro por `organizationId` del `expense.findFirst` **no lo
+        sostenía ningún test** (llegar con una línea ajena ya es imposible, pero
+        sin test es código que alguien saca "porque es redundante"). (3) Mutar
+        con `gasto?.` o `if (false)` **no compila** y Jest reporta "0 tests",
+        que parece verde: la mutación tiene que compilar — tragarse el error con
+        un `return this.get(...)` sí lo hace.
+      - El mock de Prisma del spec **ordena** por el `orderBy` y **escribe**
+        (`expense.delete` saca la fila del array): sin eso "la última recepción"
+        se probaría leyendo la forma del `orderBy`, que es la propiedad
+        equivocada. Y `purchaseInvoice.findFirst` pasó a filtrar por el `where`,
+        como el resto de las tablas del mock.
+      - Pantalla: `Purchases.tsx`, botón **"Deshacer recepción"** por línea con
+        algo recibido, con confirmación que dice qué pasa **y qué no** (la plata
+        no se mueve, la ficha se queda). `useUnreceiveLine` comparte
+        `useInvoiceMutation` con `useReceiveLine`: invalida las mismas claves.
     - ⚠️ **"Algo que todavía no tenés" dice QUÉ es** (`nuevoTipo`
       `MATERIAL|PRINTER`, shared 0.34.0, migración
       `20261011120000_que_nace_al_recibir`, aditiva). Hasta acá la recepción

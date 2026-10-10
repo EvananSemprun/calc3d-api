@@ -1,5 +1,10 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { PurchaseInvoiceLineSchema, PurchaseInvoiceUpsertSchema } from '@calc3d/shared';
+import {
+  PurchaseInvoiceLineSchema,
+  PurchaseInvoiceUpsertSchema,
+  businessCash,
+  type CashLedger,
+} from '@calc3d/shared';
 import { PurchaseInvoicesService } from './purchase-invoices.module';
 
 const ORG = 'org-A';
@@ -32,7 +37,32 @@ const FILAS = {
 const coincide = (fila: Record<string, unknown>, where: Record<string, unknown>) =>
   Object.entries(where).every(([k, v]) => fila[k] === v);
 
-function makePrisma(factura?: Record<string, unknown>) {
+/**
+ * …y ORDENA como la base: por las claves del `orderBy`, en ese orden. Sin esto,
+ * "la última recepción" se probaría leyendo la forma del `orderBy` en vez de
+ * comprobar que se borra la fila correcta — la propiedad equivocada.
+ */
+const ordenar = (filas: Record<string, unknown>[], orderBy: unknown) => {
+  const claves = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []) as Record<
+    string,
+    'asc' | 'desc'
+  >[];
+  return [...filas].sort((a, b) => {
+    for (const o of claves) {
+      const [k, dir] = Object.entries(o)[0];
+      const av = a[k] as never;
+      const bv = b[k] as never;
+      if (av < bv) return dir === 'desc' ? 1 : -1;
+      if (av > bv) return dir === 'desc' ? -1 : 1;
+    }
+    return 0;
+  });
+};
+
+/** Lo que recibe una consulta del mock. Tiparlo evita un `any` por llamada. */
+type Consulta = { where: Record<string, unknown>; orderBy?: unknown };
+
+function makePrisma(factura?: Record<string, unknown>, gastos: Record<string, unknown>[] = []) {
   const tabla = (filas: Record<string, unknown>[]) => ({
     findFirst: jest.fn(({ where }: any) => Promise.resolve(filas.find((f) => coincide(f, where)) ?? null)),
   });
@@ -41,11 +71,18 @@ function makePrisma(factura?: Record<string, unknown>) {
     printer: {
       ...tabla(FILAS.printer),
       create: jest.fn(() => Promise.resolve({ id: 'imp-nueva' })) as jest.Mock,
+      // Para poder AFIRMAR que deshacer una recepción no borra la ficha.
+      delete: jest.fn() as jest.Mock,
     },
     counterparty: tabla(FILAS.counterparty),
     cashAccount: tabla(FILAS.cashAccount),
     purchaseInvoice: {
-      findFirst: jest.fn(() => Promise.resolve(factura ?? null)),
+      // ⚠️ Filtra por el `where` como el resto: una factura de OTRA
+      // organización no se alcanza. Devolverla siempre hacía pasar los tests de
+      // aislamiento con y sin el filtro por organización.
+      findFirst: jest.fn(({ where }: Consulta) =>
+        Promise.resolve(factura && coincide(factura, where) ? factura : null),
+      ),
       findMany: jest.fn(() => Promise.resolve([])),
       create: jest.fn(({ data }: any) =>
         Promise.resolve({ ...FACTURA_VACIA, ...data, lines: data.lines?.create ?? [], payments: [] }),
@@ -57,8 +94,25 @@ function makePrisma(factura?: Record<string, unknown>) {
     material: {
       ...tabla(FILAS.material),
       create: jest.fn(() => Promise.resolve({ id: 'mat-nuevo' })) as jest.Mock,
+      delete: jest.fn() as jest.Mock,
     },
-    expense: { create: jest.fn() },
+    /**
+     * Los gastos son la tabla que deshacer una recepción TOCA, así que el mock
+     * escribe de verdad: `delete` saca la fila del array. Así el saldo de la
+     * caja se puede medir sobre el estado que dejó el servicio y no sobre uno
+     * escrito a mano al lado.
+     */
+    expense: {
+      findFirst: jest.fn(({ where, orderBy }: Consulta) =>
+        Promise.resolve(ordenar(gastos.filter((g) => coincide(g, where)), orderBy)[0] ?? null),
+      ),
+      create: jest.fn(),
+      delete: jest.fn(({ where }: { where: { id: string } }) => {
+        const i = gastos.findIndex((g) => g.id === where.id);
+        if (i >= 0) gastos.splice(i, 1);
+        return Promise.resolve({});
+      }),
+    },
     purchaseInvoicePayment: { findFirst: jest.fn(() => Promise.resolve(null)), create: jest.fn(), update: jest.fn() },
   };
 }
@@ -570,5 +624,294 @@ describe('PurchaseInvoicesService — nuevoTipo viaja hasta la base y vuelve', (
     const f = await servicio(p).get(ORG, 'f1');
 
     expect(f.lines[0].nuevoTipo).toBe('PRINTER');
+  });
+});
+
+/**
+ * DESHACER UNA RECEPCIÓN — la salida del callejón.
+ *
+ * ⚠️ Con el gasto de factura intocable desde Gastos, una línea YA RECIBIDA no
+ * se podía corregir por NINGUNA puerta: los cuatro mensajes se mandaban unos a
+ * otros en círculo. Esto es el inverso exacto de `receive()`: cada recepción
+ * creó UN gasto con su cantidad, y deshacerla borra **ese** gasto y baja
+ * `received` en esa misma cantidad. No es un borrado libre.
+ */
+describe('PurchaseInvoicesService — deshacer una recepción', () => {
+  /** Un gasto de recepción, el espejo de `receive()`. */
+  const gasto = (over: Record<string, unknown> = {}) => ({
+    id: 'g1',
+    organizationId: ORG,
+    purchaseInvoiceLineId: 'l1',
+    date: new Date('2026-10-10'),
+    createdAt: new Date('2026-10-10T10:00:00Z'),
+    quantity: 6,
+    amount: 42,
+    materialId: 'mat-mio',
+    printerId: null,
+    ...over,
+  });
+
+  const conRecibido = (
+    over: Record<string, unknown> = {},
+    gastos: Record<string, unknown>[] = [gasto()],
+  ) =>
+    makePrisma(
+      {
+        ...FACTURA_VACIA,
+        supplierId: 'prov-mio',
+        lines: [linea({ quantity: 10, unitPrice: 7, received: 6, ...over })],
+      },
+      gastos,
+    );
+
+  it('borra el gasto de la recepción y baja lo recibido en SU cantidad', async () => {
+    const p = conRecibido();
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.expense.delete).toHaveBeenCalledWith({ where: { id: 'g1' } });
+    expect(p.purchaseInvoiceLine.update).toHaveBeenCalledWith({
+      where: { id: 'l1' },
+      data: { received: 0 }, // 6 recibidos − los 6 de ese gasto
+    });
+  });
+
+  /** Dos recepciones parciales: se deshace la ÚLTIMA, no cualquiera. */
+  it('deshace la última recepción por fecha, no cualquiera', async () => {
+    const p = conRecibido({ received: 10 }, [
+      gasto({ id: 'g-vieja', date: new Date('2026-10-05'), quantity: 6 }),
+      gasto({ id: 'g-ultima', date: new Date('2026-10-09'), quantity: 4 }),
+    ]);
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.expense.delete).toHaveBeenCalledWith({ where: { id: 'g-ultima' } });
+    expect(p.purchaseInvoiceLine.update.mock.calls[0][0].data.received).toBe(6);
+  });
+
+  /** Mismo día, dos recepciones: desempata por `createdAt`. */
+  it('con la misma fecha desempata por createdAt', async () => {
+    const p = conRecibido({ received: 10 }, [
+      gasto({ id: 'g-manana', createdAt: new Date('2026-10-10T09:00:00Z'), quantity: 6 }),
+      gasto({ id: 'g-tarde', createdAt: new Date('2026-10-10T17:00:00Z'), quantity: 4 }),
+    ]);
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.expense.delete).toHaveBeenCalledWith({ where: { id: 'g-tarde' } });
+  });
+
+  /**
+   * ⚠️ El precio del rollo tiene que volver al de la compra ANTERIOR, no
+   * quedarse en el de una compra que ya no existe. Y el recálculo va DESPUÉS de
+   * borrar: lee la última compra, así que correrlo antes devolvería justo la
+   * que se está borrando.
+   */
+  it('el precio del rollo se recalcula, y después de borrar el gasto', async () => {
+    const p = conRecibido();
+    const exp = expensesFalso();
+
+    await servicio(p, exp).unreceive(ORG, 'f1', 'l1');
+
+    expect(exp.recalcularPrecioDelRollo).toHaveBeenCalledWith(ORG, 'mat-mio');
+    expect(exp.recalcularPrecioDelRollo.mock.invocationCallOrder[0]).toBeGreaterThan(
+      p.expense.delete.mock.invocationCallOrder[0],
+    );
+  });
+
+  /**
+   * ⚠️ Afirma **el mensaje**, no solo el 400. Con el `BadRequestException`
+   * pelado el test pasaba igual al quitar esta guarda: el caso caía en la
+   * siguiente ("las cuentas no cierran") y daba 400 por otro motivo. La
+   * mutación lo destapó — había que medir CUÁL guarda saltó.
+   */
+  it('una línea sin nada recibido → 400 y no borra ningún gasto', async () => {
+    const p = conRecibido({ received: 0 });
+
+    await expect(servicio(p).unreceive(ORG, 'f1', 'l1')).rejects.toThrow(
+      /no llegó nada todavía/,
+    );
+    expect(p.expense.delete).not.toHaveBeenCalled();
+    expect(p.purchaseInvoiceLine.update).not.toHaveBeenCalled();
+  });
+
+  it('una factura anulada no deshace nada', async () => {
+    const p = makePrisma(
+      { ...FACTURA_VACIA, voidedAt: new Date(), lines: [linea({ received: 2 })] },
+      [gasto({ quantity: 2 })],
+    );
+
+    await expect(servicio(p).unreceive(ORG, 'f1', 'l1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(p.expense.delete).not.toHaveBeenCalled();
+  });
+
+  it('una línea que no es de esta factura → 404', async () => {
+    const p = conRecibido();
+    await expect(servicio(p).unreceive(ORG, 'f1', 'l-ajena')).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.expense.delete).not.toHaveBeenCalled();
+  });
+
+  /** El aislamiento: con el id de OTRA organización no se toca nada. */
+  it('con el id de otra organización no se deshace nada', async () => {
+    const p = conRecibido();
+
+    await expect(servicio(p).unreceive(OTRA, 'f1', 'l1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.expense.delete).not.toHaveBeenCalled();
+    expect(p.purchaseInvoiceLine.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ El gasto se busca filtrando por organización, como todo el resto del
+   * módulo. Hoy llegar acá con una línea ajena ya es imposible (`mia` filtra la
+   * factura), así que es defensa en profundidad — pero sin este test el filtro
+   * es código que nada sostiene, y el día que alguien lo saque "porque es
+   * redundante" no se entera nadie. La mutación lo confirmó: quitarlo no
+   * rompía ningún test.
+   */
+  it('busca el gasto dentro de la organización: no borra el de otro negocio', async () => {
+    const p = conRecibido({ received: 10 }, [
+      gasto({ id: 'g-mio', date: new Date('2026-10-05'), quantity: 6 }),
+      // Más nuevo, misma línea, OTRA organización: se filtra, no se borra.
+      gasto({ id: 'g-ajeno', organizationId: OTRA, date: new Date('2026-10-09'), quantity: 4 }),
+    ]);
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.expense.delete).toHaveBeenCalledWith({ where: { id: 'g-mio' } });
+    expect(p.expense.delete).not.toHaveBeenCalledWith({ where: { id: 'g-ajeno' } });
+  });
+
+  /**
+   * ⚠️ **Sin gasto que borrar no se baja `received` a ciegas.** Bajarlo igual
+   * dejaría la línea pidiendo de nuevo mercadería que sí llegó, y volver a
+   * recibirla cargaría el filamento dos veces: el descuadre que la factura
+   * vino a evitar, entrando al revés.
+   */
+  it('sin gasto de recepción → 400 y no baja lo recibido', async () => {
+    const p = conRecibido({}, []);
+
+    await expect(servicio(p).unreceive(ORG, 'f1', 'l1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(p.purchaseInvoiceLine.update).not.toHaveBeenCalled();
+  });
+
+  /** Un gasto que dice más de lo que la línea tiene recibido dejaría `received` negativo. */
+  it('un gasto con más cantidad que lo recibido → 400 y no deja lo recibido en negativo', async () => {
+    const p = conRecibido({ received: 2 }, [gasto({ quantity: 6 })]);
+
+    await expect(servicio(p).unreceive(ORG, 'f1', 'l1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(p.expense.delete).not.toHaveBeenCalled();
+    expect(p.purchaseInvoiceLine.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ **LA FICHA QUE NACIÓ AL RECIBIR NO SE BORRA.** Puede estar ya en una
+   * cotización o en un pedido. Lo que vuelve atrás es la compra, no el
+   * catálogo. Y la línea CONSERVA su enlace a la ficha: desenlazarla haría que
+   * volver a recibirla creara una ficha duplicada.
+   */
+  it('la ficha no se borra y la línea sigue enlazada a ella', async () => {
+    const p = conRecibido();
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.material.delete).not.toHaveBeenCalled();
+    expect(p.printer.delete).not.toHaveBeenCalled();
+    // La única escritura sobre la línea es bajar lo recibido.
+    expect(p.purchaseInvoiceLine.update).toHaveBeenCalledTimes(1);
+    expect(p.purchaseInvoiceLine.update.mock.calls[0][0].data).toEqual({ received: 0 });
+  });
+
+  it('una impresora recibida tampoco se borra al deshacer', async () => {
+    const p = conRecibido(
+      {
+        materialId: null,
+        material: null,
+        printerId: 'imp-mia',
+        printer: { id: 'imp-mia', name: 'A1' },
+        received: 1,
+      },
+      [gasto({ quantity: 1, materialId: null, printerId: 'imp-mia' })],
+    );
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(p.printer.delete).not.toHaveBeenCalled();
+    expect(p.expense.delete).toHaveBeenCalled();
+  });
+});
+
+/**
+ * ⚠️ **DESHACER UNA RECEPCIÓN NO MUEVE LA CAJA.** El gasto nació de una
+ * factura, así que **nunca movió plata** (la plata son los abonos): borrarlo
+ * tampoco puede moverla. Si el saldo cambiara, se habría roto la invariante de
+ * no contar dos veces, que es la regla central del módulo.
+ *
+ * El caso es el del Cyan de producción: factura de $25, abonados $15, 1 rollo
+ * recibido. El número está **CLAVADO** y el saldo se mide sobre el estado que
+ * dejó el servicio, no sobre uno escrito a mano al lado.
+ */
+describe('PurchaseInvoicesService — deshacer no mueve la caja', () => {
+  /** Lo que la base deja: los gastos que queden, más la plata que sí salió. */
+  const caja = (gastos: Record<string, unknown>[]): CashLedger => ({
+    sales: [{ id: 'v1', date: '2026-10-02', amount: 40 }],
+    orderPayments: [],
+    expenses: gastos.map((g) => ({
+      id: g.id as string,
+      date: '2026-10-10',
+      amount: Number(g.amount),
+      payer: null,
+      isInvestment: false,
+      isFilament: true,
+      refundable: true,
+      // La marca que dice que su plata ya se contó por el lado de los abonos.
+      fromInvoice: g.purchaseInvoiceLineId != null,
+    })),
+    // ESTO es lo que mueve la plata: el abono de $15.
+    purchasePayments: [
+      { id: 'ab1', date: '2026-10-05', amount: 15, payer: null, refundable: true, filamentShare: 1 },
+    ],
+    loanPayments: [],
+    movements: [],
+  });
+
+  it('el saldo queda IDÉNTICO antes y después: $25,00', async () => {
+    const gastos = [
+      {
+        id: 'g-cyan',
+        organizationId: ORG,
+        purchaseInvoiceLineId: 'l1',
+        date: new Date('2026-10-10'),
+        createdAt: new Date('2026-10-10T10:00:00Z'),
+        quantity: 1,
+        amount: 25,
+        materialId: 'mat-mio',
+        printerId: null,
+      },
+    ];
+    const p = makePrisma(
+      { ...FACTURA_VACIA, lines: [linea({ quantity: 1, unitPrice: 25, received: 1 })] },
+      gastos,
+    );
+
+    // 40 cobrados − 15 abonados a la factura. Los $25 del gasto NO entran.
+    expect(businessCash(caja(gastos)).balance).toBe(25);
+
+    await servicio(p).unreceive(ORG, 'f1', 'l1');
+
+    expect(gastos).toHaveLength(0); // el gasto se fue de verdad
+    expect(businessCash(caja(gastos)).balance).toBe(25); // y el saldo no se movió
+  });
+
+  /**
+   * El contrafáctico, para que el 25 de arriba no sea un número vacío: SIN la
+   * marca de factura, ese mismo gasto SÍ movería la caja y el saldo daría $0.
+   * Por eso el test de arriba tiene dientes.
+   */
+  it('si se perdiera la marca de factura, el saldo sí cambiaría', () => {
+    const conMarca = caja([{ id: 'g-cyan', amount: 25, purchaseInvoiceLineId: 'l1' }]);
+    const sinMarca = caja([{ id: 'g-cyan', amount: 25, purchaseInvoiceLineId: null }]);
+
+    expect(businessCash(conMarca).balance).toBe(25);
+    expect(businessCash(sinMarca).balance).toBe(0); // 40 − 15 − 25
   });
 });

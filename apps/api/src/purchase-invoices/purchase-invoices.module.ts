@@ -215,7 +215,7 @@ export class PurchaseInvoicesService {
     const recibidas = actual.lines.filter((l) => l.received > 0);
     if (recibidas.length) {
       throw new BadRequestException(
-        `Ya recibiste ${recibidas.length} línea(s) de esta factura: corregir las líneas dejaría esas compras colgando. Anulá la factura y cargala de nuevo.`,
+        `Ya recibiste ${recibidas.length} línea(s) de esta factura: corregir las líneas dejaría esas compras colgando. Deshacé esas recepciones ("Deshacer recepción", en cada línea) y después corregila.`,
       );
     }
     await this.validarReferencias(organizationId, dto);
@@ -248,8 +248,11 @@ export class PurchaseInvoicesService {
     if (f.voidedAt) throw new BadRequestException('Esa factura ya estaba anulada');
     const recibidas = f.lines.filter((l) => l.received > 0);
     if (recibidas.length) {
+      // ⚠️ Este mensaje mandaba a "Compras de filamento", que es una puerta
+      // CERRADA: un gasto nacido de una factura no se toca desde ahí. Un
+      // mensaje que manda a una puerta cerrada es peor que no tener mensaje.
       throw new BadRequestException(
-        'Esta factura tiene mercadería recibida: esas compras ya están en el inventario. Corregilas desde Compras de filamento.',
+        `Esta factura tiene ${recibidas.length} línea(s) con mercadería recibida. Deshacé esas recepciones ("Deshacer recepción", en cada línea) y después anulala.`,
       );
     }
     await this.prisma.purchaseInvoice.update({
@@ -266,7 +269,9 @@ export class PurchaseInvoicesService {
       throw new BadRequestException('Tiene abonos: anulala en vez de borrarla.');
     }
     if (f.lines.some((l) => l.received > 0)) {
-      throw new BadRequestException('Tiene mercadería recibida: no se borra.');
+      throw new BadRequestException(
+        'Tiene mercadería recibida: deshacé esas recepciones ("Deshacer recepción", en cada línea) y después borrala.',
+      );
     }
     await this.prisma.purchaseInvoice.delete({ where: { id } });
     return { ok: true };
@@ -416,6 +421,80 @@ export class PurchaseInvoicesService {
     return this.get(organizationId, id);
   }
 
+  /**
+   * DESHACER LA ÚLTIMA RECEPCIÓN de una línea: **el inverso exacto de
+   * `receive()`**.
+   *
+   * ⚠️ Es la SALIDA del callejón. Un gasto nacido de una factura no se toca
+   * desde Gastos, y una línea ya recibida no se puede corregir ni anular: sin
+   * esta puerta, una recepción mal cargada quedaba congelada para siempre y los
+   * cuatro mensajes de error se mandaban unos a otros en círculo.
+   *
+   * ⚠️ **No es un borrado libre.** Cada recepción creó UN gasto con su
+   * cantidad; esto borra **ese** gasto y baja `received` en **esa misma**
+   * cantidad. Si no aparece el gasto, corta: bajar `received` a ciegas dejaría
+   * la línea pidiendo de nuevo mercadería que sí llegó, y volver a recibirla
+   * cargaría el filamento dos veces.
+   *
+   * ⚠️ **No mueve la caja.** Ese gasto nunca movió plata (la plata son los
+   * abonos, y el gasto nació marcado con su línea justamente para no contarla
+   * dos veces): borrarlo tampoco puede moverla. Fijado con número clavado en el
+   * spec.
+   *
+   * ⚠️ **La ficha que nació al recibir NO se borra**: puede estar ya en una
+   * cotización o en un pedido. Lo que vuelve atrás es la compra. Y la línea
+   * conserva su enlace a esa ficha, así que volver a recibirla la reusa en vez
+   * de crear una duplicada.
+   */
+  async unreceive(organizationId: string, id: string, lineId: string) {
+    const f = await this.mia(organizationId, id);
+    if (f.voidedAt) {
+      throw new BadRequestException('La factura está anulada: no hay recepciones que deshacer.');
+    }
+
+    const linea = f.lines.find((l) => l.id === lineId);
+    if (!linea) throw new NotFoundException('Esa línea no es de esta factura');
+    if (linea.received <= 0) {
+      throw new BadRequestException('De esa línea no llegó nada todavía: no hay nada que deshacer.');
+    }
+
+    // La ÚLTIMA recepción: la más nueva por fecha y, a igualdad, por
+    // `createdAt`. Mismo criterio que el precio del rollo, que también sigue a
+    // la última compra.
+    const gasto = await this.prisma.expense.findFirst({
+      where: { organizationId, purchaseInvoiceLineId: lineId },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    });
+    if (!gasto) {
+      throw new BadRequestException(
+        'Esta línea figura recibida pero no tiene ninguna compra asociada, así que no se sabe cuánto bajar. Hay que revisarla a mano.',
+      );
+    }
+
+    const cantidad = gasto.quantity ?? 0;
+    if (cantidad <= 0 || cantidad > linea.received) {
+      throw new BadRequestException(
+        `La última compra de esta línea dice ${cantidad} y la línea tiene ${linea.received} recibido(s): las cuentas no cierran y deshacer la dejaría peor. Hay que revisarla a mano.`,
+      );
+    }
+
+    // ⚠️ Todo en UNA transacción, igual que al recibir: borrar el gasto sin
+    // bajar `received` deja la línea mintiendo, y bajar `received` sin borrar
+    // el gasto deja la compra duplicada al volver a recibir.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.expense.delete({ where: { id: gasto.id } });
+      await tx.purchaseInvoiceLine.update({
+        where: { id: lineId },
+        data: { received: linea.received - cantidad },
+      });
+    });
+
+    // Fuera de la transacción: el precio del rollo tiene que volver al de la
+    // compra ANTERIOR, y para eso la que se borró ya no puede existir.
+    await this.expenses.recalcularPrecioDelRollo(organizationId, gasto.materialId);
+    return this.get(organizationId, id);
+  }
+
   /** Anular un abono: la plata vuelve a la caja y la fila queda en el historial. */
   async voidPayment(organizationId: string, id: string, paymentId: string, dto: PurchaseVoidDto) {
     await this.mia(organizationId, id);
@@ -497,6 +576,21 @@ export class PurchaseInvoicesController {
     @Body(new ZodValidationPipe(PurchaseReceiveSchema)) dto: PurchaseReceiveDto,
   ) {
     return this.service.receive(user.organizationId, id, lineId, dto);
+  }
+
+  /**
+   * Deshacer la última recepción. **Sin cuerpo a propósito**: no hay nada que
+   * elegir, se revierte exactamente la recepción que se hizo (su gasto y su
+   * cantidad). Un `quantity` del cliente podría no coincidir con ninguna
+   * recepción real y dejaría `received` contando algo que nunca pasó.
+   */
+  @Post(':id/lines/:lineId/unreceive')
+  unreceive(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('lineId') lineId: string,
+  ) {
+    return this.service.unreceive(user.organizationId, id, lineId);
   }
 
   @Post(':id/payments/:paymentId/void')
