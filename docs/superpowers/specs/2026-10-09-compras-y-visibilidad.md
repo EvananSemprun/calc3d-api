@@ -26,6 +26,8 @@ compra. Cada fase se despliega sola.
 | B2 | Lo que debés por facturas se **muestra al lado del equilibrio, sin entrar en el cálculo**. |
 | B3 | Las entregas atrasadas avisan **en Compras y en el Dashboard**. |
 | B5 | Los proveedores se suman como **tercer bloque de la pantalla Deuda**. |
+| A6 | Un gasto **nacido de una factura no se toca desde Gastos**: se corrige en Compras. |
+| A7 | El Dashboard muestra el mes como **cadena de caja** (venías con X → el mes → te queda Y). El orden en que se "gasta" la plata vieja o nueva **no se implementa**: no cambia ningún número. |
 | C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
 | C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
 | C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
@@ -35,6 +37,29 @@ compra. Cada fase se despliega sola.
 ## Fase 1 — Arreglar lo que está roto
 
 Lo primero porque A1 es un defecto vivo en producción desde el 2026-10-09.
+
+### 1.0 El gasto que nació de una factura se puede romper desde Gastos (A6)
+
+Descubierto el 2026-10-10, al cargar a mano la factura del Cyan (cuesta $25, se
+le pagaron $15). **Es la primera fila de producción que lo toca.**
+
+`Expense.update` y `Expense.remove` **no miran `purchaseInvoiceLineId`**. Editar
+o borrar ese gasto desde Gastos —o desde "editar compra" de filamento, que usa
+los mismos endpoints— deja a la factura mintiendo: `received` sigue en 1 con el
+rollo fuera del inventario, el monto del gasto y el de la línea se contradicen,
+y el precio de cotización se recalcula contra una compra que ya no existe. Nada
+de eso avisa. Es el mismo descuadre que la factura venía a evitar, entrando por
+la puerta de al lado.
+
+- [ ] La API rechaza `update` y `remove` de un gasto con `purchaseInvoiceLineId`,
+      con un mensaje que manda a Compras.
+- [ ] El gasto expone `fromInvoice` y Gastos lo muestra con una marca
+      ("de factura") y sin botones de editar ni borrar. **Hoy el front no sabe
+      que un gasto puede venir de una factura**: no hay ni un campo.
+- [ ] Regresión: editar y borrar uno de esos → 400, y la factura queda intacta.
+      Mutación: quitar la guarda tiene que tumbar los dos tests.
+- [ ] ⚠️ Mientras no exista "des-recibir", esa fila solo se arregla anulando la
+      factura. Que no se pueda romper es lo que importa; corregirla es Fase 2.
 
 ### 1.1 Encargar una impresora que todavía no tenés (A1)
 
@@ -67,6 +92,43 @@ Ya hay **7 gastos con proveedor** cargado y la tabla no lo muestra.
 - [ ] Filtro por proveedor, con las mismas opciones que ya usa el formulario
       (contactos con tipo Proveedor).
 - [ ] ⚠️ Verificar el ancho a 375 px: la tabla ya está justa.
+
+---
+
+### 1.3 El mes del Dashboard no es la caja, y se lee como si lo fuera (A7)
+
+Planteado por el dueño el 2026-10-10: *"la caja muestra que tengo menos 10 de
+saldo"*. Medido en producción ese día, con el filtro en "Este mes":
+
+| En pantalla | Dice | Qué es de verdad |
+|---|---|---|
+| **Resultado de caja** | −61.20 | cobrado de octubre (140.80) − gastos de octubre (202) |
+| **Saldo en caja** | 102.83 | lo que REALMENTE hay, toda la historia |
+
+El −61.20 no es un saldo y **ni siquiera es plata**: ignora los $50 que puso
+Evanan de su bolsillo, ignora los $29.19 que se le devolvieron y cuenta el Cyan
+por los $25 que cuesta en vez de los $15 que salieron. Tres definiciones
+distintas de "octubre" en una sola pantalla. Según la caja de verdad, octubre
+fue **−30.39**: venías con **133.22**, quedan **102.83**.
+
+⚠️ **Lo que NO se hace: cambiar el orden en que se descuenta la plata** (primero
+la de meses anteriores, después la del mes). La plata no tiene mes escrito: si
+los gastos de octubre se cargaran contra el saldo viejo, octubre cerraría en
++140.80 y el gasto desaparecería del mes en que pasó — el número dejaría de
+responder lo único que responde, "¿este mes se pagó solo?". Y el número que
+quedaría es 102.83, que **ya está en pantalla** como Saldo en caja.
+
+- [ ] La cadena, con UNA sola definición (la de Caja): "venías con $133.22 ·
+      octubre −$30.39 · te queda $102.83". El saldo inicial sale de
+      `businessCash(ledger, hasta)`, que ya acepta fecha: falta exponerlo.
+- [ ] "Resultado de caja" pasa a llamarse **"Resultado de la operación"** y su
+      pie dice qué NO incluye (aportes, devoluciones, cuotas). Es la cuenta útil
+      para "¿el taller se paga solo?", pero no es caja.
+- [ ] ⚠️ **El color de alarma es del SALDO, no del mes.** Un mes en rojo con
+      $102.83 en la cuenta no es una emergencia; un saldo en rojo sí.
+- [ ] El gasto de factura cuenta $25 en el resultado de la operación (es lo que
+      cuesta) y $15 en la caja (es lo que salió). Las dos cifras son correctas:
+      lo que no puede es seguir llamándose igual.
 
 ---
 
@@ -205,7 +267,9 @@ Son cambios de **datos en producción**, sin migración.
 
 ## Orden sugerido
 
-1. **Fase 1** — es un bug vivo y un dato que ya cargás y no ves.
+1. **Fase 1** — arranca por **1.0** (la guarda del gasto de factura: ya hay una
+   fila en producción que se puede romper), sigue con el bug de la impresora, el
+   proveedor en Gastos y la cadena de caja del Dashboard.
 2. **Fase 4** — la que más valor agrega: cierra el circuito stock → pedido → inventario.
 3. **Fase 5** — ver lo que debés y lo que no llegó.
 4. **Fase 2** y **3** — precisión de las facturas, cuando el uso real las pida.
