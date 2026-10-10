@@ -29,6 +29,7 @@ compra. Cada fase se despliega sola.
 | A6 | Un gasto **nacido de una factura no se toca desde Gastos**: se corrige en Compras. |
 | A7 | El Dashboard muestra el mes como **cadena de caja** (venías con X → el mes → te queda Y). El orden en que se "gasta" la plata vieja o nueva **no se implementa**: no cambia ningún número. |
 | A8 | "Mostrador vs encargo" tiene que sumar **los abonos de encargos**, no solo las ventas `ENCARGO` del Excel. |
+| A9 | Una recepción se puede **deshacer**: sin eso, la guarda de A6 deja la fila congelada para siempre. |
 | C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
 | C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
 | C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
@@ -162,6 +163,20 @@ usan `paymentRows`. La dona es la única que quedó afuera.
       puede dar 100 % mostrador.
 - [ ] ⚠️ Revisar si el selector "Canal: todos / mostrador / encargos" filtra de
       verdad los abonos o solo las ventas.
+
+### 1.5 Deshacer una recepción (A9)
+
+Apareció al cerrar 1.0, el 2026-10-10: con la guarda puesta, una línea ya
+recibida no se puede corregir por ninguna puerta y los cuatro mensajes de error
+se mandan unos a otros en círculo. No existe "des-recibir".
+
+- [ ] Revertir UNA recepción: borra el gasto que nació de ella y baja
+      `received` en su cantidad, en una transacción; después recalcula el
+      precio del rollo.
+- [ ] ⚠️ **El saldo de caja no se mueve**, con test de número clavado: ese gasto
+      nunca movió plata.
+- [ ] ⚠️ La ficha creada al recibir **no se borra**: puede estar en uso.
+- [ ] El mensaje de anular la factura deja de mandar a una puerta cerrada.
 
 ---
 

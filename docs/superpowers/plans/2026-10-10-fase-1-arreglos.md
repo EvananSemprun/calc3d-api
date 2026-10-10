@@ -148,6 +148,50 @@ quedó afuera.
 
 ---
 
+## Tarea 6 — Deshacer una recepción (la salida del callejón)
+
+**Por qué.** La Tarea 1 cerró bien el agujero, pero dejó una pared: con la
+guarda puesta, una línea YA RECIBIDA no se puede corregir **por ninguna
+puerta**, y los mensajes de error se mandan unos a otros en círculo.
+
+```
+Gastos          → "se corrige desde Compras"
+Factura/editar  → "anulá la factura y cargala de nuevo"
+Factura/anular  → "corregilas desde Compras de filamento"  ← lo que cerró la Tarea 1
+Factura/borrar  → "tiene mercadería recibida: no se borra"
+```
+
+El gasto del Cyan, que está en producción, hoy queda congelado para siempre. La
+guarda sin esta salida no es protección: es una pared.
+
+**Qué se construye:** revertir UNA recepción. Cada recepción creó un `Expense`
+con su cantidad; deshacerla borra **ese** gasto y baja `received` en esa misma
+cantidad. Es el inverso exacto de `receive()`, no un borrado libre.
+
+- [ ] `POST /purchase-invoices/:id/lines/:lineId/unreceive`: en **una sola
+      transacción**, borra el gasto de la última recepción de esa línea y baja
+      `received` en su cantidad. Después, fuera de la transacción,
+      `recalcularPrecioDelRollo` — el precio tiene que volver al de la compra
+      anterior, no quedarse en el de una que ya no existe.
+- [ ] Guardas: nada que deshacer si `received === 0`; factura anulada, no; la
+      organización se filtra como en el resto del módulo.
+- [ ] ⚠️ **No mueve la caja, y eso necesita su test con número clavado.** Ese
+      gasto nació de una factura, así que nunca movió plata: borrarlo tampoco
+      puede moverla. El saldo tiene que quedar **idéntico** antes y después. Si
+      cambia, se rompió la invariante de no contar dos veces.
+- [ ] ⚠️ **La ficha que nació al recibir NO se borra.** Puede estar ya en uso en
+      una cotización o en un pedido. Se queda; lo que vuelve atrás es la compra.
+- [ ] Romper el círculo de mensajes: el de anular la factura tiene que decir
+      "primero deshacé las recepciones", que ahora sí existe. Un mensaje que
+      manda a una puerta cerrada es peor que no tener mensaje.
+- [ ] Pantalla: en Compras, por línea recibida, "Deshacer recepción" con
+      confirmación que diga qué va a pasar (el rollo sale del inventario).
+- [ ] Mutación: que `unreceive` no baje `received`, o que borre el gasto sin
+      bajarlo, tiene que tumbar un test. Restaurar desde `cp`.
+- [ ] `git commit`.
+
+---
+
 ## Cierre de la fase
 
 - [ ] `pnpm -r lint` y `pnpm -r test` en los dos repos, **leyendo la salida**
