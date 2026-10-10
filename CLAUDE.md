@@ -415,6 +415,16 @@ en el repo web: se sobrescribe al sincronizar.
     y a propósito. Regresión: `sale.spec.ts` (shared) y `sales.controller.spec.ts`.
     En el panel "Pedidos" se llama **Encargos** (solo texto: rutas `/orders` y
     modelo `Order` siguen igual).
+    - ⚠️ **Consecuencia: contar encargos por `Sale.kind` es ciego desde el
+      2026-08-24** (la última venta `ENCARGO` importada). Lo que mide el canal
+      de hoy son los **abonos**. Ya mordió dos veces: el "vendido" de una
+      campaña (2026-10-02, daba $0 en todas) y la dona "Mostrador vs encargo"
+      del Dashboard (2026-10-10, decía 100 % mostrador ocultando el 81 % que
+      entró por 4 abonos). El reparto vive ahora en **`shared/calc/channels.ts`**
+      (`repartoPorCanal(ventas, abonos)`, shared 0.36.0, 8 tests): encargos =
+      ventas `ENCARGO` + abonos, mostrador = ventas `COUNTER`, y el total da
+      ventas + abonos clavado — **los abonos nunca se convierten en `Sale`**.
+      Si aparece una tercera pantalla que compare canales, usa esa función.
   - **Re-sincronización del Excel** (`prisma/sincronizar-excel.mjs`): los
     `import-*.mjs` son de carga INICIAL y fallan si ya hay datos; este compara
     contra la base y escribe **solo la diferencia**, así que se corre cada vez

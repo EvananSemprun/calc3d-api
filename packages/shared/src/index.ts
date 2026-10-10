@@ -22,6 +22,7 @@ export * from './calc/production';
 export * from './calc/order';
 export * from './calc/product';
 export * from './calc/campaign';
+export * from './calc/channels';
 export * from './calc/money';
 export * from './calc/format';
 export { SHARED_VERSION } from './version';
