@@ -1,4 +1,8 @@
-import { PurchaseInvoiceLineSchema, PurchaseReceiveSchema } from './api';
+import {
+  PurchaseInvoiceLineSchema,
+  PurchaseInvoicePaymentSchema,
+  PurchaseReceiveSchema,
+} from './api';
 
 /**
  * ⚠️ **"Algo que todavía no tenés" tiene que decir QUÉ es.**
@@ -138,5 +142,67 @@ describe('PurchaseReceiveSchema: el precio real de la entrega', () => {
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect('amount' in r.data).toBe(false);
+  });
+});
+
+/**
+ * ⚠️ **UN ABONO TOMADO DEL SALDO A FAVOR NO SALE DE NINGÚN BOLSILLO.**
+ *
+ * Esa plata ya salió el día que pagaste de más. Por eso el abono dice **de qué
+ * factura** sale el saldo (`tomadoDeFacturaId`) y **no puede** traer contraparte
+ * ni cuenta: con una contraparte, la Caja lo contaría como aporte y le quedaría
+ * debiendo plata que nunca puso; con una cuenta, diría que salió de un banco
+ * del que no salió nada.
+ */
+describe('PurchaseInvoicePaymentSchema: el abono tomado del saldo a favor', () => {
+  const base = { date: '2026-10-10', amount: 15 };
+
+  it('un abono normal sigue entrando igual, sin decir nada del saldo', () => {
+    const r = PurchaseInvoicePaymentSchema.safeParse(base);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.tomadoDeFacturaId ?? null).toBeNull();
+  });
+
+  it('con la factura de origen se acepta', () => {
+    const r = PurchaseInvoicePaymentSchema.safeParse({ ...base, tomadoDeFacturaId: 'f-vieja' });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.tomadoDeFacturaId).toBe('f-vieja');
+  });
+
+  it('un abono normal SÍ puede decir quién puso la plata', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({ ...base, counterpartyId: 'cp-1', accountId: 'cu-1' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('tomado del saldo Y con contraparte se RECHAZA', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({
+        ...base,
+        tomadoDeFacturaId: 'f-vieja',
+        counterpartyId: 'cp-1',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('tomado del saldo Y con cuenta se RECHAZA', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({
+        ...base,
+        tomadoDeFacturaId: 'f-vieja',
+        accountId: 'cu-1',
+      }).success,
+    ).toBe(false);
+  });
+
+  /** El monto sigue siendo obligatorio y positivo: tomar $0 no es tomar nada. */
+  it('un monto de 0 se rechaza igual que en un abono normal', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({ ...base, amount: 0, tomadoDeFacturaId: 'f-vieja' })
+        .success,
+    ).toBe(false);
   });
 });

@@ -63,7 +63,17 @@ const ordenar = (filas: Record<string, unknown>[], orderBy: unknown) => {
 /** Lo que recibe una consulta del mock. Tiparlo evita un `any` por llamada. */
 type Consulta = { where: Record<string, unknown>; orderBy?: unknown };
 
-function makePrisma(factura?: Record<string, unknown>, gastos: Record<string, unknown>[] = []) {
+/**
+ * `otras` son las DEMÁS facturas del mock, las que no se está tocando. Hacen
+ * falta desde el saldo a favor: para saber cuánto tiene a favor un proveedor hay
+ * que mirar TODAS sus facturas, y la de otra organización tiene que no estar.
+ */
+function makePrisma(
+  factura?: Record<string, unknown>,
+  gastos: Record<string, unknown>[] = [],
+  otras: Record<string, unknown>[] = [],
+) {
+  const todas = [...(factura ? [factura] : []), ...otras];
   const tabla = (filas: Record<string, unknown>[]) => ({
     findFirst: jest.fn(({ where }: any) => Promise.resolve(filas.find((f) => coincide(f, where)) ?? null)),
   });
@@ -82,9 +92,11 @@ function makePrisma(factura?: Record<string, unknown>, gastos: Record<string, un
       // organización no se alcanza. Devolverla siempre hacía pasar los tests de
       // aislamiento con y sin el filtro por organización.
       findFirst: jest.fn(({ where }: Consulta) =>
-        Promise.resolve(factura && coincide(factura, where) ? factura : null),
+        Promise.resolve(todas.find((f) => coincide(f, where)) ?? null),
       ),
-      findMany: jest.fn(() => Promise.resolve([])),
+      findMany: jest.fn(({ where }: Consulta) =>
+        Promise.resolve(todas.filter((f) => coincide(f, where))),
+      ),
       create: jest.fn(({ data }: any) =>
         Promise.resolve({
           ...FACTURA_VACIA,
@@ -124,7 +136,42 @@ function makePrisma(factura?: Record<string, unknown>, gastos: Record<string, un
         return Promise.resolve({});
       }),
     },
-    purchaseInvoicePayment: { findFirst: jest.fn(() => Promise.resolve(null)), create: jest.fn(), update: jest.fn() },
+    purchaseInvoicePayment: {
+      findFirst: jest.fn(() => Promise.resolve(null)),
+      create: jest.fn(),
+      update: jest.fn(),
+      /**
+       * ⚠️ Los abonos salen de las MISMAS facturas del mock, no de una lista
+       * escrita al lado: así no pueden contradecirse, igual que en la base. Y
+       * modela los filtros del servicio, incluido el anidado
+       * (`invoice: { voidedAt: null }`), porque son reglas: la factura de destino
+       * anulada devuelve el saldo.
+       *
+       * ⚠️ El abono ANULADO **sí sale** de acá, con su `voidedAt`: esa regla la
+       * decide el motor, no el `where`. Filtrarlo en los dos lados dejaba la
+       * guarda del motor sin efecto.
+       */
+      findMany: jest.fn(({ where }: Consulta) =>
+        Promise.resolve(
+          todas
+            .flatMap((f) =>
+              ((f.payments ?? []) as Record<string, unknown>[]).map(
+                (p): Record<string, unknown> => ({ ...p, factura: f }),
+              ),
+            )
+            .filter((p) => {
+              const f = p.factura as Record<string, unknown>;
+              if (where.organizationId && (p.organizationId ?? f.organizationId) !== where.organizationId)
+                return false;
+              if (where.voidedAt === null && p.voidedAt != null) return false;
+              if (where.tomadoDeFacturaId && p.tomadoDeFacturaId == null) return false;
+              if ((where.invoice as { voidedAt?: null } | undefined)?.voidedAt === null && f.voidedAt != null)
+                return false;
+              return true;
+            }),
+        ),
+      ),
+    },
   };
 }
 
@@ -1304,5 +1351,297 @@ describe('PurchaseInvoicesService — deshacer no mueve la caja', () => {
 
     expect(businessCash(conMarca).balance).toBe(25);
     expect(businessCash(sinMarca).balance).toBe(0); // 40 − 15 − 25
+  });
+});
+
+/**
+ * SALDO A FAVOR CON EL PROVEEDOR, DE PUNTA A PUNTA.
+ *
+ * Pagaste $100 de una factura de $85. Esos $15 **no son un costo de esa
+ * compra**: son plata tuya que el proveedor te debe, y se usan descontándolos
+ * del próximo pedido.
+ *
+ * ⚠️ **El saldo se DERIVA: Σ pagado de más − Σ aplicado.** Lo único que se
+ * guarda es de qué factura sale cada abono que lo usa. Por eso ninguno de estos
+ * tests lee un total almacenado: todos preguntan de nuevo.
+ */
+describe('PurchaseInvoicesService — el saldo a favor', () => {
+  /** La vieja: pedido de $85 y abonos por $100. Deja $15 a favor. */
+  const vieja = (abonos: Record<string, unknown>[] = [], over: Record<string, unknown> = {}) => ({
+    ...FACTURA_VACIA,
+    id: 'f-vieja',
+    supplier: { id: 'prov-mio', name: 'StratoFill' },
+    supplierId: 'prov-mio',
+    lines: [linea({ id: 'l-vieja', quantity: 1, unitPrice: 85 })],
+    payments: [
+      {
+        id: 'ab-real',
+        organizationId: ORG,
+        date: new Date('2026-10-05'),
+        amount: 100,
+        counterpartyId: null,
+        counterparty: null,
+        accountId: null,
+        note: null,
+        tomadoDeFacturaId: null,
+        voidedAt: null,
+        voidReason: null,
+      },
+      ...abonos,
+    ],
+    ...over,
+  });
+
+  /** La nueva, del MISMO proveedor: $40 y sin abonar. */
+  const nueva = (abonos: Record<string, unknown>[] = [], over: Record<string, unknown> = {}) => ({
+    ...FACTURA_VACIA,
+    id: 'f-nueva',
+    supplier: { id: 'prov-mio', name: 'StratoFill' },
+    supplierId: 'prov-mio',
+    lines: [linea({ id: 'l-nueva', quantity: 1, unitPrice: 40 })],
+    payments: abonos,
+    ...over,
+  });
+
+  /** Un abono tomado del saldo a favor de `origen`. */
+  const deSaldo = (amount: number, origen: string, over: Record<string, unknown> = {}) => ({
+    id: `ab-saldo-${amount}`,
+    organizationId: ORG,
+    date: new Date('2026-10-08'),
+    amount,
+    counterpartyId: null,
+    counterparty: null,
+    accountId: null,
+    note: null,
+    tomadoDeFacturaId: origen,
+    voidedAt: null,
+    voidReason: null,
+    ...over,
+  });
+
+  it('pagar $100 una factura de $85 deja $15 a favor, enteros', async () => {
+    const f = await servicio(makePrisma(vieja(), [], [nueva()])).get(ORG, 'f-vieja');
+
+    expect(f.total).toBe(85);
+    expect(f.pagado).toBe(100);
+    expect(f.saldo).toBe(0);
+    expect(f.aFavor).toBe(15);
+    expect(f.aFavorDisponible).toBe(15);
+  });
+
+  it('usar $6 en la factura nueva deja $9 disponibles y el sobrepago sigue en $15', async () => {
+    const p = makePrisma(vieja(), [], [nueva([deSaldo(6, 'f-vieja')])]);
+
+    const v = await servicio(p).get(ORG, 'f-vieja');
+    expect(v.aFavor).toBe(15); // el HECHO no se mueve
+    expect(v.aFavorDisponible).toBe(9);
+
+    // Y en la nueva ese abono SÍ cuenta como pagado: el proveedor lo reconoce.
+    const n2 = await servicio(makePrisma(nueva([deSaldo(6, 'f-vieja')]), [], [vieja()])).get(
+      ORG,
+      'f-nueva',
+    );
+    expect(n2.pagado).toBe(6);
+    expect(n2.saldo).toBe(34);
+  });
+
+  /** ⚠️ Anular el abono DEVUELVE el saldo: si no, la plata queda atrapada. */
+  it('anular el abono devuelve el saldo: vuelve a haber $15', async () => {
+    const p = makePrisma(
+      vieja(),
+      [],
+      [nueva([deSaldo(6, 'f-vieja', { voidedAt: new Date('2026-10-09') })])],
+    );
+
+    expect((await servicio(p).get(ORG, 'f-vieja')).aFavorDisponible).toBe(15);
+  });
+
+  /**
+   * ⚠️ Y anular la factura de DESTINO también lo devuelve: sus abonos dejan de
+   * contar en todas partes (en Caja, en Deuda), así que ese saldo no se gastó.
+   * Es la guarda que se escapa si el filtro mira solo el abono.
+   */
+  it('anular la factura de destino también devuelve el saldo', async () => {
+    const p = makePrisma(
+      vieja(),
+      [],
+      [nueva([deSaldo(6, 'f-vieja')], { voidedAt: new Date('2026-10-09') })],
+    );
+
+    expect((await servicio(p).get(ORG, 'f-vieja')).aFavorDisponible).toBe(15);
+  });
+
+  it('el saldo gastado entero deja la factura en 0 disponible', async () => {
+    const p = makePrisma(vieja(), [], [nueva([deSaldo(15, 'f-vieja')])]);
+
+    expect((await servicio(p).get(ORG, 'f-vieja')).aFavorDisponible).toBe(0);
+  });
+
+  // ---------- usarlo ----------
+
+  const abono = { date: '2026-10-10', amount: 10 };
+
+  it('abonar tomando del saldo guarda de qué factura sale', async () => {
+    const p = makePrisma(nueva(), [], [vieja()]);
+
+    await servicio(p).addPayment(ORG, 'f-nueva', {
+      ...abono,
+      tomadoDeFacturaId: 'f-vieja',
+    } as never);
+
+    expect(p.purchaseInvoicePayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ tomadoDeFacturaId: 'f-vieja' }) }),
+    );
+  });
+
+  it('un abono normal sigue entrando sin decir nada del saldo', async () => {
+    const p = makePrisma(nueva(), [], [vieja()]);
+
+    await servicio(p).addPayment(ORG, 'f-nueva', abono as never);
+
+    expect(p.purchaseInvoicePayment.create.mock.calls[0][0].data.tomadoDeFacturaId).toBeNull();
+  });
+
+  /**
+   * ⚠️ **Los mensajes se afirman uno por uno.** Un
+   * `rejects.toBeInstanceOf(BadRequestException)` pelado no distingue qué guarda
+   * saltó: quitar una dejaría el test verde porque el caso cae en la siguiente y
+   * da 400 por otro motivo. Ya pasó en este módulo.
+   */
+  it('NO se puede usar más saldo del que hay, y el error dice cuánto hay', async () => {
+    const p = makePrisma(nueva(), [], [vieja()]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-nueva', {
+        ...abono,
+        amount: 15.01,
+        tomadoDeFacturaId: 'f-vieja',
+      } as never),
+    ).rejects.toThrow(/saldo a favor.*15/i);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  it('…y tomarlo EXACTO sí se puede: el límite es inclusivo', async () => {
+    const p = makePrisma(nueva(), [], [vieja()]);
+
+    await servicio(p).addPayment(ORG, 'f-nueva', {
+      ...abono,
+      amount: 15,
+      tomadoDeFacturaId: 'f-vieja',
+    } as never);
+
+    expect(p.purchaseInvoicePayment.create).toHaveBeenCalled();
+  });
+
+  it('el saldo ya gastado no se puede reusar', async () => {
+    const p = makePrisma(nueva([deSaldo(9, 'f-vieja')]), [], [vieja()]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-nueva', {
+        ...abono,
+        amount: 6.01,
+        tomadoDeFacturaId: 'f-vieja',
+      } as never),
+    ).rejects.toThrow(/saldo a favor.*6/i);
+  });
+
+  it('NO se puede usar el saldo de OTRO proveedor', async () => {
+    const deOtro = vieja([], {
+      id: 'f-de-otro',
+      supplier: { id: 'prov-otro', name: 'Filaven' },
+      supplierId: 'prov-otro',
+    });
+    const p = makePrisma(nueva(), [], [deOtro]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-nueva', { ...abono, tomadoDeFacturaId: 'f-de-otro' } as never),
+    ).rejects.toThrow(/otro proveedor/i);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  it('una factura SIN proveedor anotado no puede dar ni recibir saldo', async () => {
+    const anonima = vieja([], { id: 'f-anonima', supplier: null, supplierId: null });
+
+    await expect(
+      servicio(makePrisma(nueva(), [], [anonima])).addPayment(ORG, 'f-nueva', {
+        ...abono,
+        tomadoDeFacturaId: 'f-anonima',
+      } as never),
+    ).rejects.toThrow(/proveedor anotado/i);
+
+    const sinProveedor = nueva([], { id: 'f-nueva', supplier: null, supplierId: null });
+    await expect(
+      servicio(makePrisma(sinProveedor, [], [vieja()])).addPayment(ORG, 'f-nueva', {
+        ...abono,
+        tomadoDeFacturaId: 'f-vieja',
+      } as never),
+    ).rejects.toThrow(/proveedor anotado/i);
+  });
+
+  it('una factura ANULADA no presta su saldo', async () => {
+    const anulada = vieja([], { voidedAt: new Date('2026-10-06'), voidReason: 'mal cargada' });
+    const p = makePrisma(nueva(), [], [anulada]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-nueva', { ...abono, tomadoDeFacturaId: 'f-vieja' } as never),
+    ).rejects.toThrow(/anulada/i);
+  });
+
+  it('una factura no se paga con su propio saldo a favor', async () => {
+    const p = makePrisma(vieja(), [], [nueva()]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-vieja', {
+        ...abono,
+        amount: 5,
+        tomadoDeFacturaId: 'f-vieja',
+      } as never),
+    ).rejects.toThrow(/su propio saldo/i);
+  });
+
+  /**
+   * AISLAMIENTO. El id de la factura de origen viaja en el body: con el de otro
+   * negocio, su sobrepago financiaría un abono de acá — plata inventada, y el
+   * nombre de su proveedor saldría a la vista.
+   *
+   * ⚠️ La pertenencia se cierra **por construcción**: el origen tiene que estar
+   * en la lista de la organización. Consultarlo por id contra la base reabriría
+   * el IDOR.
+   */
+  it('el saldo a favor de OTRA organización no existe para esta', async () => {
+    const ajena = vieja([], { id: 'f-ajena', organizationId: OTRA });
+    const p = makePrisma(nueva(), [], [ajena]);
+
+    await expect(
+      servicio(p).addPayment(ORG, 'f-nueva', { ...abono, tomadoDeFacturaId: 'f-ajena' } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ EL HERMANO ALCANZABLE. Sin esto, el test de arriba pasaría igual con un
+   * servicio que rechazara TODO saldo a favor, o con un mock que no devolviera
+   * ninguna factura.
+   */
+  it('…y la MISMA factura, pedida desde SU organización, sí presta su saldo', async () => {
+    const ajena = vieja([], { id: 'f-ajena', organizationId: OTRA });
+    const destinoAjeno = nueva([], { id: 'f-nueva', organizationId: OTRA });
+    const p = makePrisma(destinoAjeno, [], [ajena]);
+
+    await servicio(p).addPayment(OTRA, 'f-nueva', {
+      ...abono,
+      tomadoDeFacturaId: 'f-ajena',
+    } as never);
+
+    expect(p.purchaseInvoicePayment.create).toHaveBeenCalled();
+  });
+
+  it('la consulta de los abonos tomados va con el organizationId', async () => {
+    const p = makePrisma(vieja(), [], [nueva()]);
+    await servicio(p).get(ORG, 'f-vieja');
+
+    expect(p.purchaseInvoicePayment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+    );
   });
 });

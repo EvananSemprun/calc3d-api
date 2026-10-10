@@ -257,15 +257,43 @@ cambie la factura y el gasto dirían cosas distintas de la misma compra.
 Pagaste $100 de una factura de $85. Esos $15 no son un costo de esa compra: son
 plata tuya que el proveedor te debe.
 
-- [ ] Un abono puede marcarse como **tomado del saldo a favor** de ese
-      proveedor, con la factura de origen.
-- [ ] ⚠️ **Un abono tomado del saldo a favor NO mueve la caja.** Esa plata ya
+- [x] Un abono puede marcarse como **tomado del saldo a favor** de ese
+      proveedor, con la factura de origen (`tomadoDeFacturaId`).
+- [x] ⚠️ **Un abono tomado del saldo a favor NO mueve la caja.** Esa plata ya
       salió cuando pagaste de más. Es la misma clase de doble carga que el gasto
-      nacido de una factura, y necesita su test con número clavado.
-- [ ] El saldo a favor **se deriva**: Σ pagado de más − Σ aplicado. Nada
+      nacido de una factura, y necesita su test con número clavado. (Clavado:
+      **$75,00** antes y después; contrafáctico sin la marca, **$60,00**.)
+- [x] El saldo a favor **se deriva**: Σ pagado de más − Σ aplicado. Nada
       guardado que pueda contradecir a sus partes.
-- [ ] La pantalla del proveedor (o de la factura) muestra cuánto tiene a favor.
-- [ ] No se puede aplicar más saldo del que hay, ni de otro proveedor.
+- [x] La pantalla del proveedor (o de la factura) muestra cuánto tiene a favor.
+- [x] No se puede aplicar más saldo del que hay, ni de otro proveedor.
+
+**Cerrada el 2026-10-10 (shared 0.45.0)**, con migración **aditiva**
+(`20261012100000_saldo_a_favor_del_proveedor`): el único dato nuevo es
+`PurchaseInvoicePayment.tomadoDeFacturaId`, que es un **hecho** (de dónde sale),
+no un total.
+
+- Las dos mitades de la derivación viven en **UN** lugar cada una: "aplicado" en
+  `creditoTomadoPorFactura` (`shared/calc/supplier-credit.ts`) y "disponible" en
+  `invoiceTotals`, que ahora devuelve `aFavorDisponible` además de `aFavor`.
+  `saldoAFavorPorProveedor` **suma**, no recalcula.
+- ⚠️ **`aFavor` y `aFavorDisponible` son dos cosas y hacen falta las dos**:
+  el primero es el HECHO (pagaste $15 de más, no se borra nunca) y el segundo lo
+  que queda. Mostrar solo uno miente de uno de los dos lados.
+- ⚠️ **"Sin proveedor anotado" no es un proveedor**: dos facturas sin nombre
+  pueden ser de dos personas, y juntar sus saldos dejaría pagarle a una con lo
+  que te debe la otra. En Deuda sigue siendo un grupo legítimo; como origen de
+  saldo, no.
+- ⚠️ **Una factura no se paga con su propio saldo a favor**: subiría `pagado`
+  sin que entrara plata, financiado por su propio sobrepago.
+- ⚠️ **El saldo vuelve por DOS puertas**: anular el abono y anular la factura de
+  **destino**. La segunda se escapa si el filtro mira solo el abono.
+- ⚠️ Lo que destapó la verificación por mutación: filtrar lo anulado **en el
+  `where` y en el motor** dejaba la guarda del motor **sin efecto** (borrarla no
+  tumbaba un solo test). Quedó una sola: el `where` trae lo anulado con su
+  `voidedAt` y lo decide el motor, igual que `invoiceTotals` con `pagado`.
+- **Sin endpoint nuevo y sin clave de caché nueva**: cada factura ya viaja con su
+  `aFavorDisponible` y el panel hace el rollup con la misma función pura.
 
 ---
 

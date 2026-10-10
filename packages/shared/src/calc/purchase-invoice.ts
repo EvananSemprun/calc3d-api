@@ -70,6 +70,21 @@ export interface InvoiceTotals {
    * pasó es que pagaste de más o la factura está mal cargada.
    */
   aFavor: number;
+  /**
+   * Lo pagado de más que **todavía se puede usar**: `aFavor − lo ya aplicado` a
+   * otras facturas del mismo proveedor, nunca negativo.
+   *
+   * ⚠️ **`aFavor` y esto son dos cosas distintas y las dos hacen falta.**
+   * `aFavor` es un HECHO del pasado (pagaste $15 de más) y no se mueve nunca;
+   * esto es lo que queda. Mostrar solo el primero diría que el proveedor te
+   * debe plata que ya te devolvió en mercadería; mostrar solo el segundo borraría
+   * del historial que el sobrepago existió.
+   *
+   * ⚠️ **Es la única definición de "disponible"** en el proyecto. El rollup por
+   * proveedor (`saldoAFavorPorProveedor`) y la guarda de "no más de lo que hay"
+   * (`evaluarUsoDeSaldo`) SUMAN este número; no lo recalculan.
+   */
+  aFavorDisponible: number;
   /** Unidades pedidas y recibidas, que NO son plata. */
   pedido: number;
   recibido: number;
@@ -118,15 +133,23 @@ const dineroDeLinea = (l: InvoiceLineInput): Decimal => {
  * ⚠️ Una línea con cantidad o precio negativo se trata como 0: una factura no
  * es el lugar para una devolución, y dejarla pasar restaría del total sin que
  * nadie lo vea.
+ *
+ * ⚠️ **`creditoTomado`** es cuánto del sobrepago de ESTA factura ya se usó en
+ * otras (lo deriva `creditoTomadoPorFactura`, en `supplier-credit.ts`). Entra
+ * como parámetro y no se consulta adentro porque son abonos de **otras**
+ * facturas: esta función solo ve las líneas y los abonos propios. Por defecto 0,
+ * así que una factura vieja sigue dando el mismo número que daba ayer.
  */
 export function invoiceTotals(
   lines: InvoiceLineInput[],
   payments: InvoicePaymentInput[],
+  creditoTomado = 0,
 ): InvoiceTotals {
   const total = lines.reduce((s, l) => s.plus(dineroDeLinea(l)), D(0));
   const pagado = payments.reduce((s, p) => (p.voided ? s : s.plus(Math.max(p.amount, 0))), D(0));
 
   const diferencia = total.minus(pagado);
+  const aFavor = Decimal.max(diferencia.negated(), 0);
   const pedido = lines.reduce((s, l) => s + Math.max(Math.trunc(l.quantity), 0), 0);
   const recibido = lines.reduce((s, l) => s + recibidoDe(l), 0);
 
@@ -134,7 +157,8 @@ export function invoiceTotals(
     total: toCents(total),
     pagado: toCents(pagado),
     saldo: toCents(Decimal.max(diferencia, 0)),
-    aFavor: toCents(Decimal.max(diferencia.negated(), 0)),
+    aFavor: toCents(aFavor),
+    aFavorDisponible: toCents(Decimal.max(aFavor.minus(Math.max(creditoTomado, 0)), 0)),
     pedido,
     recibido,
     porRecibir: pedido - recibido,

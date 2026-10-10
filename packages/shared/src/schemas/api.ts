@@ -957,15 +957,39 @@ export const PurchaseInvoiceUpsertSchema = z.object({
 });
 export type PurchaseInvoiceUpsertDto = z.infer<typeof PurchaseInvoiceUpsertSchema>;
 
-/** Un abono. **Esto es lo que mueve la caja.** */
-export const PurchaseInvoicePaymentSchema = z.object({
-  date: FECHA,
-  amount: z.number().positive('El abono tiene que ser mayor que cero'),
-  /** QUIÉN puso la plata. `null` = la caja del negocio. */
-  counterpartyId: z.string().min(1).optional().nullable(),
-  accountId: z.string().min(1).optional().nullable(),
-  note: z.string().trim().optional().nullable(),
-});
+/**
+ * Un abono. **Esto es lo que mueve la caja** — salvo uno: ver
+ * `tomadoDeFacturaId`.
+ */
+export const PurchaseInvoicePaymentSchema = z
+  .object({
+    date: FECHA,
+    amount: z.number().positive('El abono tiene que ser mayor que cero'),
+    /** QUIÉN puso la plata. `null` = la caja del negocio. */
+    counterpartyId: z.string().min(1).optional().nullable(),
+    accountId: z.string().min(1).optional().nullable(),
+    note: z.string().trim().optional().nullable(),
+    /**
+     * TOMADO DEL SALDO A FAVOR: de qué factura del MISMO proveedor sale.
+     *
+     * ⚠️ Pagaste $100 de una factura de $85: esos $15 son plata tuya que el
+     * proveedor te debe, y así se usan en el próximo pedido. **Este abono NO
+     * mueve la caja**: la plata ya salió al pagar de más.
+     *
+     * El servidor valida que haya saldo, que sea de ESE proveedor y que no sea
+     * la misma factura (`evaluarUsoDeSaldo`): acá no se puede, porque hace falta
+     * el resto de las facturas.
+     */
+    tomadoDeFacturaId: z.string().min(1).optional().nullable(),
+  })
+  .refine(
+    // ⚠️ Un abono tomado del saldo no sale de ningún bolsillo ni de ninguna
+    // cuenta. Con contraparte, la Caja lo contaría como aporte y le quedaría
+    // debiendo plata que nunca puso; con cuenta, diría que salió de un banco del
+    // que no salió nada.
+    (p) => !p.tomadoDeFacturaId || (!p.counterpartyId && !p.accountId),
+    'Un abono tomado del saldo a favor no lo paga nadie ni sale de ninguna cuenta: esa plata ya salió cuando pagaste de más',
+  );
 export type PurchaseInvoicePaymentDto = z.infer<typeof PurchaseInvoicePaymentSchema>;
 
 /** Anular pide motivo: un abono anulado sin explicación es un agujero. */

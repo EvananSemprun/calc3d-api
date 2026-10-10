@@ -86,6 +86,7 @@ describe('invoiceTotals', () => {
       pagado: 0,
       saldo: 0,
       aFavor: 0,
+      aFavorDisponible: 0,
       pedido: 0,
       recibido: 0,
       porRecibir: 0,

@@ -105,6 +105,20 @@ export interface CashLedger {
      * —lo normal— el reparto es exacto.
      */
     filamentShare: number;
+    /**
+     * **TOMADO DEL SALDO A FAVOR** con ese proveedor: no mueve la caja.
+     *
+     * ⚠️ Esa plata ya salió el día que se pagó de más. Usarla después en otra
+     * factura no es plata que sale otra vez: es la misma, reconocida por el
+     * proveedor. Contarla de nuevo es la misma clase de doble carga que el gasto
+     * nacido de una factura, por la otra puerta — y como ahí, lo que la evita es
+     * esta marca.
+     *
+     * ⚠️ Tampoco emite el aporte de la contraparte: si "lo puso" una persona, no
+     * puso nada, y el doble asiento gasto+aporte dejaría al negocio debiéndole
+     * plata que nunca salió de su bolsillo.
+     */
+    fromCredit?: boolean;
     id?: string;
   }[];
   movements: {
@@ -247,6 +261,10 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
   // saldo y deja la deuda.
   for (const a of ledger.purchasePayments) {
     if (!vale(a.date)) continue;
+    // Tomado del saldo a favor: esa plata ya salió al pagar de más. Ver
+    // `fromCredit`. Sale ANTES del prorrateo: no deja ni un asiento, porque no
+    // es un movimiento de plata partido en dos, es ninguno.
+    if (a.fromCredit) continue;
     if (a.payer === 'EXTERNAL_LENDER') continue; // lo del prestamista no toca la caja
     const share = Math.min(Math.max(a.filamentShare, 0), 1);
     const enFilamento = round2(a.amount * share);

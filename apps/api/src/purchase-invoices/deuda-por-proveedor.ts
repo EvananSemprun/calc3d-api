@@ -22,8 +22,18 @@ export interface FacturaParaDeuda {
   voidedAt: string | null;
   /** Lo que falta pagar. Nunca negativo (`invoiceTotals` lo recorta en 0). */
   saldo: number;
-  /** Lo pagado DE MÁS. **No es deuda negativa**: ver abajo. */
-  aFavor: number;
+  /**
+   * Lo pagado de más que **todavía se puede usar**. **No es deuda negativa**:
+   * ver abajo.
+   *
+   * ⚠️ **Es el DISPONIBLE y no `aFavor` a propósito.** Desde el saldo a favor
+   * (fase 3) los dos son números distintos: `aFavor` es el hecho (pagaste $15 de
+   * más, y eso no se borra nunca) y esto es lo que queda sin usar. Esta pantalla
+   * responde "¿cuánto te debe el proveedor?", que es con lo que el dueño decide
+   * si reclamar: sumar el hecho diría que te debe plata que ya te devolvió en
+   * mercadería.
+   */
+  aFavorDisponible: number;
 }
 
 export interface DeudaConProveedor {
@@ -38,9 +48,10 @@ export interface DeudaConProveedor {
    * Lo pagado de más, SUMADO APARTE.
    *
    * ⚠️ **No resta de `total`.** Pagar $10 de más en una factura no cancela $10
-   * de otra: son dos cuentas con el proveedor y compensarlas inventaría un
-   * pago que nunca se hizo. Hasta que exista el saldo a favor (Fase 3) esto se
-   * muestra al lado, no adentro.
+   * de otra por sí solo: son dos cuentas con el proveedor y compensarlas
+   * inventaría un pago que nunca se hizo. Para usarlo hay que **abonarlo**
+   * tomándolo del saldo (fase 3), y entonces los dos números se mueven juntos:
+   * baja lo que tiene a favor y baja la deuda de la factura que se abonó.
    */
   aFavor: number;
   facturasAFavor: number;
@@ -70,7 +81,7 @@ export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedore
     if (f.voidedAt != null) continue;
 
     const saldo = Math.max(f.saldo, 0);
-    const aFavor = Math.max(f.aFavor, 0);
+    const aFavor = Math.max(f.aFavorDisponible, 0);
     // Una factura saldada y sin excedente no tiene nada que contar.
     if (saldo <= 0 && aFavor <= 0) continue;
 

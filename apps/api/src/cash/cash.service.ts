@@ -207,6 +207,11 @@ export class CashService {
         payer: tipoPagador(a, contrapartes),
         refundable: true,
         filamentShare: proporcionDeFilamento(a.invoice.lines),
+        // ⚠️ Tomado del saldo a favor con el proveedor: **no mueve la caja**.
+        // Esa plata ya salió el día que se pagó de más; contarla otra vez es la
+        // misma doble carga que el gasto nacido de una factura, por la otra
+        // puerta. Lo guardado es de qué factura sale; el saldo se deriva.
+        fromCredit: a.tomadoDeFacturaId != null,
       })),
       loanPayments: cuotas.map((c) => ({
         id: c.id,

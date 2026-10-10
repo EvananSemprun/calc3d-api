@@ -558,6 +558,112 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
 });
 
 /**
+ * UN ABONO TOMADO DEL SALDO A FAVOR **NO MUEVE LA CAJA**.
+ *
+ * Pagaste $100 de una factura de $85: los $15 de más **ya salieron de la caja**
+ * ese día, con el abono de $100. Usarlos después en otra factura no es plata que
+ * sale otra vez — es la misma plata, reconocida por el proveedor. Contarla de
+ * nuevo es exactamente la misma clase de doble carga que el gasto nacido de una
+ * factura, por la otra puerta.
+ *
+ * Números PUESTOS A MANO, con su contrafáctico: sin la marca el saldo daría
+ * otro número, para que el $75 no sea un número vacío.
+ */
+describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
+  const conSobrepago = () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 175 }];
+    // El abono que pagó $100 por una factura de $85: la plata salió ACÁ.
+    l.purchasePayments = [
+      { date: '2026-10-02', amount: 100, payer: null, refundable: true, filamentShare: 1 },
+    ];
+    return l;
+  };
+
+  it('el sobrepago salió de la caja una vez: 175 − 100 = 75', () => {
+    expect(businessCash(conSobrepago()).balance).toBe(75);
+  });
+
+  it('usar esos $15 en otra factura NO vuelve a bajar el saldo: sigue en 75', () => {
+    const l = conSobrepago();
+    l.purchasePayments.push({
+      date: '2026-10-08',
+      amount: 15,
+      payer: null,
+      refundable: true,
+      filamentShare: 1,
+      // ⚠️ Esto es lo que le dice a la caja que esa plata ya se contó.
+      fromCredit: true,
+    });
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(100); // el abono de verdad, no 115
+    expect(c.balance).toBe(75); // ⚠️ si fueran 60, es la doble carga
+  });
+
+  /**
+   * EL CONTRAFÁCTICO: el MISMO abono sin la marca sí baja la caja, que es lo
+   * que pasa con un abono de verdad. Sin este test, un `businessCash` que
+   * ignorara todos los abonos pasaría el de arriba.
+   */
+  it('el mismo abono SIN la marca sí baja el saldo a 60', () => {
+    const l = conSobrepago();
+    l.purchasePayments.push({
+      date: '2026-10-08',
+      amount: 15,
+      payer: null,
+      refundable: true,
+      filamentShare: 1,
+    });
+
+    expect(businessCash(l).balance).toBe(60);
+  });
+
+  /**
+   * ⚠️ Y tampoco emite el aporte. Si el abono del saldo lo "pone" una
+   * contraparte, no puso nada: el doble asiento gasto+aporte dejaría una deuda
+   * con ella por plata que nunca salió de su bolsillo.
+   */
+  it('ni genera aporte ni deuda, aunque venga con contraparte', () => {
+    const l = vacio();
+    l.purchasePayments = [
+      {
+        date: '2026-10-08',
+        amount: 15,
+        payer: 'OWNER',
+        refundable: true,
+        filamentShare: 1,
+        fromCredit: true,
+      },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.contributionsRefundable).toBe(0);
+    expect(c.filament).toBe(0);
+    expect(c.balance).toBe(0);
+  });
+
+  it('no deja ningún asiento en el desglose: no es un movimiento de plata', () => {
+    const l = vacio();
+    l.purchasePayments = [
+      {
+        date: '2026-10-08',
+        amount: 15,
+        payer: null,
+        refundable: true,
+        filamentShare: 1,
+        fromCredit: true,
+        id: 'ab-saldo',
+      },
+    ];
+
+    expect(cashEntries(l).filter((e) => e.id === 'ab-saldo')).toEqual([]);
+  });
+});
+
+/**
  * LA CADENA DE CAJA: "venías con $X · este mes $Y · te queda $Z".
  *
  * Nació de un bug con nombre y apellido (2026-10-10): el Dashboard mostraba

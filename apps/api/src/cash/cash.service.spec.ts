@@ -1876,3 +1876,90 @@ describe('Las puertas de escritura de caja rechazan un día que no existe', () =
     });
   });
 });
+
+/**
+ * UN ABONO TOMADO DEL SALDO A FAVOR **NO MUEVE LA CAJA**.
+ *
+ * Pagaste $100 de una factura de $85: esos $15 de más **ya salieron** ese día,
+ * con el abono de $100. Usarlos después en otra factura del mismo proveedor no
+ * es plata que sale otra vez — es la misma plata, reconocida por él. Contarla de
+ * nuevo es exactamente la misma clase de doble carga que el gasto nacido de una
+ * factura, por la otra puerta.
+ *
+ * ⚠️ Lo que se prueba acá, y no en el motor, es la **traducción**:
+ * `tomadoDeFacturaId` (la columna) → `fromCredit` (lo que el motor entiende).
+ * El motor ya tiene sus propios tests; lo que se puede perder es el mapeo.
+ *
+ * Números **CLAVADOS**, con su contrafáctico: $75,00 con la marca y $60,00 sin
+ * ella, para que el 75 no sea un número vacío.
+ */
+describe('CashService.summary — el abono tomado del saldo a favor', () => {
+  /** Una venta de $175 y el abono de $100 que pagó la factura de $85. */
+  const tablas = (abonosDeCompra: Record<string, unknown>[]): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [],
+    cashReconciliation: [],
+    loan: [],
+    expense: [],
+    loanPayment: [],
+    ownerMovement: [],
+    debtApplication: [],
+    payment: [],
+    sale: [
+      {
+        id: 'v1', organizationId: ORG, date: new Date('2026-10-01'),
+        amount: '175', kind: 'COUNTER', note: null, source: 'MANUAL',
+      },
+    ],
+    purchaseInvoicePayment: abonosDeCompra,
+  });
+
+  /** Un abono de factura, con las líneas que su `include` trae. */
+  const abono = (
+    id: string,
+    amount: string,
+    tomadoDeFacturaId: string | null,
+  ): Record<string, unknown> => ({
+    id,
+    organizationId: ORG,
+    date: new Date('2026-10-05'),
+    amount,
+    counterpartyId: null,
+    tomadoDeFacturaId,
+    voidedAt: null,
+    // Todo filamento: así el prorrateo no reparte nada y el número es limpio.
+    invoice: { lines: [{ quantity: 1, unitPrice: '85', printerId: null }] },
+  });
+
+  it('el abono de verdad baja el saldo: 175 − 100 = 75', async () => {
+    const r = await servicioFalso(tablas([abono('ab-real', '100', null)])).summary(ORG);
+
+    expect(r.balance.filament).toBe(100);
+    expect(r.balance.balance).toBe(75);
+  });
+
+  it('usar esos $15 en otra factura NO vuelve a bajar el saldo: sigue en 75', async () => {
+    const r = await servicioFalso(
+      tablas([abono('ab-real', '100', null), abono('ab-saldo', '15', 'f-vieja')]),
+    ).summary(ORG);
+
+    expect(r.balance.filament).toBe(100); // el abono de verdad, no 115
+    expect(r.balance.balance).toBe(75); // ⚠️ si fueran 60, es la doble carga
+  });
+
+  /**
+   * ⚠️ EL CONTRAFÁCTICO: el MISMO abono sin la marca sí baja la caja, que es lo
+   * que pasa con un abono de verdad. Sin este test, un `summary` que ignorara
+   * todos los abonos de compra pasaría el de arriba.
+   */
+  it('el mismo abono SIN la marca sí baja el saldo a 60', async () => {
+    const r = await servicioFalso(
+      tablas([abono('ab-real', '100', null), abono('ab-saldo', '15', null)]),
+    ).summary(ORG);
+
+    expect(r.balance.balance).toBe(60);
+  });
+});

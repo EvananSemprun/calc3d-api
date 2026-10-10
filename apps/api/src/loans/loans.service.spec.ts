@@ -84,6 +84,24 @@ const facturasFalsas = (facturas: Record<string, unknown>[] = []) =>
           ),
         ),
       },
+      /**
+       * Los abonos tomados del saldo a favor salen de las MISMAS facturas, no de
+       * una lista escrita al lado: si no, el "aplicado" de este mock podría
+       * contradecir a los abonos que las facturas muestran.
+       */
+      purchaseInvoicePayment: {
+        findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+          Promise.resolve(
+            facturas
+              .filter((f) => (f as Record<string, unknown>).organizationId === where.organizationId)
+              .filter((f) => (f as Record<string, unknown>).voidedAt == null)
+              .flatMap((f) => ((f as Record<string, unknown>).payments ?? []) as Record<string, unknown>[])
+              // El anulado NO se filtra acá: lo decide el motor, igual que en el
+              // servicio de verdad.
+              .filter((a) => a.tomadoDeFacturaId != null),
+          ),
+        ),
+      },
     } as never,
     {} as never,
   );
@@ -126,7 +144,12 @@ const lineaCruda = (quantity: number, unitPrice: number) => ({
   expenses: [] as Record<string, unknown>[],
 });
 
-const abonoCrudo = (amount: number, voidedAt: Date | null = null) => ({
+const abonoCrudo = (
+  amount: number,
+  voidedAt: Date | null = null,
+  /** De qué factura sale el saldo a favor que lo financió. `null` = plata. */
+  tomadoDeFacturaId: string | null = null,
+) => ({
   id: `abono-${amount}`,
   date: d('2026-10-09'),
   amount,
@@ -134,6 +157,7 @@ const abonoCrudo = (amount: number, voidedAt: Date | null = null) => ({
   counterparty: null,
   accountId: null,
   note: null,
+  tomadoDeFacturaId,
   voidedAt,
   voidReason: null,
 });
@@ -493,5 +517,56 @@ describe('LoansService — el tercer bloque es de ESTA organización', () => {
     const r = await service(baseFalsa(), cashFalso(), facturas).overview(OTRA);
 
     expect(r.suppliers.total).toBe(999);
+  });
+});
+
+/**
+ * ⚠️ **CON EL SALDO A FAVOR EN USO, LA PANTALLA TIENE QUE SEGUIR CUADRANDO.**
+ *
+ * Hasta la fase 3 "aplicado" era siempre cero, así que lo pagado de más y lo
+ * disponible eran el mismo número y nadie notaba la diferencia. Ahora se mueven
+ * por separado, y los dos bloques tienen que moverse JUNTOS: lo que baja de
+ * "tiene a favor" aparece como deuda cancelada en la otra factura.
+ */
+describe('LoansService — el saldo a favor usado', () => {
+  /** f1 debe 40; f2 es de 85 y se pagó con 100, así que dejó 15 a favor. */
+  const conSaldoUsado = (usado: number) =>
+    facturasFalsas([
+      facturaCruda({
+        id: 'f1',
+        lines: [lineaCruda(1, 40)],
+        payments: usado ? [abonoCrudo(usado, null, 'f2')] : [],
+      }),
+      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 85)], payments: [abonoCrudo(100)] }),
+    ]);
+
+  it('sin usarlo: debe 40 y tiene 15 a favor', async () => {
+    const r = await service(baseFalsa(), cashFalso(), conSaldoUsado(0)).overview(ORG);
+
+    expect(r.suppliers.total).toBe(40);
+    expect(r.suppliers.aFavor).toBe(15);
+    expect(r.totals.proveedores).toBe(40);
+  });
+
+  it('usando $6: la deuda baja a 34 y lo que tiene a favor baja a 9', async () => {
+    const r = await service(baseFalsa(), cashFalso(), conSaldoUsado(6)).overview(ORG);
+
+    expect(r.suppliers.total).toBe(34); // 40 − 6
+    expect(r.suppliers.aFavor).toBe(9); // 15 − 6
+    expect(r.totals.proveedores).toBe(34);
+  });
+
+  /**
+   * ⚠️ Y el total de la pantalla sigue siendo la **suma de sus tres bloques**.
+   * Un total que no cuadra con lo que tiene debajo se lee como la verdad, porque
+   * nadie suma a ojo.
+   */
+  it('el total sigue siendo la suma de los tres bloques', async () => {
+    const r = await service(baseFalsa(), cashFalso(), conSaldoUsado(6)).overview(ORG);
+
+    expect(r.totals.total).toBe(
+      r.totals.prestamista + r.totals.propietario + r.totals.proveedores,
+    );
+    expect(r.totals.total).toBe(134); // 0 prestamista + 100 propietario + 34 proveedores
   });
 });

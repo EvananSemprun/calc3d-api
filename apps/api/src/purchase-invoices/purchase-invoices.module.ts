@@ -14,6 +14,8 @@ import {
 } from '@nestjs/common';
 import {
   PurchaseInvoicePaymentSchema,
+  creditoTomadoPorFactura,
+  evaluarUsoDeSaldo,
   PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
   PurchaseVoidSchema,
@@ -24,6 +26,8 @@ import {
   type PurchaseInvoiceUpsertDto,
   type PurchaseReceiveDto,
   type PurchaseVoidDto,
+  type FacturaConSaldoAFavor,
+  type MotivoDeRechazo,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
@@ -104,7 +108,7 @@ export class PurchaseInvoicesService {
    * Nada de esto se guarda. Un total almacenado se desincroniza de sus partes
    * el día que alguien corrige una línea.
    */
-  private serializar(f: FacturaCruda) {
+  private serializar(f: FacturaCruda, creditoTomado = 0) {
     const lines = f.lines.map((l) => ({
       id: l.id,
       materialId: l.materialId,
@@ -147,6 +151,8 @@ export class PurchaseInvoicesService {
       counterparty: p.counterparty,
       accountId: p.accountId,
       note: p.note,
+      /** De qué factura salió el saldo a favor que lo financió. */
+      tomadoDeFacturaId: p.tomadoDeFacturaId,
       voidedAt: p.voidedAt?.toISOString() ?? null,
       voidReason: p.voidReason,
     }));
@@ -163,6 +169,7 @@ export class PurchaseInvoicesService {
         recepciones: l.recepciones,
       })),
       payments.map((p) => ({ amount: p.amount, voided: p.voidedAt != null })),
+      creditoTomado,
     );
 
     return {
@@ -182,12 +189,59 @@ export class PurchaseInvoicesService {
     };
   }
 
+  /**
+   * CUÁNTO SE TOMÓ DEL SALDO A FAVOR DE CADA FACTURA, por id de factura.
+   *
+   * Es la mitad "aplicado" de la derivación `Σ pagado de más − Σ aplicado`. Son
+   * abonos de **otras** facturas, así que `invoiceTotals` no puede verlos solo:
+   * se los pasa quien llama.
+   *
+   * ⚠️ Los filtros del `where` son reglas, no optimizaciones:
+   * - `organizationId`: el saldo a favor de otro negocio no existe para este.
+   * - `tomadoDeFacturaId: { not: null }`: un abono de plata de verdad no toma
+   *   saldo de nadie.
+   * - `invoice: { voidedAt: null }`: anular la factura de **destino** devuelve el
+   *   saldo. Sus abonos dejan de contar en Caja y en Deuda, así que ese saldo no
+   *   se gastó — es el mismo `where` que usa `cash.service.ts`.
+   *
+   * ⚠️ **Lo ANULADO no se filtra acá: viaja y lo decide el motor.** Es la misma
+   * regla que `invoiceTotals` aplica a `pagado` (`p.voided`), y tiene que vivir
+   * en UN solo lado: filtrándolo también en el `where`, la guarda del motor
+   * quedaba sin efecto —la verificación por mutación lo destapó: borrarla no
+   * tumbaba un solo test— y eso es peor que no tenerla, porque parece puesta.
+   */
+  private async creditosTomados(organizationId: string) {
+    const abonos = await this.prisma.purchaseInvoicePayment.findMany({
+      where: {
+        organizationId,
+        tomadoDeFacturaId: { not: null },
+        invoice: { voidedAt: null },
+      },
+      select: { amount: true, tomadoDeFacturaId: true, voidedAt: true },
+    });
+    return creditoTomadoPorFactura(
+      abonos.map((a) => ({
+        amount: n(a.amount),
+        tomadoDeFacturaId: a.tomadoDeFacturaId,
+        voided: a.voidedAt != null,
+      })),
+    );
+  }
+
   async list(organizationId: string) {
-    return (await this.todas(organizationId)).map((f) => this.serializar(f));
+    const [facturas, tomado] = await Promise.all([
+      this.todas(organizationId),
+      this.creditosTomados(organizationId),
+    ]);
+    return facturas.map((f) => this.serializar(f, tomado[f.id] ?? 0));
   }
 
   async get(organizationId: string, id: string) {
-    return this.serializar(await this.mia(organizationId, id));
+    const [f, tomado] = await Promise.all([
+      this.mia(organizationId, id),
+      this.creditosTomados(organizationId),
+    ]);
+    return this.serializar(f, tomado[f.id] ?? 0);
   }
 
   private async mia(organizationId: string, id: string) {
@@ -348,6 +402,10 @@ export class PurchaseInvoicesService {
       if (!cuenta) throw new NotFoundException('No existe esa cuenta');
     }
 
+    if (dto.tomadoDeFacturaId) {
+      await this.validarSaldoAFavor(organizationId, f, dto.tomadoDeFacturaId, dto.amount);
+    }
+
     await this.prisma.purchaseInvoicePayment.create({
       data: {
         invoiceId: id,
@@ -357,9 +415,66 @@ export class PurchaseInvoicesService {
         counterpartyId: dto.counterpartyId || null,
         accountId: dto.accountId || null,
         note: dto.note || null,
+        // ⚠️ De qué factura sale el saldo. **Este abono no mueve la caja**: esa
+        // plata ya salió al pagar de más (ver `fromCredit` en `cash.ts`).
+        tomadoDeFacturaId: dto.tomadoDeFacturaId || null,
       },
     });
     return this.get(organizationId, id);
+  }
+
+  /**
+   * ¿SE PUEDE TOMAR ESE SALDO A FAVOR? Si no, corta **antes de escribir**.
+   *
+   * ⚠️ **La pertenencia se cierra por CONSTRUCCIÓN.** La lista que se le pasa al
+   * motor es `list(organizationId)`: ser miembro de ella ES la autorización.
+   * Buscar la factura de origen por id contra la base reabriría el IDOR —ese
+   * camino no sabe de qué negocio es ni de qué proveedor— y es el mismo cierre
+   * que usa `applyPayment` con su obligación destino.
+   *
+   * ⚠️ El motor devuelve el motivo y **no lanza**; el mensaje se escribe acá,
+   * porque necesita la plata formateada y tiene que decir **qué hacer**. Un
+   * mensaje que no dice cuánto hay deja al dueño probando montos a ciegas.
+   */
+  private async validarSaldoAFavor(
+    organizationId: string,
+    destino: FacturaCruda,
+    origenId: string,
+    monto: number,
+  ) {
+    const facturas = await this.list(organizationId);
+    const paraElMotor: FacturaConSaldoAFavor[] = facturas.map((f) => ({
+      id: f.id,
+      supplierId: f.supplier?.id ?? null,
+      supplierName: f.supplier?.name ?? null,
+      voidedAt: f.voidedAt,
+      aFavor: f.aFavor,
+      aFavorDisponible: f.aFavorDisponible,
+    }));
+
+    const { rechazo, disponible } = evaluarUsoDeSaldo(
+      paraElMotor,
+      { id: destino.id, supplierId: destino.supplierId },
+      origenId,
+      monto,
+    );
+    if (!rechazo) return;
+
+    // Una factura que no está en la lista de esta organización simplemente no
+    // existe acá: 404, igual que un proveedor o una ficha de otro negocio.
+    if (rechazo === 'ORIGEN_DESCONOCIDO') throw new NotFoundException('No existe esa factura');
+
+    const mensajes: Record<Exclude<MotivoDeRechazo, 'ORIGEN_DESCONOCIDO'>, string> = {
+      MISMA_FACTURA:
+        'Una factura no se paga con su propio saldo a favor: ese sobrepago ya es de ella. Elegí otra factura del mismo proveedor.',
+      ORIGEN_ANULADO: 'Esa factura está anulada, así que su saldo a favor ya no existe.',
+      SIN_PROVEEDOR:
+        'Para usar un saldo a favor las dos facturas necesitan el proveedor anotado: sin nombre no hay cómo saber que es la misma persona. Anotalo y volvé a intentar.',
+      OTRO_PROVEEDOR:
+        'Ese saldo a favor es de otro proveedor: lo que te debe uno no le sirve al otro.',
+      SIN_SALDO: `Esa factura tiene ${disponible.toFixed(2)} de saldo a favor y estás usando ${monto.toFixed(2)}. Bajá el monto o abonalo con plata.`,
+    };
+    throw new BadRequestException(mensajes[rechazo]);
   }
 
   // ---------- recepción ----------

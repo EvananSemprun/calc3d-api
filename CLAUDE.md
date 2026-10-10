@@ -944,10 +944,13 @@ en el repo web: se sobrescribe al sincronizar.
       vuelve a deberse (lo resuelve `invoiceTotals`, no se reimplementa). Cada
       una con su test y su mutación: contar las anuladas tumba 4 tests, contar
       los abonos anulados como pagados tumba 2.
-    - ⚠️ **Lo pagado DE MÁS no es deuda negativa y NO se compensa**: no resta
-      del grupo de ese proveedor ni del de otro. Viaja aparte (`aFavor`,
-      `facturasAFavor`) y la pantalla lo dice con esas palabras, hasta que
-      exista el saldo a favor (Fase 3). Mutación: restarlo tumba 4 tests.
+    - ⚠️ **Lo pagado DE MÁS no es deuda negativa y NO se compensa SOLO**: no
+      resta del grupo de ese proveedor ni del de otro. Viaja aparte (`aFavor`,
+      `facturasAFavor`) y la pantalla lo dice con esas palabras. Mutación:
+      restarlo tumba 4 tests. ⚠️ **Desde el saldo a favor (shared 0.45.0) ese
+      `aFavor` es lo DISPONIBLE** —`FacturaParaDeuda` recibe
+      `aFavorDisponible`—, y la forma de usarlo es abonar una factura del mismo
+      proveedor tomándola del saldo: ahí bajan los dos números juntos.
     - Una factura **sin proveedor anotado** se debe igual, en su propio grupo
       ("Sin proveedor anotado"). Esconderla por no tener nombre dejaría al
       bloque diciendo menos de lo que el negocio debe.
@@ -961,11 +964,11 @@ en el repo web: se sobrescribe al sincronizar.
       organización); sin él pasaría igual con el bloque devolviendo vacío
       siempre. Tests: `loans.service.spec.ts` (24) y
       `deuda-por-proveedor.spec.ts` (12).
-    - ⚠️ **Pendiente (no es mío de arreglar):** `useInvoiceMutation` de
-      `calc3d-web/apps/web/src/features/purchases/api.ts` **no invalida
-      `['loans']`**, así que abonar una factura con Deuda abierta en otra
-      pestaña deja el bloque viejo hasta el próximo montaje. Es una línea en esa
-      lista de claves.
+    - ✅ **Cerrado:** `useInvoiceMutation` de
+      `calc3d-web/apps/web/src/features/purchases/api.ts` ya invalida
+      `['loans']`, así que abonar una factura refresca el bloque de proveedores
+      aunque Deuda esté abierta en otra pestaña. (La nota quedó marcada como
+      pendiente de más; verificado el 2026-10-10.)
   - **Facturas de compra (2026-10-09, shared 0.32.0)** (`purchase-invoices/`):
     lo pedido, lo abonado y lo recibido, para **filamento e impresoras**.
     ⚠️ **LA REGLA: los abonos son la PLATA; la recepción es la MERCADERÍA.** Un
@@ -1182,6 +1185,105 @@ en el repo web: se sobrescribe al sincronizar.
         dos `new Date()` locales cruza mal el borde del día al oeste de UTC.
       - **No hay endpoint nuevo**: el panel ya recibe las facturas con sus
         líneas en `GET /purchase-invoices`.
+    - ⚠️ **SALDO A FAVOR CON EL PROVEEDOR** (2026-10-10, shared 0.45.0,
+      migración `20261012100000_saldo_a_favor_del_proveedor`, **aditiva**).
+      Pagaste $100 de una factura de $85: esos $15 **no son un costo de esa
+      compra**, son plata tuya que el proveedor te debe. Hasta acá la app los
+      mostraba (`aFavor`) y **no se podían usar**.
+      - **Cómo se usa:** un abono puede marcarse como **tomado del saldo a
+        favor**, diciendo **de qué factura** sale
+        (`PurchaseInvoicePayment.tomadoDeFacturaId`, el único dato nuevo). En la
+        factura de destino cuenta como `pagado` normal —el proveedor lo
+        reconoce— así que su saldo baja.
+      - ⚠️ **UN ABONO TOMADO DEL SALDO NO MUEVE LA CAJA.** Esa plata ya salió el
+        día que se pagó de más; contarla otra vez es la misma doble carga que el
+        gasto nacido de una factura, por la otra puerta. El motor lo saltea por
+        la marca **`fromCredit`** de `purchasePayments` (`calc/cash.ts`), y
+        `cash.service.ts` la traduce desde `tomadoDeFacturaId`. **Sale ANTES del
+        prorrateo**: no deja ni un asiento en el desglose, porque no es un
+        movimiento partido en dos, es ninguno. Tampoco emite el aporte de la
+        contraparte: si "lo puso" una persona, no puso nada, y el doble asiento
+        gasto+aporte dejaría al negocio debiéndole plata que nunca salió de su
+        bolsillo. Número **clavado** en `cash/cash.service.spec.ts`: **$75,00**
+        con la marca, con su contrafáctico **$60,00** sin ella (175 cobrados −
+        100 abonados, y los 15 del saldo que no vuelven a salir).
+      - ⚠️ **EL SALDO SE DERIVA: Σ pagado de más − Σ aplicado.** Nada guardado
+        que pueda contradecir a sus partes — la regla central del dominio, la
+        misma del saldo de un préstamo, del saldo de un pedido y de la deuda con
+        una contraparte. Y cada mitad vive en **UN** solo lugar:
+        - "aplicado" → **`creditoTomadoPorFactura`** (`calc/supplier-credit.ts`),
+          que agrupa los abonos por su factura de origen.
+        - "disponible" → **`invoiceTotals(lines, payments, creditoTomado = 0)`**,
+          que ya era la única definición de "pagado de más" y ahora devuelve
+          además **`aFavorDisponible`** (`aFavor − aplicado`, nunca negativo).
+          El default 0 deja a toda factura vieja dando el mismo número que daba
+          ayer.
+        - `saldoAFavorPorProveedor` **SUMA** lo que esa función devolvió; no lo
+          recalcula. Con dos cuentas para el mismo número, el día que una cambie
+          la pantalla del proveedor y la de la factura dirían distinto.
+      - ⚠️ **`aFavor` y `aFavorDisponible` son dos cosas y las dos hacen falta.**
+        `aFavor` es un HECHO del pasado (pagaste $15 de más) y no se mueve
+        nunca; el otro es lo que queda. Mostrar solo el primero diría que el
+        proveedor te debe plata que ya te devolvió en mercadería; solo el
+        segundo borraría del historial que el sobrepago existió.
+      - **Las guardas, en `evaluarUsoDeSaldo`** (puro, devuelve el motivo y **no
+        lanza**; el mensaje lo escribe `validarSaldoAFavor` en el servicio,
+        porque necesita la plata formateada y tiene que decir qué hacer):
+        `SIN_SALDO` (no más de lo que hay; el límite es **inclusivo**),
+        `OTRO_PROVEEDOR`, `SIN_PROVEEDOR`, `ORIGEN_ANULADO`, `MISMA_FACTURA` y
+        `ORIGEN_DESCONOCIDO` (→ **404**).
+      - ⚠️ **"Sin proveedor anotado" NO es un proveedor.** En Deuda es un grupo
+        legítimo —la plata se debe igual—, pero acá juntar dos facturas sin
+        nombre dejaría pagarle a uno con lo que te debe otro. Para usar ese
+        saldo hay que anotar primero de quién es.
+      - ⚠️ **La pertenencia se cierra por CONSTRUCCIÓN**: la lista que recibe el
+        motor es `list(organizationId)`, y ser miembro de ella ES la
+        autorización. Consultar la factura de origen por id contra la base
+        reabriría el IDOR (ese camino no sabe de qué negocio es ni de qué
+        proveedor) — el mismo cierre que `applyPayment` con su obligación
+        destino. El test de aislamiento va **con su hermano alcanzable**.
+      - ⚠️ **Un abono tomado del saldo no lleva contraparte ni cuenta**: el
+        `refine` de `PurchaseInvoicePaymentSchema` las **prohíbe** con
+        `tomadoDeFacturaId`. Con contraparte, Caja lo contaría como aporte; con
+        cuenta, diría que salió de un banco del que no salió nada.
+      - **Devolver el saldo tiene DOS puertas y las dos cuentan**: anular el
+        abono, y anular la **factura de destino** (sus abonos dejan de contar en
+        Caja y en Deuda, así que ese saldo no se gastó). La segunda es el filtro
+        `invoice: { voidedAt: null }` del `where`; la primera la decide el motor.
+        ⚠️ **Lo anulado NO se filtra en el `where`**: viaja con su `voidedAt` y
+        lo resuelve `creditoTomadoPorFactura`, igual que `invoiceTotals` con
+        `pagado`. Filtrándolo en los dos lados la guarda del motor quedaba **sin
+        efecto** —la verificación por mutación lo destapó: borrarla no tumbaba un
+        solo test— y eso es peor que no tenerla, porque parece puesta.
+      - **Deuda sigue cuadrando**: `FacturaParaDeuda` ya no recibe `aFavor` sino
+        **`aFavorDisponible`** (la interfaz declara solo lo que la función lee,
+        para que nadie piense que mira el hecho). El bloque de proveedores
+        responde "¿cuánto te debe?", que es con lo que el dueño decide si
+        reclamar. Los dos números se mueven **juntos**: usar $6 baja la deuda de
+        la otra factura a 34 y el saldo a favor a 9, y `totals.total` sigue
+        siendo la suma de los tres bloques (test en `loans.service.spec.ts`).
+        El **punto de equilibrio no cambia**: sale del mismo `totals.proveedores`
+        y su test lo sigue fijando.
+      - **No hay endpoint nuevo**: `GET /purchase-invoices` ya trae cada factura
+        con su `aFavorDisponible`, y el rollup por proveedor lo hace el panel con
+        la MISMA función pura (`saldoAFavorPorProveedor`). Una consulta aparte
+        sería una segunda cuenta para el mismo número.
+      - `ON DELETE RESTRICT` en `tomadoDeFacturaId`: borrar la factura que
+        financió un abono dejaría ese abono sin respaldo y el saldo saldría de la
+        nada.
+      - Regresión: `calc/supplier-credit.spec.ts` (shared, 23 con números a
+        mano), `calc/cash.spec.ts` (5), `schemas/purchase-invoice.spec.ts` (6),
+        `purchase-invoices.service.spec.ts` (19), `cash.service.spec.ts` (3),
+        `deuda-por-proveedor.spec.ts` (3) y `loans.service.spec.ts` (3). Las
+        mutaciones y cuántos tumba cada una: que el abono del saldo SÍ mueva la
+        caja **3 shared + 1 api**; aplicar más saldo del que hay **2 + 2**;
+        aplicar saldo de otro proveedor **1 + 1**; contar el abono anulado
+        **1 + 1**; no filtrar la factura de destino anulada **1 api**; el
+        `creditosTomados` sin `organizationId` **2 api**; `invoiceTotals`
+        ignorando lo aplicado **3 + 4**; el schema aceptando contraparte con el
+        saldo **2 shared**; ignorar `SIN_PROVEEDOR` **1 + 1**; ignorar
+        `ORIGEN_ANULADO` **2 + 1**; ignorar `MISMA_FACTURA` **1 + 1**; Deuda
+        mostrando 0 a favor **8 api**.
     - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md` y
       `docs/superpowers/plans/2026-10-10-fases-4-y-5.md` (tarea 2).
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,

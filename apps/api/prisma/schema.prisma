@@ -1341,6 +1341,10 @@ model PurchaseInvoice {
   lines    PurchaseInvoiceLine[]
   payments PurchaseInvoicePayment[]
 
+  /// Los abonos (de OTRAS facturas) que se financiaron con el saldo a favor
+  /// que dejó ESTA. Es el lado inverso de `tomadoDeFactura`.
+  saldoAFavorUsado PurchaseInvoicePayment[] @relation("SaldoAFavorUsado")
+
   source    RecordSource @default(MANUAL)
   createdAt DateTime     @default(now())
 
@@ -1410,6 +1414,23 @@ model PurchaseInvoicePayment {
   account   CashAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
   accountId String?
 
+  /// ⚠️ **TOMADO DEL SALDO A FAVOR**: de qué factura del MISMO proveedor sale.
+  ///
+  /// Pagaste $100 de una factura de $85: esos $15 son plata tuya que el
+  /// proveedor te debe, y así se usan en el próximo pedido. **Este abono NO
+  /// mueve la caja** (`fromCredit` en el motor): la plata ya salió al pagar de
+  /// más, y contarla otra vez es la misma doble carga que el gasto nacido de
+  /// una factura, por la otra puerta.
+  ///
+  /// ⚠️ Lo único que se guarda es **de dónde sale**, que es un hecho. El saldo
+  /// a favor se DERIVA (Σ pagado de más − Σ aplicado): nada almacenado que
+  /// pueda contradecir a sus partes.
+  ///
+  /// `onDelete: Restrict`: borrar la factura que financió un abono dejaría ese
+  /// abono sin respaldo y el saldo a favor saldría de la nada.
+  tomadoDeFactura   PurchaseInvoice? @relation("SaldoAFavorUsado", fields: [tomadoDeFacturaId], references: [id], onDelete: Restrict)
+  tomadoDeFacturaId String?
+
   note String?
 
   /// Anular, no borrar: igual que las cuotas del préstamo.
@@ -1420,4 +1441,5 @@ model PurchaseInvoicePayment {
 
   @@index([invoiceId])
   @@index([organizationId])
+  @@index([tomadoDeFacturaId])
 }

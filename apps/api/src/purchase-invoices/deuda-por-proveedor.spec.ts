@@ -15,7 +15,7 @@ const factura = (over: Partial<FacturaParaDeuda> = {}): FacturaParaDeuda => ({
   supplier: PROV_A,
   voidedAt: null,
   saldo: 0,
-  aFavor: 0,
+  aFavorDisponible: 0,
   ...over,
 });
 
@@ -97,7 +97,7 @@ describe('deudaPorProveedor — una factura ANULADA no se debe', () => {
 
   it('tampoco cuenta lo pagado de más de una factura anulada', () => {
     const r = deudaPorProveedor([
-      factura({ supplier: PROV_A, aFavor: 80, voidedAt: '2026-10-09T00:00:00.000Z' }),
+      factura({ supplier: PROV_A, aFavorDisponible: 80, voidedAt: '2026-10-09T00:00:00.000Z' }),
     ]);
 
     expect(r.aFavor).toBe(0);
@@ -109,7 +109,7 @@ describe('deudaPorProveedor — lo pagado de más NO se compensa', () => {
   it('no resta de lo que debés en otra factura del MISMO proveedor', () => {
     const r = deudaPorProveedor([
       factura({ supplier: PROV_A, saldo: 50 }),
-      factura({ supplier: PROV_A, aFavor: 20 }),
+      factura({ supplier: PROV_A, aFavorDisponible: 20 }),
     ]);
 
     // ⚠️ Le debés 50, no 30. Los 20 de más son otra cuenta: restarlos
@@ -123,7 +123,7 @@ describe('deudaPorProveedor — lo pagado de más NO se compensa', () => {
 
   it('tampoco resta de lo que debés a OTRO proveedor', () => {
     const r = deudaPorProveedor([
-      factura({ supplier: PROV_A, aFavor: 1000 }),
+      factura({ supplier: PROV_A, aFavorDisponible: 1000 }),
       factura({ supplier: PROV_B, saldo: 60 }),
     ]);
 
@@ -134,7 +134,7 @@ describe('deudaPorProveedor — lo pagado de más NO se compensa', () => {
   });
 
   it('un proveedor SOLO con pagado de más se muestra, con deuda en cero', () => {
-    const r = deudaPorProveedor([factura({ supplier: PROV_A, aFavor: 15 })]);
+    const r = deudaPorProveedor([factura({ supplier: PROV_A, aFavorDisponible: 15 })]);
 
     // Hay algo que decirle, pero no es deuda: sin esto, el dato desaparece.
     expect(r.groups).toHaveLength(1);
@@ -155,5 +155,52 @@ describe('deudaPorProveedor — centavos', () => {
 
     expect(r.total).toBe(0.6);
     expect(r.groups[0].total).toBe(0.6);
+  });
+});
+
+/**
+ * ⚠️ **LO QUE DEUDA MUESTRA A FAVOR ES LO QUE TODAVÍA SE PUEDE USAR**, no lo que
+ * se pagó de más alguna vez.
+ *
+ * Desde la fase 3 el saldo a favor **se usa**: un abono de otra factura del
+ * mismo proveedor puede estar financiado con él. `aFavor` sigue siendo el HECHO
+ * (pagaste $15 de más y eso no se borra) y `aFavorDisponible` lo que queda. Si
+ * esta pantalla sumara el hecho, diría que el proveedor te debe plata que ya te
+ * devolvió en mercadería — y es el número que el dueño usa para decidir si
+ * reclamar.
+ */
+describe('deudaPorProveedor — a favor es lo DISPONIBLE, no lo pagado de más', () => {
+  it('usar el saldo lo baja en la pantalla: pagó 15 de más, usó 6, quedan 9', () => {
+    const r = deudaPorProveedor([factura({ supplier: PROV_A, aFavorDisponible: 9 })]);
+
+    expect(r.aFavor).toBe(9);
+    expect(r.groups[0].aFavor).toBe(9);
+    expect(r.groups[0].facturasAFavor).toBe(1);
+  });
+
+  it('el saldo gastado entero desaparece del bloque, aunque el sobrepago siga ahí', () => {
+    // La factura sigue diciendo que pagaste 15 de más; disponible ya es 0.
+    const r = deudaPorProveedor([factura({ supplier: PROV_A, aFavorDisponible: 0 })]);
+
+    // No hay nada que decirle al proveedor: ni le debés ni te debe.
+    expect(r.aFavor).toBe(0);
+    expect(r.groups).toHaveLength(0);
+  });
+
+  /**
+   * Y el total de la pantalla sigue siendo la suma de sus partes: usar saldo
+   * baja el saldo de la factura de destino (lo hace `invoiceTotals`, no esto),
+   * así que los dos números se mueven juntos y ninguno se inventa.
+   */
+  it('deuda y saldo a favor siguen siendo DOS cuentas: ni se compensan ni se pierden', () => {
+    const r = deudaPorProveedor([
+      factura({ supplier: PROV_A, saldo: 34 }),
+      factura({ supplier: PROV_A, aFavorDisponible: 9 }),
+    ]);
+
+    expect(r.groups[0].total).toBe(34);
+    expect(r.groups[0].aFavor).toBe(9);
+    expect(r.total).toBe(34);
+    expect(r.total).toBe(r.groups.reduce((s, g) => s + g.total, 0));
   });
 });
