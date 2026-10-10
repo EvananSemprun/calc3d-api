@@ -28,6 +28,7 @@ compra. Cada fase se despliega sola.
 | B5 | Los proveedores se suman como **tercer bloque de la pantalla Deuda**. |
 | A6 | Un gasto **nacido de una factura no se toca desde Gastos**: se corrige en Compras. |
 | A7 | El Dashboard muestra el mes como **cadena de caja** (venías con X → el mes → te queda Y). El orden en que se "gasta" la plata vieja o nueva **no se implementa**: no cambia ningún número. |
+| A8 | "Mostrador vs encargo" tiene que sumar **los abonos de encargos**, no solo las ventas `ENCARGO` del Excel. |
 | C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
 | C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
 | C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
@@ -129,6 +130,38 @@ quedaría es 102.83, que **ya está en pantalla** como Saldo en caja.
 - [ ] El gasto de factura cuenta $25 en el resultado de la operación (es lo que
       cuesta) y $15 en la caja (es lo que salió). Las dos cifras son correctas:
       lo que no puede es seguir llamándose igual.
+
+### 1.4 "Mostrador vs encargo" no muestra los encargos (A8)
+
+Reportado por el dueño el 2026-10-10 con el filtro en octubre: la dona dice
+**100 % mostrador**. Medido en producción ese mismo día:
+
+| Canal | Octubre | Lo que muestra la dona |
+|---|---|---|
+| Mostrador | $26.75 | **todo** |
+| Encargos | $114.05 (4 abonos) | **nada** |
+
+O sea: **el 81 % de lo que entró en octubre falta** justo en el gráfico cuyo
+único trabajo es comparar los dos canales. Y no falta por poco: dice lo
+contrario de la verdad — que el negocio vive del mostrador, cuando vive de los
+encargos.
+
+**Causa.** La dona se arma con `Sale.kind` solamente. Las 25 ventas `ENCARGO`
+son **totales semanales del Excel** y se cortan el 2026-08-24: desde que la app
+tomó el control, un encargo no genera un `Sale`, genera **abonos** (`Payment`),
+justamente para no contar la plata dos veces. La dona nunca se enteró. El resto
+de la pantalla sí: "Cobrado de encargos", ingresos por día y día de la semana ya
+usan `paymentRows`. La dona es la única que quedó afuera.
+
+- [ ] Encargos = ventas `ENCARGO` (el histórico del Excel) **+ abonos del
+      periodo**. Mostrador = ventas `COUNTER`. Así el total de la dona es
+      exactamente el de "Ventas + Cobrado de encargos".
+- [ ] ⚠️ **No** convertir los abonos en `Sale`: ahí está el doble conteo que
+      la app evita a propósito.
+- [ ] Test del armado con números puestos a mano: un mes solo con abonos no
+      puede dar 100 % mostrador.
+- [ ] ⚠️ Revisar si el selector "Canal: todos / mostrador / encargos" filtra de
+      verdad los abonos o solo las ventas.
 
 ---
 
@@ -269,7 +302,7 @@ Son cambios de **datos en producción**, sin migración.
 
 1. **Fase 1** — arranca por **1.0** (la guarda del gasto de factura: ya hay una
    fila en producción que se puede romper), sigue con el bug de la impresora, el
-   proveedor en Gastos y la cadena de caja del Dashboard.
+   proveedor en Gastos, la cadena de caja del Dashboard y la dona de canales.
 2. **Fase 4** — la que más valor agrega: cierra el circuito stock → pedido → inventario.
 3. **Fase 5** — ver lo que debés y lo que no llegó.
 4. **Fase 2** y **3** — precisión de las facturas, cuando el uso real las pida.
