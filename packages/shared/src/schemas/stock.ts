@@ -165,4 +165,14 @@ export interface FilamentPurchase {
   /** tasa y moneda si el pago fue en bolívares */
   rate: number | null;
   currencyCode: string | null;
+  /**
+   * Nació de una línea de factura de Compras, no de una carga a mano.
+   *
+   * ⚠️ Con esto en `true` la compra **no se corrige ni se borra desde acá**: su
+   * monto y su cantidad son el espejo de la línea recibida, así que tocarla
+   * dejaría a la factura mintiendo y la API la rechaza con un 400. Va en el
+   * contrato y no como tipo del front porque es la pantalla la que tiene que
+   * dejar de ofrecer lo que sabe que va a fallar.
+   */
+  fromInvoice: boolean;
 }

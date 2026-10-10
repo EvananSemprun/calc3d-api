@@ -460,6 +460,47 @@ describe('Compras de filamento', () => {
     expect(c.costPerGram).toBe(0.08);
   });
 
+  /**
+   * La pantalla de Compras de filamento ofrece corregir y borrar, y las dos
+   * cosas pegan a `/expenses`, que rechaza un gasto nacido de una factura. Sin
+   * este campo la pantalla no puede saberlo y ofrece un lápiz que solo sabe
+   * fallar. Van las DOS compras: con una sola, un `fromInvoice` clavado en true
+   * (o en false) pasaría igual.
+   */
+  it('dice cuál compra entró por una factura y cuál se cargó a mano', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      {
+        id: 'e-factura',
+        date: new Date('2026-10-10T00:00:00Z'),
+        amount: '25',
+        quantity: 1,
+        description: 'Compra PLA Cyan',
+        rate: null,
+        currencyCode: null,
+        material: { id: 'm1', name: 'PLA Cyan', rollGrams: 1000 },
+        provider: null,
+        purchaseInvoiceLineId: 'linea-1',
+      },
+      {
+        id: 'e-mano',
+        date: new Date('2026-08-31T00:00:00Z'),
+        amount: '40',
+        quantity: 2,
+        description: 'Compra PLA',
+        rate: null,
+        currencyCode: null,
+        material: { id: 'm2', name: 'PLA Amarillo', rollGrams: 1000 },
+        provider: null,
+        purchaseInvoiceLineId: null,
+      },
+    ]);
+
+    const [deFactura, aMano] = await service(prisma).purchases(ORG);
+    expect(deFactura.fromInvoice).toBe(true);
+    expect(aMano.fromInvoice).toBe(false);
+  });
+
   it('solo trae los gastos ligados a un filamento, de la organización', async () => {
     const prisma = makePrisma();
     await service(prisma).purchases(ORG, '2026-08-01', '2026-08-31');

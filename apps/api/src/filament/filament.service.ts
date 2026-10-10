@@ -110,6 +110,9 @@ export class FilamentService {
         counterpartyId: g.counterpartyId,
         rate: g.rate == null ? null : Number(g.rate),
         currencyCode: g.currencyCode ?? null,
+        // Entró por una factura de Compras: la pantalla no la deja corregir ni
+        // borrar, porque la API rechaza las dos cosas (ver `ExpensesService`).
+        fromInvoice: g.purchaseInvoiceLineId != null,
       };
     });
   }

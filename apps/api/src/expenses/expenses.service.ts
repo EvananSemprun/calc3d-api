@@ -272,6 +272,7 @@ export class ExpensesService {
 
   async update(organizationId: string, id: string, dto: ExpenseUpdateDto) {
     const antes = await this.ensureOwned(organizationId, id);
+    this.noSeTocaDesdeGastos(antes);
     const quien = await this.quienPago(organizationId, dto);
     const proveedor = await this.resolverProveedor(organizationId, dto);
     const gasto = await this.prisma.expense.update({
@@ -308,10 +309,34 @@ export class ExpensesService {
 
   async remove(organizationId: string, id: string) {
     const gasto = await this.ensureOwned(organizationId, id);
+    this.noSeTocaDesdeGastos(gasto);
     await this.prisma.expense.delete({ where: { id } });
     // Borrar la última compra deja el precio congelado en una que ya no existe.
     await this.recalcularPrecioDelRollo(organizationId, gasto.materialId);
     return { ok: true };
+  }
+
+  /**
+   * ⚠️ **UN GASTO NACIDO DE UNA FACTURA NO SE TOCA DESDE GASTOS.**
+   *
+   * Es el espejo de una línea de factura ya recibida: su monto, su cantidad y
+   * su ficha salen de ahí. Corregirlo o borrarlo acá deja a la factura
+   * mintiendo —`received` sigue contando mercadería que ya no tiene gasto, el
+   * monto de la línea y el del gasto se contradicen, y el precio de cotización
+   * del rollo se recalcula contra una compra que ya no existe— y **nada de eso
+   * avisa**. Es el mismo descuadre que la factura venía a evitar, entrando por
+   * la puerta de al lado.
+   *
+   * Va ANTES de cualquier escritura: `resolverProveedor` da de alta un
+   * proveedor al vuelo, así que rechazar después dejaría un contacto nuevo por
+   * una corrección que no se hizo.
+   */
+  private noSeTocaDesdeGastos(gasto: { purchaseInvoiceLineId: string | null }) {
+    if (gasto.purchaseInvoiceLineId) {
+      throw new BadRequestException(
+        'Esta compra entró por una factura: se corrige desde Compras, no desde Gastos.',
+      );
+    }
   }
 
   private async ensureOwned(organizationId: string, id: string) {

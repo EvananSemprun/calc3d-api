@@ -824,6 +824,22 @@ en el repo web: se sobrescribe al sincronizar.
     - El precio del rollo lo recalcula **`ExpensesService`**, inyectado: la
       misma regla que una compra directa. Recalcularlo aparte daría dos
       verdades el día que cambie.
+    - ⚠️ **El gasto que nace de una factura NO se toca desde Gastos**
+      (2026-10-10). `ExpensesService.update`/`remove` miran
+      `purchaseInvoiceLineId` y, si lo tiene, cortan con un **400** que manda a
+      Compras (`noSeTocaDesdeGastos`, antes de cualquier escritura: resolver el
+      proveedor da de alta un contacto al vuelo). Sin eso, corregir o borrar ese
+      gasto desde Gastos —o desde "corregir compra" de filamento, que usa los
+      MISMOS endpoints— dejaba a la factura mintiendo: `received` contando
+      mercadería sin gasto y el precio de cotización recalculado contra una
+      compra que ya no existe. En el front lo delata `fromInvoice` en
+      `FilamentPurchase` (shared 0.33.0) y el `purchaseInvoiceLineId` crudo que
+      ya viaja en `GET /expenses`. Regresión: `expenses.service.spec.ts`
+      (3 rechazos + 2 hermanos alcanzables) y `filament.service.spec.ts`.
+      ⚠️ **Queda un callejón sin salida**: no existe "des-recibir", y
+      `void()` tampoco anula una factura con mercadería recibida, así que esa
+      fila hoy **no se puede corregir por ninguna puerta**. Que no se pueda
+      romper es lo que importa; corregirla es Fase 2.
     - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md`.
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
     `GET /reports/excel.xlsx`, dep **`exceljs`**): el libro completo del negocio

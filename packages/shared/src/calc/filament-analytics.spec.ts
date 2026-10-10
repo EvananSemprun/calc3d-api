@@ -21,6 +21,7 @@ function compra(p: Partial<FilamentPurchase>): FilamentPurchase {
     counterpartyId: null,
     rate: null,
     currencyCode: null,
+    fromInvoice: false,
     ...p,
   };
 }

@@ -745,3 +745,96 @@ describe('ExpensesService — corregir y borrar una compra', () => {
     expect(orden).toEqual([{ date: 'desc' }, { createdAt: 'desc' }]);
   });
 });
+
+/**
+ * EL GASTO QUE NACIÓ DE UNA FACTURA NO SE TOCA DESDE GASTOS.
+ *
+ * Una línea de factura recibida crea un gasto espejo (`purchaseInvoiceLineId`).
+ * Corregirlo o borrarlo desde Gastos —o desde "corregir compra" de filamento,
+ * que usa estos mismos endpoints— deja a la factura mintiendo: `received`
+ * sigue contando mercadería que ya no tiene gasto, el monto de la línea y el
+ * del gasto se contradicen, y el precio de cotización del rollo se recalcula
+ * contra una compra que ya no existe. Nada de eso avisa.
+ */
+describe('ExpensesService — el gasto nacido de una factura', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+  let service: ExpensesService;
+
+  /**
+   * Los dos gastos que hay en la base: uno nació de una factura y el otro se
+   * cargó a mano. Están los DOS a propósito — con uno solo, una guarda que
+   * rechazara todo pasaría igual.
+   */
+  const GASTOS = [
+    { id: 'e-factura', organizationId: ORG, materialId: 'm1', quantity: 1, amount: 25, purchaseInvoiceLineId: 'linea-1' },
+    { id: 'e-mano', organizationId: ORG, materialId: 'm1', quantity: 2, amount: 30, purchaseInvoiceLineId: null },
+  ];
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    conContrapartes(prisma);
+    // `ensureOwned` pregunta por id (sin `select`) y `recalcularPrecioDelRollo`
+    // por material (con `select`). El mock contesta las dos COMO LA BASE,
+    // filtrando por las claves del `where`: devolver siempre la fila pedida
+    // mediría el mock y no el servicio.
+    prisma.expense.findFirst.mockImplementation(({ where, select }: any) =>
+      Promise.resolve(
+        select
+          ? (GASTOS.find(
+              (g) =>
+                g.organizationId === where.organizationId &&
+                g.materialId === where.materialId &&
+                g.quantity > 0,
+            ) ?? null)
+          : (GASTOS.find((g) => coincide(g, where)) ?? null),
+      ),
+    );
+    prisma.expense.update.mockResolvedValue({ id: 'e-mano', materialId: 'm1' });
+    prisma.expense.delete.mockResolvedValue({ id: 'e-mano' });
+    service = new ExpensesService(prisma as any);
+  });
+
+  it('corregirlo desde Gastos → 400 y no escribe NADA', async () => {
+    await expect(service.update(ORG, 'e-factura', { amount: 99 } as any)).rejects.toThrow(
+      BadRequestException,
+    );
+
+    expect(prisma.expense.update).not.toHaveBeenCalled();
+    // El precio del rollo tampoco se mueve: si no se corrigió la compra, no
+    // hay nada que recalcular.
+    expect(prisma.material.updateMany).not.toHaveBeenCalled();
+    // ⚠️ La guarda va ANTES de resolver el proveedor, que da de alta uno al
+    // vuelo: rechazar después dejaría un contacto nuevo por un pedido que no se
+    // hizo.
+    expect(prisma.client.create).not.toHaveBeenCalled();
+  });
+
+  it('el mensaje manda a Compras, sin jerga técnica', async () => {
+    await expect(
+      service.update(ORG, 'e-factura', { amount: 99 } as any),
+    ).rejects.toThrow(/Compras/);
+  });
+
+  it('borrarlo desde Gastos → 400 y la factura queda intacta', async () => {
+    await expect(service.remove(ORG, 'e-factura')).rejects.toThrow(BadRequestException);
+
+    expect(prisma.expense.delete).not.toHaveBeenCalled();
+    expect(prisma.material.updateMany).not.toHaveBeenCalled();
+  });
+
+  // ---- los HERMANOS: Gastos tiene que seguir sirviendo para lo demás ----
+
+  it('un gasto cargado a mano se sigue corrigiendo', async () => {
+    await service.update(ORG, 'e-mano', { amount: 30 } as any);
+
+    expect(prisma.expense.update).toHaveBeenCalledTimes(1);
+    expect(prisma.expense.update.mock.calls[0][0].data).toEqual({ amount: 30 });
+  });
+
+  it('un gasto cargado a mano se sigue borrando', async () => {
+    const res = await service.remove(ORG, 'e-mano');
+
+    expect(prisma.expense.delete).toHaveBeenCalledWith({ where: { id: 'e-mano' } });
+    expect(res).toEqual({ ok: true });
+  });
+});
