@@ -2,6 +2,7 @@ import {
   businessDateKey,
   canCloseMonth,
   daysBetween,
+  monthsBefore,
   isCalendarDay,
   previousDay,
   monthCloseDay,
@@ -257,5 +258,39 @@ describe('daysBetween', () => {
     expect(() => daysBetween('2026-02-30', '2026-10-10')).toThrow();
     expect(() => daysBetween('2026-10-10', '2026-13-01')).toThrow();
     expect(() => daysBetween('', '2026-10-10')).toThrow();
+  });
+});
+
+/**
+ * LA VENTANA DE MESES HACIA ATRÁS (2026-10-10). La usa el promedio por tipo de
+ * filamento para mirar solo los últimos 6 meses.
+ */
+describe('monthsBefore', () => {
+  it('resta meses dejando el mismo día', () => {
+    expect(monthsBefore('2026-10-10', 6)).toBe('2026-04-10');
+    expect(monthsBefore('2026-10-10', 1)).toBe('2026-09-10');
+  });
+
+  it('cruza el año hacia atrás', () => {
+    expect(monthsBefore('2026-03-15', 6)).toBe('2025-09-15');
+    expect(monthsBefore('2026-01-31', 1)).toBe('2025-12-31');
+  });
+
+  it('un día que el mes destino no tiene se RECORTA al último, no se corre al siguiente', () => {
+    // 31 de agosto menos 6 meses es "31 de febrero": `setUTCMonth` lo corre al
+    // 3 de marzo y la ventana arrancaría tres días DESPUÉS de lo pedido,
+    // dejando afuera compras de fin de febrero sin que nadie lo note.
+    expect(monthsBefore('2026-08-31', 6)).toBe('2026-02-28');
+    expect(monthsBefore('2024-08-31', 6)).toBe('2024-02-29');
+    expect(monthsBefore('2026-05-31', 1)).toBe('2026-04-30');
+  });
+
+  it('con 0 meses devuelve el mismo día', () => {
+    expect(monthsBefore('2026-10-10', 0)).toBe('2026-10-10');
+  });
+
+  it('un día que no existe LANZA en vez de devolver una ventana corrida', () => {
+    expect(() => monthsBefore('2026-02-30', 6)).toThrow();
+    expect(() => monthsBefore('', 6)).toThrow();
   });
 });

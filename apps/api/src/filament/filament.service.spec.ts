@@ -754,13 +754,24 @@ describe('Precio por tipo de filamento', () => {
     quantity: number | null;
     type?: string | null;
     rollGrams?: number;
+    /** Día de negocio, guardado a MEDIANOCHE UTC (así nacen `Expense.date`). */
+    date?: string;
   }) {
     return {
       amount: p.amount,
       quantity: p.quantity,
+      // Por defecto, dentro de la ventana de 6 meses de `AHORA`.
+      date: new Date(`${p.date ?? '2026-08-31'}T00:00:00.000Z`),
       material: { type: p.type ?? 'PLA', rollGrams: p.rollGrams ?? 1000 },
     };
   }
+
+  /**
+   * El instante de los tests, SIEMPRE a mano. Mediodía de Caracas, así que la
+   * fecha de negocio y la UTC coinciden y los tests que no hablan de husos no
+   * tienen que pensar en eso.
+   */
+  const AHORA = new Date('2026-10-10T16:00:00.000Z');
 
   it('deriva el promedio de las COMPRAS, ponderado por rollos', async () => {
     const prisma = makePrisma();
@@ -770,7 +781,7 @@ describe('Precio por tipo de filamento', () => {
       gasto({ amount: '38', quantity: 2, type: 'PETG' }),
     ]);
 
-    const r = await service(prisma).typePrices(ORG);
+    const r = await service(prisma).typePrices(ORG, AHORA);
 
     expect(r).toHaveLength(2);
     expect(r[0]).toMatchObject({ type: 'PLA', rolls: 10, purchases: 2, rollGrams: 1000 });
@@ -781,7 +792,7 @@ describe('Precio por tipo de filamento', () => {
 
   it('solo mira los gastos de ESTA organización que tienen ficha de material', async () => {
     const prisma = makePrisma();
-    await service(prisma).typePrices(ORG);
+    await service(prisma).typePrices(ORG, AHORA);
 
     expect(prisma.expense.findMany.mock.calls[0][0]).toMatchObject({
       where: { organizationId: ORG, materialId: { not: null } },
@@ -798,7 +809,7 @@ describe('Precio por tipo de filamento', () => {
     const prisma = makePrisma();
     prisma.expense.findMany.mockResolvedValue([gasto({ amount: '40', quantity: 2 })]);
 
-    const r = await service(prisma).typePrices(ORG);
+    const r = await service(prisma).typePrices(ORG, AHORA);
 
     expect(r[0].rollPrice).toBeCloseTo(20, 10);
     // La consulta no pide `rollPrice`: no hay por dónde colarse.
@@ -813,7 +824,7 @@ describe('Precio por tipo de filamento', () => {
       gasto({ amount: '40', quantity: 2, type: 'PETG' }),
     ]);
 
-    const r = await service(prisma).typePrices(ORG);
+    const r = await service(prisma).typePrices(ORG, AHORA);
 
     expect(r.map((t) => t.type)).toEqual(['PETG']);
   });
@@ -826,7 +837,7 @@ describe('Precio por tipo de filamento', () => {
       gasto({ amount: '0', quantity: 1 }),
     ]);
 
-    const r = await service(prisma).typePrices(ORG);
+    const r = await service(prisma).typePrices(ORG, AHORA);
 
     expect(r[0].rollPrice).toBeCloseTo(20, 10);
     expect(r[0].rolls).toBe(4);
@@ -835,6 +846,95 @@ describe('Precio por tipo de filamento', () => {
   it('sin compras devuelve una lista vacía: no se ofrece ningún tipo en $0', async () => {
     const prisma = makePrisma();
 
-    await expect(service(prisma).typePrices(ORG)).resolves.toEqual([]);
+    await expect(service(prisma).typePrices(ORG, AHORA)).resolves.toEqual([]);
+  });
+
+  /**
+   * LA VENTANA DE 6 MESES (2026-10-10). El recorte lo hace `preciosPorTipo` en
+   * shared y tiene sus propios tests; acá se fija EL CABLEADO, que es lo que
+   * ningún test de función pura puede ver: que la consulta traiga la fecha, que
+   * se lea como fecha de NEGOCIO y que el "hoy" salga de la hora de Venezuela.
+   */
+  it('trae la FECHA de la compra: sin ella no hay ventana que recortar', async () => {
+    const prisma = makePrisma();
+    await service(prisma).typePrices(ORG, AHORA);
+
+    expect(prisma.expense.findMany.mock.calls[0][0]).toMatchObject({ select: { date: true } });
+  });
+
+  it('una compra de hace más de 6 meses no arrastra el promedio', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      // Hace un año, a $12 el rollo: con toda la historia el promedio daría
+      // 17,33 y cada trabajo se cotizaría 13 % barato.
+      gasto({ amount: '12', quantity: 1, date: '2025-10-01' }),
+      gasto({ amount: '20', quantity: 1, date: '2026-09-01' }),
+      gasto({ amount: '20', quantity: 1, date: '2026-10-01' }),
+    ]);
+
+    const r = await service(prisma).typePrices(ORG, AHORA);
+
+    expect(r[0].rollPrice).toBeCloseTo(20, 10);
+    expect(r[0].rolls).toBe(2);
+    expect(r[0].stale).toBe(false);
+  });
+
+  it('un tipo sin compras recientes NO desaparece: sale con su última compra, marcado', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ amount: '40', quantity: 2 }),
+      gasto({ amount: '30', quantity: 2, type: 'ABS', date: '2026-01-15' }),
+    ]);
+
+    const r = await service(prisma).typePrices(ORG, AHORA);
+
+    const abs = r.find((t) => t.type === 'ABS');
+    expect(abs).toMatchObject({ rollPrice: 15, stale: true, lastPurchase: '2026-01-15' });
+  });
+
+  /**
+   * ⚠️ **Las dos clases de fecha, y la mitad equivocada da el bug simétrico**
+   * (ver "Fechas en UTC" en el CLAUDE.md):
+   * - `Expense.date` es una fecha de NEGOCIO (medianoche UTC) y se lee con
+   *   `toISOString()`. Pasarla por `businessDateKey` la corre un día ATRÁS.
+   * - `now` es un INSTANTE y se lee con `businessDateKey`. Leerlo con
+   *   `toISOString()` lo corre un día ADELANTE desde las 20:00 de Caracas.
+   */
+  it('"hoy" se decide en hora de VENEZUELA, no en UTC', async () => {
+    const prisma = makePrisma();
+    // 22:00 del 9 de octubre en Caracas, que en UTC ya es el 10.
+    const anoche = new Date('2026-10-10T02:00:00.000Z');
+    // La ventana arranca el 2026-04-09 (6 meses antes del 9), así que esta
+    // compra entra. Leyendo "hoy" en UTC arrancaría el 10 y quedaría afuera:
+    // el tipo saldría marcado como viejo teniendo una compra dentro.
+    prisma.expense.findMany.mockResolvedValue([gasto({ amount: '20', quantity: 1, date: '2026-04-09' })]);
+
+    const r = await service(prisma).typePrices(ORG, anoche);
+
+    expect(r[0].stale).toBe(false);
+  });
+
+  it('la fecha de la COMPRA es de negocio: el día guardado es el que el dueño eligió', async () => {
+    const prisma = makePrisma();
+    // Primer día de la ventana (6 meses antes del 2026-10-10), justo en el
+    // borde. Leída con `businessDateKey` se correría al 2026-04-09 y caería
+    // afuera: el tipo saldría viejo por un día que nadie cambió.
+    prisma.expense.findMany.mockResolvedValue([gasto({ amount: '20', quantity: 1, date: '2026-04-10' })]);
+
+    const r = await service(prisma).typePrices(ORG, AHORA);
+
+    expect(r[0]).toMatchObject({ stale: false, lastPurchase: '2026-04-10' });
+  });
+
+  it('un gasto sin fecha no rompe: cuenta como la compra más vieja', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      { amount: '20', quantity: 1, date: null, material: { type: 'PLA', rollGrams: 1000 } },
+    ]);
+
+    const r = await service(prisma).typePrices(ORG, AHORA);
+
+    expect(r[0]).toMatchObject({ rollPrice: 20, stale: true, lastPurchase: null });
   });
 });
+

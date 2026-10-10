@@ -361,3 +361,29 @@ export function daysBetween(desde: string, hasta: string): number {
   };
   return Math.round((utc(hasta) - utc(desde)) / 86_400_000);
 }
+
+/**
+ * El día que queda `months` meses ANTES de `day`: `'2026-10-10'` + 6 →
+ * `'2026-04-10'`. Es el arranque de una ventana "los últimos N meses".
+ *
+ * ⚠️ **Un día que el mes destino no tiene se RECORTA al último día de ese
+ * mes**, no se corre al siguiente. `setUTCMonth` hace lo segundo: el 31 de
+ * agosto menos 6 meses le daría "31 de febrero" y lo devolvería como 3 de
+ * marzo, así que la ventana arrancaría TRES DÍAS DESPUÉS de lo pedido y
+ * dejaría afuera, en silencio, lo de fin de febrero.
+ *
+ * ⚠️ Todo en **UTC**, como el resto de las fechas de negocio, y un día que no
+ * existe LANZA en vez de devolver una ventana corrida.
+ */
+export function monthsBefore(day: string, months: number): string {
+  if (!isCalendarDay(day)) {
+    throw new Error(`Fecha inválida: "${day}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+  const m = DIA_RE.exec(day) as RegExpExecArray;
+  const [anio, mes, dia] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  // El día 0 del mes SIGUIENTE es el último del destino: así se sabe cuántos
+  // días tiene sin tabla de meses ni caso especial para febrero bisiesto.
+  const ultimo = new Date(Date.UTC(anio, mes - months, 0)).getUTCDate();
+  const f = new Date(Date.UTC(anio, mes - 1 - months, Math.min(dia, ultimo)));
+  return f.toISOString().slice(0, 10);
+}

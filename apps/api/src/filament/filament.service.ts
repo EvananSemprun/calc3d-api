@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  businessDateKey,
   canCloseMonth,
   monthCloseDay,
   monthConsumption,
@@ -131,12 +132,25 @@ export class FilamentService {
    * ⚠️ Tampoco lee `Material.rollPrice`: ese es el precio de la ÚLTIMA compra
    * de UNA ficha. El promedio del tipo sale de lo que se pagó, compra por
    * compra. Las reglas (el regalo afuera, ponderado por rollos, un tipo sin
-   * precio no se ofrece) viven en `preciosPorTipo`, en shared.
+   * precio no se ofrece, la ventana de 6 meses) viven en `preciosPorTipo`, en
+   * shared.
+   *
+   * ⚠️ **`now` entra como PARÁMETRO** y "hoy" se decide en hora de VENEZUELA
+   * (`businessDateKey`): el servidor corre en UTC y desde las 20:00 de Caracas
+   * ya cree que es mañana, así que la ventana arrancaría un día más tarde y un
+   * tipo con una compra en el borde saldría marcado como viejo. Es un INSTANTE,
+   * no una fecha de negocio — la otra mitad de la regla está en el `map` de
+   * abajo.
    */
-  async typePrices(organizationId: string): Promise<PrecioPorTipo[]> {
+  async typePrices(organizationId: string, now = new Date()): Promise<PrecioPorTipo[]> {
     const compras = await this.prisma.expense.findMany({
       where: { organizationId, materialId: { not: null } },
-      select: { amount: true, quantity: true, material: { select: { type: true, rollGrams: true } } },
+      select: {
+        amount: true,
+        quantity: true,
+        date: true,
+        material: { select: { type: true, rollGrams: true } },
+      },
     });
 
     return preciosPorTipo(
@@ -145,7 +159,13 @@ export class FilamentService {
         rolls: c.quantity ?? 0,
         amount: Number(c.amount),
         rollGrams: c.material?.rollGrams ?? 0,
+        // ⚠️ `Expense.date` es una fecha de NEGOCIO (guardada a medianoche UTC):
+        // ya ES el día que el dueño eligió y se lee con `toISOString`. Pasarla
+        // por `businessDateKey` la correría un día ATRÁS y una compra del
+        // borde de la ventana caería afuera.
+        date: c.date ? c.date.toISOString().slice(0, 10) : null,
       })),
+      businessDateKey(now),
     );
   }
 

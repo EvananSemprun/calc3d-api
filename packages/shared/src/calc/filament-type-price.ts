@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
 import { D, toMoney } from './money';
+import { isCalendarDay, monthsBefore } from './stock';
 
 /**
  * EL PRECIO DE UN TIPO DE FILAMENTO — lo que la calculadora ofrece por defecto
@@ -29,9 +30,24 @@ import { D, toMoney } from './money';
  *    que descubrir por qué cambió.
  * 3. ⚠️ **Un tipo sin ninguna compra con precio no tiene promedio**: no se
  *    ofrece, en vez de ofrecerse en $0 y cotizar gratis.
+ * 4. ⚠️ **Solo mira los últimos `MESES_DE_LA_VENTANA` meses** (2026-10-10).
+ *    Con toda la historia, una compra vieja y barata pesa para siempre y el día
+ *    que el filamento suba la calculadora cotiza con el precio de antes **sin
+ *    avisar**. Pero un tipo que no se compró dentro de la ventana **NO
+ *    desaparece**: se apoya en su ÚLTIMA compra y sale marcado con `stale`,
+ *    porque desaparecer es peor que estar un poco viejo — el dueño no podría
+ *    cotizar ese tipo en absoluto. La pantalla dice las dos cosas distinto.
  *
- * El motor es PURO: no sabe de Prisma ni de fechas. Quien llama le pasa las
- * compras ya resueltas (`GET /filament/type-prices` en la API).
+ * El motor es PURO: no sabe de Prisma. **"Hoy" entra como PARÁMETRO** y no se
+ * lee del reloj acá adentro: un test que dependa de la fecha de la máquina pasa
+ * hoy y falla solo algún día. Es la convención de `cashChainCuts`,
+ * `facturasAtrasadas` y `campaignLifecycle`. Quien llama le pasa las compras ya
+ * resueltas (`GET /filament/type-prices` en la API).
+ *
+ * ⚠️ **Con los datos de hoy esto no cambia ningún número**: casi todo el
+ * catálogo entró con el import del 31/08 y cae dentro de la ventana. Los tests
+ * de `filament-type-price.spec.ts`, con las fechas a mano, son la única prueba
+ * de que la ventana hace algo.
  */
 
 /** Una compra de rollos, con lo mínimo que mira el promedio. */
@@ -44,6 +60,11 @@ export interface CompraDeRollos {
   amount: number;
   /** Gramos por rollo de la ficha comprada. */
   rollGrams: number;
+  /**
+   * Día de la compra, `'AAAA-MM-DD'` (se tolera un ISO completo: se corta).
+   * `null` o un día inventado = sin fecha, y se trata como la compra MÁS VIEJA.
+   */
+  date: string | null;
 }
 
 /**
@@ -62,6 +83,14 @@ export interface PrecioPorTipo {
   rolls: number;
   /** Compras que respaldan el promedio (solo las que tienen precio). */
   purchases: number;
+  /**
+   * `true` si el tipo NO tuvo ninguna compra dentro de la ventana y el número
+   * sale de su última compra: NO es un precio de hoy y la pantalla lo dice
+   * distinto.
+   */
+  stale: boolean;
+  /** Día de la compra más reciente que respalda el número, o `null` si ninguna tenía fecha. */
+  lastPurchase: string | null;
 }
 
 /** Acumulador por tipo, en decimal.js: el dinero no se suma en coma flotante. */
@@ -71,13 +100,27 @@ interface Acumulado {
   gramos: Decimal;
   rolls: number;
   purchases: number;
+  /** El día de la compra más reciente que ya entró, o null si ninguna tenía fecha. */
+  lastPurchase: string | null;
+  /** true si el tipo no tuvo compras en la ventana y esto es su última compra. */
+  stale: boolean;
+}
+
+/** Una compra ya filtrada, con su día resuelto (`null` = sin fecha usable). */
+interface ComprayDia {
+  compra: CompraDeRollos;
+  type: string;
+  dia: string | null;
 }
 
 /**
- * El precio de cada tipo, de más a menos rollos comprados.
+ * El precio de cada tipo: primero los que tienen compras en la ventana, y
+ * dentro de cada grupo de más a menos rollos comprados.
  *
  * El orden es por ROLLOS a propósito: el primero es el tipo que más se compra y
- * es el que la calculadora elige al abrirse.
+ * es el que la calculadora elige al abrirse. ⚠️ **Los `stale` van al final**
+ * por eso mismo: un tipo que no se compra desde el año pasado no puede ser el
+ * default por tener más rollos acumulados.
  *
  * ⚠️ **Los gramos se promedian ponderados por rollos igual que el precio**, y
  * eso no es un detalle: así `rollPrice / rollGrams` da el costo por gramo REAL
@@ -90,33 +133,95 @@ interface Acumulado {
  * ya no se repone sigue siendo evidencia de eso. Descontinuar es una decisión
  * sobre la VARIEDAD, no sobre el precio.
  */
-export function preciosPorTipo(compras: CompraDeRollos[]): PrecioPorTipo[] {
-  const porTipo = new Map<string, Acumulado>();
+/**
+ * Meses que mira el promedio (2026-10-10, decisión del dueño).
+ *
+ * Antes miraba TODA la historia, así que una compra vieja y barata pesaba para
+ * siempre: el día que el filamento suba, la calculadora seguiría cotizando con
+ * el precio de antes **sin avisar**.
+ */
+export const MESES_DE_LA_VENTANA = 6;
 
+/**
+ * El día de una compra, `'AAAA-MM-DD'`, o `null` si no hay uno usable.
+ *
+ * ⚠️ Un día que no existe (`'2026-02-30'`) devuelve `null` y NO se corre al 2
+ * de marzo: una fecha corrida metería en la ventana una compra que está afuera,
+ * o al revés, y el promedio parecería bueno.
+ */
+function dia(date: string | null): string | null {
+  if (!date) return null;
+  const d = date.slice(0, 10);
+  return isCalendarDay(d) ? d : null;
+}
+
+/**
+ * La compra MÁS RECIENTE del tipo, en una lista de una sola.
+ *
+ * ⚠️ **Una compra sin fecha cuenta como la más VIEJA**: no puede afirmar que es
+ * reciente. Sigue sirviendo de respaldo —que es lo que evita que el tipo
+ * desaparezca del desplegable— pero solo si no hay ninguna fechada.
+ */
+function ultima(suyas: ComprayDia[]): ComprayDia[] {
+  let mejor = suyas[0];
+  for (const u of suyas) {
+    if (u.dia === null) continue;
+    if (mejor.dia === null || u.dia > mejor.dia) mejor = u;
+  }
+  return mejor ? [mejor] : [];
+}
+
+export function preciosPorTipo(compras: CompraDeRollos[], hoy: string): PrecioPorTipo[] {
+  if (!isCalendarDay(hoy)) {
+    throw new Error(`Hoy inválido: "${hoy}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+  // El arranque de la ventana. Se compara como TEXTO 'AAAA-MM-DD', que ordena
+  // igual que la fecha y no arrastra husos horarios.
+  const desde = monthsBefore(hoy, MESES_DE_LA_VENTANA);
+
+  const utiles: ComprayDia[] = [];
   for (const c of compras) {
     const type = c.type?.trim();
     // Sin tipo no hay nada que ofrecer: en el análisis de filamento "Sin
     // especificar" es un grupo real, pero acá no se puede cotizar "un rollo de
     // tipo sin nombre".
     if (!type) continue;
-    // Regla 1: sin precio no hay señal de precio (el rollo regalado).
+    // Regla 1: sin precio no hay señal de precio (el rollo regalado). Vale
+    // también para la ÚLTIMA compra del respaldo: si no, un tipo cuyo último
+    // rollo fue regalado se ofrecería en $0.
     if (!(c.amount > 0)) continue;
     // Sin rollos no se puede saber qué costó el rollo, y dividir por cero daría
     // Infinity. Sin gramos, el costo por gramo del motor se iría a cero y la
     // pieza saldría con material gratis.
     if (!(c.rolls > 0) || !(c.rollGrams > 0)) continue;
 
-    const acc = porTipo.get(type) ?? {
+    utiles.push({ compra: c, type, dia: dia(c.date) });
+  }
+
+  const porTipo = new Map<string, Acumulado>();
+  for (const type of new Set(utiles.map((u) => u.type))) {
+    const suyas = utiles.filter((u) => u.type === type);
+    const dentro = suyas.filter((u) => u.dia !== null && u.dia >= desde);
+    // Regla 4: un tipo sin compras recientes NO desaparece — se apoya en su
+    // ÚLTIMA compra. Desaparecer sería peor que estar un poco viejo: el dueño
+    // no podría cotizar ese tipo en absoluto.
+    const base = dentro.length > 0 ? dentro : ultima(suyas);
+    const acc: Acumulado = {
       type,
       dinero: D(0),
       gramos: D(0),
       rolls: 0,
       purchases: 0,
+      lastPurchase: null,
+      stale: dentro.length === 0,
     };
-    acc.dinero = acc.dinero.plus(c.amount);
-    acc.gramos = acc.gramos.plus(D(c.rollGrams).times(c.rolls));
-    acc.rolls += c.rolls;
-    acc.purchases += 1;
+    for (const u of base) {
+      acc.dinero = acc.dinero.plus(u.compra.amount);
+      acc.gramos = acc.gramos.plus(D(u.compra.rollGrams).times(u.compra.rolls));
+      acc.rolls += u.compra.rolls;
+      acc.purchases += 1;
+      if (u.dia && (!acc.lastPurchase || u.dia > acc.lastPurchase)) acc.lastPurchase = u.dia;
+    }
     porTipo.set(type, acc);
   }
 
@@ -128,6 +233,17 @@ export function preciosPorTipo(compras: CompraDeRollos[]): PrecioPorTipo[] {
       rollGrams: a.gramos.div(a.rolls).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber(),
       rolls: a.rolls,
       purchases: a.purchases,
+      stale: a.stale,
+      lastPurchase: a.lastPurchase,
     }))
-    .sort((a, b) => b.rolls - a.rolls || b.rollPrice - a.rollPrice || a.type.localeCompare(b.type));
+    .sort(
+      (a, b) =>
+        // Los de precio VIEJO, al final: el orden decide qué elige la
+        // calculadora al abrirse, y un tipo que no se compra desde el año
+        // pasado no puede ser el default por tener más rollos.
+        Number(a.stale) - Number(b.stale) ||
+        b.rolls - a.rolls ||
+        b.rollPrice - a.rollPrice ||
+        a.type.localeCompare(b.type),
+    );
 }

@@ -10,9 +10,16 @@ import { type CompraDeRollos, preciosPorTipo } from './filament-type-price';
  * segundo 12 % barato (se pierde el margen).
  */
 
-/** Una compra con lo mínimo que mira el promedio. */
+/** El "hoy" de los tests: SIEMPRE a mano, nunca el reloj de la máquina. */
+const HOY = '2026-10-10';
+
+/**
+ * Una compra con lo mínimo que mira el promedio. Su fecha por defecto cae
+ * DENTRO de la ventana de 6 meses de `HOY`: los tests que no hablan de la
+ * ventana no tienen que pensar en ella.
+ */
 function compra(p: Partial<CompraDeRollos>): CompraDeRollos {
-  return { type: 'PLA', rolls: 1, amount: 20, rollGrams: 1000, ...p };
+  return { type: 'PLA', rolls: 1, amount: 20, rollGrams: 1000, date: '2026-08-31', ...p };
 }
 
 describe('preciosPorTipo', () => {
@@ -24,7 +31,7 @@ describe('preciosPorTipo', () => {
     const [pla] = preciosPorTipo([
       compra({ rolls: 1, amount: 25 }),
       compra({ rolls: 9, amount: 180 }),
-    ]);
+    ], HOY);
 
     expect(pla.rollPrice).toBeCloseTo(20.5, 10);
     expect(pla.rollPrice).not.toBeCloseTo(22.5, 2);
@@ -39,7 +46,7 @@ describe('preciosPorTipo', () => {
     const [pla] = preciosPorTipo([
       compra({ rolls: 4, amount: 80 }),
       compra({ rolls: 1, amount: 0 }),
-    ]);
+    ], HOY);
 
     expect(pla.rollPrice).toBeCloseTo(20, 10);
     expect(pla.rollPrice).not.toBeCloseTo(16, 2);
@@ -55,7 +62,7 @@ describe('preciosPorTipo', () => {
     const [pure] = preciosPorTipo([
       compra({ type: 'PLA PURE', rolls: 1, amount: 13 }),
       compra({ type: 'PLA PURE', rolls: 1, amount: 13 }),
-    ]);
+    ], HOY);
 
     expect(pure.rollPrice).toBeCloseTo(13, 10);
     expect(pure.rolls).toBe(2);
@@ -66,7 +73,7 @@ describe('preciosPorTipo', () => {
     const r = preciosPorTipo([
       compra({ type: 'PLA', rolls: 2, amount: 40 }),
       compra({ type: 'PLA TOUGH+', rolls: 1, amount: 0 }),
-    ]);
+    ], HOY);
 
     expect(r.map((t) => t.type)).toEqual(['PLA']);
     expect(r.some((t) => t.rollPrice === 0)).toBe(false);
@@ -78,7 +85,7 @@ describe('preciosPorTipo', () => {
       compra({ type: 'PETG', rolls: 1, amount: 18 }),
       compra({ type: 'PETG', rolls: 1, amount: 20 }),
       compra({ type: 'PLA SILK', rolls: 1, amount: 24 }),
-    ]);
+    ], HOY);
 
     const porTipo = Object.fromEntries(r.map((t) => [t.type, t.rollPrice]));
     expect(porTipo.PLA).toBeCloseTo(20, 10);
@@ -91,7 +98,7 @@ describe('preciosPorTipo', () => {
       compra({ type: 'PETG', rolls: 3, amount: 56 }),
       compra({ type: 'PLA', rolls: 47, amount: 940 }),
       compra({ type: 'PLA SILK', rolls: 2, amount: 45 }),
-    ]);
+    ], HOY);
 
     expect(r.map((t) => t.type)).toEqual(['PLA', 'PETG', 'PLA SILK']);
   });
@@ -103,7 +110,7 @@ describe('preciosPorTipo', () => {
     const [pla] = preciosPorTipo([
       compra({ rolls: 2, amount: 40, rollGrams: 750 }),
       compra({ rolls: 2, amount: 40, rollGrams: 1000 }),
-    ]);
+    ], HOY);
 
     expect(pla.rollGrams).toBe(875);
     expect(pla.rollPrice / pla.rollGrams).toBeCloseTo(80 / 3500, 10);
@@ -115,7 +122,7 @@ describe('preciosPorTipo', () => {
     const r = preciosPorTipo([
       compra({ type: 'PLA', rolls: 0, amount: 20 }),
       compra({ type: 'PETG', rolls: 2, amount: 38 }),
-    ]);
+    ], HOY);
 
     expect(r.map((t) => t.type)).toEqual(['PETG']);
     expect(r.every((t) => Number.isFinite(t.rollPrice) && Number.isFinite(t.rollGrams))).toBe(true);
@@ -128,7 +135,7 @@ describe('preciosPorTipo', () => {
       compra({ type: null, rolls: 5, amount: 100 }),
       compra({ type: '   ', rolls: 5, amount: 100 }),
       compra({ type: 'PLA', rolls: 1, amount: 20 }),
-    ]);
+    ], HOY);
 
     expect(r.map((t) => t.type)).toEqual(['PLA']);
   });
@@ -137,7 +144,7 @@ describe('preciosPorTipo', () => {
     const r = preciosPorTipo([
       compra({ type: 'PLA', rolls: 1, amount: 20 }),
       compra({ type: ' PLA ', rolls: 1, amount: 22 }),
-    ]);
+    ], HOY);
 
     expect(r).toHaveLength(1);
     expect(r[0]).toMatchObject({ type: 'PLA', rolls: 2 });
@@ -145,7 +152,7 @@ describe('preciosPorTipo', () => {
   });
 
   it('sin compras devuelve una lista vacía, no un tipo en $0', () => {
-    expect(preciosPorTipo([])).toEqual([]);
+    expect(preciosPorTipo([], HOY)).toEqual([]);
   });
 
   it('un tipo cuyos rollos no tienen gramos cargados no se ofrece', () => {
@@ -154,8 +161,188 @@ describe('preciosPorTipo', () => {
     const r = preciosPorTipo([
       compra({ type: 'ASA', rolls: 2, amount: 50, rollGrams: 0 }),
       compra({ type: 'PLA', rolls: 1, amount: 20 }),
-    ]);
+    ], HOY);
 
     expect(r.map((t) => t.type)).toEqual(['PLA']);
+  });
+});
+
+/**
+ * LA VENTANA DE 6 MESES (2026-10-10, decisión del dueño).
+ *
+ * Hasta ese día el promedio miraba TODA la historia, así que una compra vieja y
+ * barata pesaba para siempre: el día que el filamento suba, la calculadora
+ * seguiría cotizando con el precio de antes y **sin avisar**.
+ *
+ * ⚠️ **Con los datos de hoy esto no cambia ningún número**: casi todo el
+ * catálogo entró con el import del 31/08 y cae dentro de la ventana. Estos
+ * tests, con las fechas puestas a mano, son la ÚNICA prueba de que la ventana
+ * existe y hace algo.
+ *
+ * ⚠️ **"Hoy" entra como PARÁMETRO**, como en `cashChainCuts`,
+ * `facturasAtrasadas` y `campaignLifecycle`: leerlo del reloj acá adentro daría
+ * un test que pasa hoy y falla solo algún día, sin que nadie toque el código.
+ */
+describe('preciosPorTipo: la ventana de 6 meses', () => {
+  it('una compra VIEJA no arrastra el promedio hacia abajo', () => {
+    // El PLA se compraba a $12 hace un año y hoy cuesta $20. Con toda la
+    // historia el promedio daría (12 + 20 + 20) / 3 = 17,33 y cada trabajo se
+    // cotizaría 13 % barato; con la ventana da 20, que es lo que cuesta hoy.
+    const [pla] = preciosPorTipo(
+      [
+        compra({ rolls: 1, amount: 12, date: '2025-10-01' }),
+        compra({ rolls: 1, amount: 20, date: '2026-09-01' }),
+        compra({ rolls: 1, amount: 20, date: '2026-10-01' }),
+      ],
+      HOY,
+    );
+
+    expect(pla.rollPrice).toBeCloseTo(20, 10);
+    expect(pla.rollPrice).not.toBeCloseTo(17.33, 1);
+    // Y el respaldo que muestra la pantalla es el de la ventana, no el total.
+    expect(pla.rolls).toBe(2);
+    expect(pla.purchases).toBe(2);
+    expect(pla.stale).toBe(false);
+    expect(pla.lastPurchase).toBe('2026-10-01');
+  });
+
+  it('el borde de la ventana se incluye, el día de antes no', () => {
+    // Ventana de 6 meses desde el 2026-10-10: arranca el 2026-04-10.
+    const [justo] = preciosPorTipo(
+      [compra({ rolls: 1, amount: 30, date: '2026-04-10' }), compra({ rolls: 1, amount: 20 })],
+      HOY,
+    );
+    expect(justo.rollPrice).toBeCloseTo(25, 10);
+    expect(justo.rolls).toBe(2);
+
+    const [afuera] = preciosPorTipo(
+      [compra({ rolls: 1, amount: 30, date: '2026-04-09' }), compra({ rolls: 1, amount: 20 })],
+      HOY,
+    );
+    expect(afuera.rollPrice).toBeCloseTo(20, 10);
+    expect(afuera.rolls).toBe(1);
+  });
+
+  it('una compra con fecha FUTURA entra: es una compra cargada, no un error', () => {
+    // El dueño puede fechar una compra mañana al cargarla; descartarla haría
+    // desaparecer el tipo entero sin explicación.
+    const [pla] = preciosPorTipo([compra({ rolls: 1, amount: 22, date: '2026-10-31' })], HOY);
+
+    expect(pla.rollPrice).toBeCloseTo(22, 10);
+    expect(pla.stale).toBe(false);
+  });
+
+  /**
+   * ⚠️ La regla que evita el peor resultado posible: **un tipo sin compras
+   * recientes NO desaparece del desplegable**. Desaparecer sería peor que estar
+   * un poco viejo, porque el dueño no podría cotizar ese tipo en absoluto.
+   */
+  it('un tipo SIN compras en la ventana sigue ofreciéndose, con su última compra', () => {
+    const r = preciosPorTipo(
+      [
+        compra({ type: 'PLA', rolls: 2, amount: 40 }),
+        compra({ type: 'ABS', rolls: 1, amount: 15, date: '2025-11-01' }),
+        compra({ type: 'ABS', rolls: 2, amount: 50, date: '2026-01-15' }),
+      ],
+      HOY,
+    );
+
+    const abs = r.find((t) => t.type === 'ABS');
+    expect(abs).toBeDefined();
+    // La ÚLTIMA compra (25 el rollo), no el promedio de las dos viejas (21,66).
+    expect(abs!.rollPrice).toBeCloseTo(25, 10);
+    expect(abs!.rolls).toBe(2);
+    expect(abs!.purchases).toBe(1);
+    expect(abs!.stale).toBe(true);
+    expect(abs!.lastPurchase).toBe('2026-01-15');
+  });
+
+  it('el tipo con el promedio viejo se marca `stale` y el reciente no', () => {
+    const r = preciosPorTipo(
+      [
+        compra({ type: 'PLA', rolls: 1, amount: 20 }),
+        compra({ type: 'ABS', rolls: 1, amount: 15, date: '2025-11-01' }),
+      ],
+      HOY,
+    );
+
+    expect(Object.fromEntries(r.map((t) => [t.type, t.stale]))).toEqual({ PLA: false, ABS: true });
+  });
+
+  it('los tipos con precio VIEJO van al FINAL: la calculadora arranca en uno de hoy', () => {
+    // El orden decide qué elige la calculadora al abrirse. Un tipo que no se
+    // compra desde el año pasado no puede ser el default por tener más rollos.
+    const r = preciosPorTipo(
+      [
+        compra({ type: 'ABS', rolls: 40, amount: 600, date: '2025-11-01' }),
+        compra({ type: 'PLA', rolls: 3, amount: 60 }),
+      ],
+      HOY,
+    );
+
+    expect(r.map((t) => t.type)).toEqual(['PLA', 'ABS']);
+  });
+
+  it('una compra SIN fecha cuenta como la más vieja: no se presenta como precio de hoy', () => {
+    // Un gasto sin fecha legible no puede afirmar que es reciente. Sigue
+    // sirviendo de respaldo, que es lo que evita que el tipo desaparezca.
+    const r = preciosPorTipo(
+      [
+        compra({ type: 'ASA', rolls: 1, amount: 30, date: null }),
+        compra({ type: 'ASA', rolls: 1, amount: 40, date: '2026-02-01' }),
+      ],
+      HOY,
+    );
+
+    expect(r[0].stale).toBe(true);
+    expect(r[0].rollPrice).toBeCloseTo(40, 10);
+    expect(r[0].lastPurchase).toBe('2026-02-01');
+  });
+
+  it('un tipo cuya única compra no tiene fecha se ofrece igual, sin inventarle una', () => {
+    const [pla] = preciosPorTipo([compra({ rolls: 2, amount: 50, date: null })], HOY);
+
+    expect(pla.rollPrice).toBeCloseTo(25, 10);
+    expect(pla.stale).toBe(true);
+    expect(pla.lastPurchase).toBeNull();
+  });
+
+  it('tolera un ISO con hora: la fecha es el día', () => {
+    const [pla] = preciosPorTipo(
+      [compra({ rolls: 1, amount: 20, date: '2026-09-01T00:00:00.000Z' })],
+      HOY,
+    );
+
+    expect(pla.stale).toBe(false);
+    expect(pla.lastPurchase).toBe('2026-09-01');
+  });
+
+  it('un día inventado se trata como sin fecha, no como una ventana corrida', () => {
+    // `'2026-02-30'` no existe: `new Date` lo correría al 2 de marzo.
+    const [pla] = preciosPorTipo([compra({ rolls: 1, amount: 20, date: '2026-02-30' })], HOY);
+
+    expect(pla.stale).toBe(true);
+    expect(pla.lastPurchase).toBeNull();
+  });
+
+  it('un "hoy" que no existe LANZA: sin ventana confiable no hay promedio', () => {
+    expect(() => preciosPorTipo([compra({})], '2026-13-01')).toThrow();
+    expect(() => preciosPorTipo([compra({})], '')).toThrow();
+  });
+
+  it('el regalo sigue afuera aunque sea la compra MÁS RECIENTE del tipo', () => {
+    // El rollo regalado no es señal de precio ni dentro ni fuera de la ventana:
+    // si entrara como "última compra", el tipo se ofrecería en $0.
+    const r = preciosPorTipo(
+      [
+        compra({ type: 'PLA TOUGH+', rolls: 1, amount: 0, date: '2026-10-01' }),
+        compra({ type: 'PLA TOUGH+', rolls: 2, amount: 44, date: '2025-12-01' }),
+      ],
+      HOY,
+    );
+
+    expect(r[0].rollPrice).toBeCloseTo(22, 10);
+    expect(r[0].stale).toBe(true);
+    expect(r[0].lastPurchase).toBe('2025-12-01');
   });
 });

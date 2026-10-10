@@ -1476,7 +1476,40 @@ en el repo web: se sobrescribe al sincronizar.
     - Las fichas **descontinuadas SÍ entran** en el promedio del tipo:
       descontinuar es una decisión sobre la VARIEDAD, y lo que se pagó por ese
       color sigue siendo evidencia de lo que cuesta el tipo.
-    - Tests: `filament-type-price.spec.ts` (shared, 12 con números a mano),
+    - ⚠️ **El promedio mira los ÚLTIMOS 6 MESES (2026-10-10, shared 0.46.0)**,
+      no toda la historia: con toda la historia una compra vieja y barata pesa
+      para siempre y, el día que el filamento suba, la calculadora cotiza con
+      el precio de antes **sin avisar**. La ventana es
+      `MESES_DE_LA_VENTANA = 6` y arranca en `monthsBefore(hoy, 6)`
+      (`shared/calc/stock.ts`, con el resto de las conversiones de fecha).
+      - ⚠️ **Un tipo SIN compras en la ventana NO desaparece**: se apoya en su
+        **última compra** y sale con `stale: true` + `lastPurchase`.
+        Desaparecer es peor que estar un poco viejo — el dueño no podría
+        cotizar ese tipo en absoluto. Y los `stale` van **al final** del orden,
+        porque el primero de la lista es el que la calculadora elige al
+        abrirse.
+      - ⚠️ **"Hoy" entra como PARÁMETRO** (`preciosPorTipo(compras, hoy)`), como
+        en `cashChainCuts`, `facturasAtrasadas` y `campaignLifecycle`: leerlo
+        del reloj adentro da un test que pasa hoy y falla solo algún día.
+        `typePrices(organizationId, now = new Date())` lo resuelve con
+        **`businessDateKey(now)`** — "hoy" es un INSTANTE y se decide en hora de
+        Venezuela; con `toISOString` la ventana arranca un día tarde desde las
+        20:00 de Caracas. La otra mitad de la regla de las dos clases de fecha:
+        **`Expense.date` es una fecha de NEGOCIO** y se lee con
+        `toISOString().slice(0, 10)`; pasarla por `businessDateKey` la corre un
+        día atrás y una compra del borde cae afuera.
+      - Una compra **sin fecha** (o con un día que no existe, `'2026-02-30'`)
+        cuenta como la **más vieja**: no puede afirmar que es reciente, pero
+        sigue sirviendo de respaldo. El regalo (`amount <= 0`) queda afuera
+        también como "última compra", o el tipo se ofrecería en $0.
+      - ⚠️ **Con los datos del dueño esto NO cambia ningún número** (casi todo
+        el catálogo entró con el import del 31/08, dentro de la ventana): los
+        tests con fechas a mano son la ÚNICA prueba de que la ventana hace
+        algo. Verificado por mutación: ampliar la ventana a un siglo tumba 7
+        tests de shared y 2 de api; hacer desaparecer el tipo sin compras
+        recientes, los mismos 9.
+    - Tests: `filament-type-price.spec.ts` (shared, 24 con números y fechas a
+      mano), `stock.spec.ts` (`monthsBefore`, con el recorte de fin de mes),
       `filament.service.spec.ts` y `filament.controller.spec.ts` (la ruta y que
       la organización sale de la SESIÓN).
   - **Importación del Excel** (`prisma/import-filamento.mjs` + `filamento-excel.json`):
