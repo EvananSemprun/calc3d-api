@@ -9,6 +9,16 @@
     "allowSyntheticDefaultImports": true,
     "target": "ES2021",
     "outDir": "./dist",
+    // ⚠️ FIJO A PROPÓSITO. Sin `rootDir`, tsc deduce la raíz común de lo que
+    // compila: un solo import de un archivo que viva FUERA de apps/api la corre
+    // hacia arriba y la salida pasa de `dist/src/main.js` a
+    // `dist/apps/api/src/main.js`. El Dockerfile arranca
+    // `node apps/api/dist/src/main.js`, así que el contenedor NO levanta — con
+    // los tests y el lint EN VERDE, porque ninguno de los dos mira dónde quedó
+    // el archivo. Pasó el 2026-10-10 (un test que importaba el package.json de
+    // shared) y se detectó de casualidad. Con la raíz fija, ese import es un
+    // error de compilación (TS6059) en vez de una salida mudada en silencio.
+    "rootDir": ".",
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
