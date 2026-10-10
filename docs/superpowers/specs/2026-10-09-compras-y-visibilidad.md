@@ -31,6 +31,7 @@ compra. Cada fase se despliega sola.
 | A8 | "Mostrador vs encargo" tiene que sumar **los abonos de encargos**, no solo las ventas `ENCARGO` del Excel. |
 | A9 | Una recepción se puede **deshacer**: sin eso, la guarda de A6 deja la fila congelada para siempre. |
 | A10 | En Gastos, los KPIs se calculan sobre **lo que se ve**, y el filtro no ofrece proveedores sin gastos en el rango. |
+| A11 | La cadena del Dashboard cierra **al final del rango**, no en el saldo de hoy; y una fecha que no existe en el calendario se rechaza al escribir. |
 | C1/C6 | Los nombres los corrige Claude. ⚠️ **Falta que el dueño diga cómo se llama la contraparte propietaria** (hoy "vanan"). |
 | C3 | Producción se queda, **con un recordatorio** para cargar las lecturas. |
 | C4+C5 | **Recordar contar al cerrar el mes** Y que **la recepción sugiera el conteo**. |
@@ -193,6 +194,18 @@ contrario para Ventas.
       filamento, para que no se pueda elegir un valor que deje la tabla vacía.
 - [ ] El texto del vacío distingue "no hay gastos" de "el filtro no deja pasar
       nada".
+
+### 1.7 Dos números que todavía mienten (A11)
+
+Del cierre de 1.3, el 2026-10-10.
+
+- [ ] Con un rango pasado, el tramo del medio se come todo lo posterior porque
+      "te queda" es el saldo de hoy. Z pasa a ser el saldo al final del rango —
+      la misma función con otra fecha de corte, no otra definición — y el texto
+      deja de decir "te queda" cuando el periodo ya cerró.
+- [ ] `FECHA` valida la forma y no el calendario: `2026-02-30` entra por los
+      movimientos de caja y las conciliaciones, y Prisma lo corre al 2 de marzo.
+      ⚠️ Superficie sensible: el test de regresión va CON el arreglo.
 
 ---
 

@@ -229,6 +229,50 @@ palabras: *"Los tres KPIs se calculan sobre LO QUE SE VE"*.
 
 ---
 
+## Tarea 8 — Dos números que todavía mienten
+
+Las dos salieron del cierre de la Tarea 4, el 2026-10-10.
+
+### 8.1 Con un rango pasado, el del medio se come lo que vino después
+
+La cadena usa **X** = saldo al día anterior al inicio del rango, **Z** = saldo de
+**HOY**, y **Y = Z − X**. Con el mes en curso está bien. Con un rango pasado no:
+elegís septiembre y la cadena dice "venías con X al 31/8, en el rango Y", pero
+ese Y **incluye octubre entero**.
+
+La razón que se dio para no hacerlo —"Z tiene que ser el mismo número que la
+tarjeta Saldo en caja"— no se sostiene: pedir el saldo **al final del rango** no
+son dos definiciones, es la MISMA función (`businessCash`) con otra fecha de
+corte. El endpoint ya acepta cualquier fecha.
+
+- [ ] Z = saldo al `to` del rango. Con el rango en curso da el mismo número que
+      hoy, así que la pantalla normal no cambia.
+- [ ] ⚠️ **Y la palabra acompaña**: con un rango terminado, "te queda" es falso
+      — quedó con eso al cierre de ese periodo, y hoy tiene otra cosa. El texto
+      lo tiene que decir.
+- [ ] La tarjeta "Saldo en caja" **no se toca**: sigue siendo el saldo de hoy.
+      Son dos números distintos a propósito y cada uno dice cuál es.
+- [ ] Test en shared con números a mano: un rango pasado no puede absorber lo
+      posterior.
+
+### 8.2 El 30 de febrero entra por la puerta de escritura
+
+`FECHA`, el regex de fechas de `schemas/api.ts`, valida la FORMA
+(`AAAA-MM-DD`) y no el calendario: `'2026-02-30'` pasa, y Prisma lo guarda
+**corrido al 2 de marzo**. Entra por los movimientos de caja y por el upsert de
+conciliaciones. Es una entrada del usuario y es dinero.
+
+- [ ] `FECHA.refine(isCalendarDay)` — el helper **ya existe** (lo dejó la
+      Tarea 4 en `shared/calc/stock.ts`).
+- [ ] ⚠️ Es una **superficie sensible** (DTO de entrada + dinero): su test de
+      regresión va CON el arreglo y la suite de seguridad tiene que quedar
+      verde. Primero el test que mete el 30 de febrero y lo ve pasar.
+- [ ] ⚠️ Barrer **todos** los usos de `FECHA`, no solo los dos conocidos. Una
+      puerta cerrada con su gemela abierta al lado no cierra nada.
+- [ ] `git commit`.
+
+---
+
 ## Cierre de la fase
 
 - [ ] `pnpm -r lint` y `pnpm -r test` en los dos repos, **leyendo la salida**
