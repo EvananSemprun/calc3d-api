@@ -79,6 +79,43 @@ const FECHA_OPCIONAL = z
   .optional()
   .nullable();
 
+/**
+ * EL RANGO DE FECHAS DE UNA LISTA: `?from&to`, los dos opcionales.
+ *
+ * Lo usan los cuatro filtros de lectura (`GET /sales`, `/expenses`,
+ * `/orders/payments`, `/filament/purchases`), que hasta el 2026-10-10 eran
+ * `@Query('from') from?: string` **sin DTO ni pipe**.
+ *
+ * ⚠️ No persisten nada, y por eso se habían dejado afuera. Pero mienten de la
+ * peor manera, y en las DOS direcciones: los servicios hacen
+ * `new Date(from)` y `new Date(\`${to}T23:59:59.999Z\`)`, así que
+ * `from=2026-02-30` arranca el **2 de marzo** y la lista sale recortada **sin
+ * avisar** —ves menos ventas de las que hay y no te enterás—, mientras
+ * `to=2026-02-31` termina el **3 de marzo** y te muestra días que no pediste.
+ * Un `?from&to` no escribe, pero es con lo que el dueño mira su plata.
+ *
+ * ⚠️ **Va con `FECHA_OPCIONAL`, no con `FECHA`, y está medido**: los cuatro
+ * constructores de params del panel filtran por verdad
+ * (`if (range.from) p.from = range.from`), así que con el preset "Todo" el
+ * parámetro **no viaja**; y `''`/`null` tienen que seguir cayendo en "sin
+ * límite", que es lo que los servicios ya hacen (`if (!from && !to) return {}`).
+ * Exigir fecha no cerraría nada: rompería la pantalla.
+ *
+ * ⚠️ **El que mordía de verdad era el 31**: el Dashboard armaba el rango del
+ * mes a mano como `${mes}-01` .. `${mes}-31`, así que en febrero la tarjeta del
+ * equilibrio contaba hasta TRES días del mes siguiente. Se arregló en el panel
+ * (el último día real del mes) en el mismo despliegue que esto.
+ *
+ * ⚠️ **No valida que `from <= to`.** Un rango al revés devuelve una lista
+ * vacía, que es raro pero no miente: los dos extremos son días reales y el
+ * resultado es exactamente lo que se pidió.
+ */
+export const RangoQuerySchema = z.object({
+  from: FECHA_OPCIONAL,
+  to: FECHA_OPCIONAL,
+});
+export type RangoQueryDto = z.infer<typeof RangoQuerySchema>;
+
 export const LoginSchema = z.object({
   email: z.string().email('Correo inválido'),
   password: z.string().min(1, 'La contraseña es obligatoria'),

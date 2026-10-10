@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  MonthSchema,
   PrinterReadingUpsertSchema,
   PrinterSchema,
   businessDateKey,
@@ -348,8 +349,16 @@ export class PrintersController {
     return this.service.usage(user.organizationId);
   }
 
+  /**
+   * ⚠️ El mes va con pipe, como en `/filament/*`. Sin el, `readings` compara
+   * `r.month < month` como TEXTO: un `2026-13` deja entrar todo 2026 y la
+   * "lectura anterior" sale de un mes que nadie pidio.
+   */
   @Get('readings')
-  readings(@CurrentUser() user: AuthUser, @Query('month') month: string) {
+  readings(
+    @CurrentUser() user: AuthUser,
+    @Query('month', new ZodValidationPipe(MonthSchema)) month: string,
+  ) {
     return this.service.readings(user.organizationId, month);
   }
 

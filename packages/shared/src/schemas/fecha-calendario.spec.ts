@@ -44,6 +44,7 @@ import {
   PurchaseInvoicePaymentSchema,
   PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
+  RangoQuerySchema,
   SaleCreateSchema,
   SaleUpdateSchema,
 } from './api';
@@ -376,6 +377,86 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
   });
 
   /**
+   * LOS FILTROS DE LECTURA, que hasta hoy estaban **afuera a propósito**
+   * (`@Query('from') from?: string`, sin DTO ni pipe).
+   *
+   * No persisten nada, y por eso se habían dejado para después. Pero mienten
+   * de la peor manera: `from=2026-02-30` se corre al **2 de marzo** y la lista
+   * sale recortada **sin avisar** —ves menos ventas de las que hay y no te
+   * enterás—, mientras `to=2026-02-31` se corre al **3 de marzo** y te muestra
+   * días que no pediste. Un `?from&to` no escribe, pero es con lo que el dueño
+   * mira su plata.
+   *
+   * ⚠️ **El "sin fecha" tiene que seguir pasando**, en sus tres formas: el
+   * panel OMITE el parámetro cuando el preset es "Todo" (los cuatro
+   * constructores de params filtran por verdad), y un `''` o un `null` tienen
+   * que caer en "sin límite" igual que siempre — es lo que ya hacen los
+   * servicios (`if (!from && !to) return {}`).
+   */
+  describe('RangoQuerySchema — los filtros ?from&to de las listas', () => {
+    for (const dia of DIAS_INVENTADOS) {
+      it(`el ataque: from=${dia} se rechaza`, () => {
+        const r = RangoQuerySchema.safeParse({ from: dia });
+        expect(r.success).toBe(false);
+      });
+
+      it(`el ataque: to=${dia} se rechaza`, () => {
+        expect(RangoQuerySchema.safeParse({ to: dia }).success).toBe(false);
+      });
+    }
+
+    it('el mensaje habla del calendario, no del formato', () => {
+      const r = RangoQuerySchema.safeParse({ from: '2026-02-30' });
+
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.map((i) => i.message).join(' ')).toMatch(/calendario/i);
+      }
+    });
+
+    it('el hermano alcanzable: un rango REAL pasa y llega entero', () => {
+      const r = RangoQuerySchema.safeParse({ from: '2026-02-01', to: '2026-02-28' });
+
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+    });
+
+    /**
+     * ⚠️ El 31 de un mes de 30 es el caso que de verdad mordía: el Dashboard
+     * armaba el rango del mes a mano como `${mes}-01` .. `${mes}-31`, así que
+     * en febrero el límite superior se corría al **3 de marzo** y la tarjeta
+     * del equilibrio contaba hasta tres días del mes siguiente.
+     */
+    it('el 31 de febrero se rechaza: era el bug REAL del rango del mes', () => {
+      expect(RangoQuerySchema.safeParse({ from: '2026-02-01', to: '2026-02-31' }).success).toBe(
+        false,
+      );
+      // Y el 28 del mismo febrero sí: lo que se cierra es el día inventado.
+      expect(RangoQuerySchema.safeParse({ from: '2026-02-01', to: '2026-02-28' }).success).toBe(
+        true,
+      );
+    });
+
+    it('el otro hermano: sin rango sigue pasando, en sus tres formas', () => {
+      for (const vacio of [{}, { from: '', to: '' }, { from: null, to: null }]) {
+        expect(RangoQuerySchema.safeParse(vacio).success).toBe(true);
+      }
+    });
+
+    it('un ISO con hora NO pasa: el panel manda el día pelado y nada más', () => {
+      expect(RangoQuerySchema.safeParse({ from: '2026-02-01T00:00:00.000Z' }).success).toBe(false);
+    });
+
+    /** Un parámetro de más no es un error: Zod lo descarta, como en los cuerpos. */
+    it('un parámetro que no es del rango se descarta, no rompe', () => {
+      const r = RangoQuerySchema.safeParse({ from: '2026-02-01', pagina: '2' });
+
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data).toEqual({ from: '2026-02-01' });
+    });
+  });
+
+  /**
    * ⚠️ EL INVENTARIO, para que no vuelva a quedar una gemela abierta. Recorre
    * TODOS los schemas de entrada exportados y exige que ningún campo con
    * pinta de fecha (`*Date`, `date`, `closedAt`, `expectedAt`, `at`) acepte un
@@ -383,7 +464,12 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
    * aparece acá y no en la lista de arriba, que hay que acordarse de ampliar.
    */
   it('NINGÚN campo de fecha de NINGÚN schema de entrada acepta el 30 de febrero', () => {
-    const PARECE_FECHA = /(^|[a-z])(date|at)$/i;
+    // ⚠️ `from`, `to` y `month` se SUMARON el 2026-10-10 al cerrar los filtros
+    // de lectura: con el patrón viejo (`*date`/`*at`) el inventario **no los
+    // miraba**, así que `RangoQuerySchema` podía nacer flojo y el inventario
+    // habría dado verde. Van anclados a nombre COMPLETO: con `[a-z]to$`,
+    // `photo` entraría como si fuera una fecha.
+    const PARECE_FECHA = /^(from|to|month)$|(^|[a-z])(date|at)$/i;
     const abiertos: string[] = [];
 
     for (const [nombre, schema] of Object.entries(API as Record<string, unknown>)) {

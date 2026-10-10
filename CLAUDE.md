@@ -562,12 +562,59 @@ en el repo web: se sobrescribe al sincronizar.
         (describen lo que SALE; su `updatedAt` es un instante con hora, no un
         día de negocio). Un campo nuevo flojo aparece ahí **sin que nadie
         tenga que acordarse de ampliar la tabla**.
-      - ⚠️ **Lo que queda afuera y por qué**: los filtros de lectura
-        `?from&to` (`/sales`, `/expenses`, `/orders/payments`,
-        `/filament/purchases`) son `@Query('from') from?: string` **sin DTO
-        ni pipe**. Un día inventado ahí devuelve una lista mal filtrada, pero
-        **no persiste nada**; cerrarlos es otra tarea (hace falta un
-        `RangoQuerySchema` y tocar cuatro controladores).
+      - ✅ **Y LOS FILTROS DE LECTURA se cerraron el 2026-10-10 (shared
+        0.47.0)**, que eran lo último que quedaba afuera. `GET /sales`,
+        `/expenses`, `/orders/payments` y `/filament/purchases` eran
+        `@Query('from') from?: string` **sin DTO ni pipe**; ahora van con
+        **`RangoQuerySchema`** (`from`/`to` con `FECHA_OPCIONAL`), declarado
+        **al lado de `FECHA`**, al principio de `api.ts`.
+        - ⚠️ **No persisten nada y mienten igual, en las DOS direcciones.**
+          Los servicios hacen `new Date(from)` y
+          `new Date(`${to}T23:59:59.999Z`)`: `from=2026-02-30` arranca el **2
+          de marzo** y la lista sale recortada **sin avisar** (ves menos ventas
+          de las que hay), y `to=2026-02-31` termina el **3 de marzo** y
+          muestra días que nadie pidió. Un `?from&to` no escribe, pero es con
+          lo que el dueño mira su plata.
+        - ⚠️ **Medido en el panel, filtro por filtro, ANTES de apretar**: los
+          cuatro constructores de params filtran por verdad
+          (`if (range.from) p.from = range.from`), así que con el preset "Todo"
+          el parámetro **no viaja**; nadie manda `''` ni un ISO con hora. Por
+          eso es `FECHA_OPCIONAL` y no `FECHA`.
+        - ⚠️ **Pero la medición encontró un caso que SÍ rompe, y no era el
+          esperado**: el Dashboard armaba el rango del mes a mano,
+          `{ from: `${mes}-01`, to: `${mes}-31` }`, y **el 31 no existe en
+          cinco meses del año**. O sea que la tarjeta del punto de equilibrio
+          venía contando hasta TRES días del mes siguiente como ingresos "del
+          mes" (febrero), con un número que seguía siendo plausible. Se
+          arregló en el panel (`rangoDeMes`, el último día real, una sola
+          definición que comparte con el preset "Este mes") **en el mismo
+          despliegue**: sin eso, la validación devuelve 400 en noviembre.
+        - ⚠️ **Y HABÍA QUINTOS, los dos con su gemela ya cerrada al lado**:
+          `GET /goals?month=` (mientras `GET /goals/actuals` sí validaba con un
+          schema) y `GET /printers/readings?month=` (mientras
+          `GET /filament/stock|status|summary` usan `MonthSchema` desde
+          siempre). Las dos van ahora con `MonthSchema`. El de lecturas era el
+          peor: compara `r.month < month` como **TEXTO**, así que un `2026-13`
+          dejaba entrar todo 2026 y la "lectura anterior" salía de otro mes —
+          el mismo error de comparar texto que ya había mordido en
+          `CashBalanceQuerySchema`.
+        - ⚠️ **El inventario se amplió para que esto no se repita**: su patrón
+          era `*date`/`*at`, así que **no miraba `from`, `to` ni `month`** y
+          `RangoQuerySchema` podía nacer flojo con el inventario en verde.
+          Ahora es `/^(from|to|month)$|(^|[a-z])(date|at)$/i`, anclado a nombre
+          completo en los tres nuevos (con `[a-z]to$`, `photo` entraría como
+          si fuera una fecha).
+        - ⚠️ **No se valida `from <= to`.** Un rango al revés devuelve lista
+          vacía, que es raro pero no miente: los dos extremos son días reales
+          y el resultado es exactamente lo que se pidió.
+        - Regresión: `schemas/fecha-calendario.spec.ts` (shared, 22 tests
+          nuevos — los 8 días inventados por cada extremo, el 31 de febrero,
+          el ISO con hora y los tres "sin rango") y
+          `common/fecha-calendario.audit.spec.ts` (api, 20 — el pipe REAL más
+          la metadata de Nest con el **paramtype 4 (QUERY)**, no el 3 del
+          cuerpo, y la exigencia de que quede **un solo** `@Query` sin `data`:
+          con el pipe al lado de un `@Query('to')` suelto, el otro extremo
+          seguiría abierto).
     - ⚠️ Es una ruta **literal**, declarada ANTES de las paramétricas del
       controlador (la regla que avisan sus propios comentarios).
     - `previousDay` / `isCalendarDay` viven en `shared/calc/stock.ts`, con el

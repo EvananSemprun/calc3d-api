@@ -14,6 +14,7 @@ import {
 import {
   GoalSuggestionQuerySchema,
   GoalUpsertSchema,
+  MonthSchema,
   businessDateKey,
   goalProgress,
   goalsSummary,
@@ -390,8 +391,15 @@ export class GoalsController {
     return this.service.actuals(user.organizationId, q.month);
   }
 
+  /**
+   * ⚠️ El mes va con pipe, igual que su gemela `GET /goals/actuals`, que ya
+   * lo validaba. Un `2026-13` no es un mes y no puede pasar por donde pasa uno.
+   */
   @Get()
-  list(@CurrentUser() user: AuthUser, @Query('month') month?: string) {
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query('month', new ZodValidationPipe(MonthSchema.optional())) month?: string,
+  ) {
     if (month) return this.service.forMonth(user.organizationId, month);
     return this.service.list(user.organizationId);
   }

@@ -1,7 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  RangoQuerySchema,
   SaleCreateSchema,
   SaleUpdateSchema,
+  type RangoQueryDto,
   type SaleCreateDto,
   type SaleUpdateDto,
 } from '@calc3d/shared';
@@ -15,9 +17,17 @@ import { SalesService } from './sales.service';
 export class SalesController {
   constructor(private readonly service: SalesService) {}
 
+  /**
+   * ⚠️ El rango va con DTO y pipe: `@Query('from') from?: string` dejaba
+   * pasar un dia inventado, y `new Date('2026-02-30')` lo corre al 2 de marzo.
+   * La lista salia mal filtrada SIN avisar. Ver `RangoQuerySchema`.
+   */
   @Get()
-  list(@CurrentUser() user: AuthUser, @Query('from') from?: string, @Query('to') to?: string) {
-    return this.service.list(user.organizationId, from, to);
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(RangoQuerySchema)) q: RangoQueryDto,
+  ) {
+    return this.service.list(user.organizationId, q.from ?? undefined, q.to ?? undefined);
   }
 
   @Post()

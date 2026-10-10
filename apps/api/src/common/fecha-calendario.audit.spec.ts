@@ -29,6 +29,7 @@ import {
   PurchaseInvoicePaymentSchema,
   PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
+  RangoQuerySchema,
   SaleCreateSchema,
 } from '@calc3d/shared';
 import type { ZodSchema } from 'zod';
@@ -39,6 +40,9 @@ import { OrdersController } from '../orders/orders.module';
 import { LoansController } from '../loans/loans.module';
 import { PurchaseInvoicesController } from '../purchase-invoices/purchase-invoices.module';
 import { CampaignsController } from '../campaigns/campaigns.module';
+import { FilamentController } from '../filament/filament.controller';
+import { GoalsController } from '../goals/goals.module';
+import { PrintersController } from '../printers/printers.module';
 
 /** El 30 de febrero no existe; el 28 sí. Un cuerpo por puerta, igual salvo la fecha. */
 const INVENTADO = '2026-02-30';
@@ -324,6 +328,149 @@ describe('Y las tres familias que no mueven plata, por el mismo camino real', ()
         if (!real) throw new Error(`falta @Body(new ZodValidationPipe(...)) en ${puerta.ruta}`);
         expect(() => real.transform(puerta.cuerpo(INVENTADO))).toThrow(BadRequestException);
         expect(() => real.transform(puerta.cuerpo(REAL))).not.toThrow();
+      });
+    });
+  }
+});
+
+/**
+ * LOS FILTROS DE LECTURA `?from&to`, que estaban AFUERA a proposito.
+ *
+ * Eran `@Query('from') from?: string` sin DTO ni pipe en los cuatro
+ * controladores. No persisten nada --por eso se habian dejado para despues--
+ * pero mienten en las DOS direcciones: `from=2026-02-30` arranca el 2 de marzo
+ * y la lista sale recortada **sin avisar**, y `to=2026-02-31` termina el 3 de
+ * marzo y muestra dias que nadie pidio.
+ *
+ * ⚠️ Lo que se prueba aca NO es el schema (eso ya esta en `shared`), es que
+ * el pipe este **ENCHUFADO A LA RUTA**: un `RangoQuerySchema` impecable con
+ * `@Query('from')` al lado no cierra nada, y los tipos no lo notan. Por eso se
+ * lee la metadata REAL de Nest, y con el paramtype de QUERY (4) y no el de
+ * BODY (3): un pipe puesto en el cuerpo de una ruta que lee de la query
+ * pasaria la mitad de las comprobaciones.
+ *
+ * ⚠️ **Y LOS QUINTOS.** El barrido encontro dos filtros de lectura mas con
+ * el mismo defecto y su gemela YA cerrada al lado: `GET /goals?month=`
+ * (mientras `GET /goals/actuals` si valida con un schema) y
+ * `GET /printers/readings` (mientras `GET /filament/stock|status|summary` usan
+ * `MonthSchema`). El de lecturas compara `r.month < month` como TEXTO, asi que
+ * un `2026-13` deja entrar todo 2026 y la "lectura anterior" sale de otro mes
+ * -- el mismo error de comparar texto que ya habia mordido en
+ * `CashBalanceQuerySchema`.
+ */
+const FILTROS_DE_RANGO = [
+  { ruta: 'GET /sales', controller: SalesController, metodo: 'list' },
+  { ruta: 'GET /expenses', controller: ExpensesController, metodo: 'list' },
+  { ruta: 'GET /orders/payments', controller: OrdersController, metodo: 'listPayments' },
+  { ruta: 'GET /filament/purchases', controller: FilamentController, metodo: 'purchases' },
+] as const;
+
+/** Los filtros por MES, con el mismo defecto y su propia forma (`AAAA-MM`). */
+const FILTROS_DE_MES = [
+  { ruta: 'GET /goals', controller: GoalsController, metodo: 'list' },
+  { ruta: 'GET /printers/readings', controller: PrintersController, metodo: 'readings' },
+] as const;
+
+/** El `@Query` de un metodo, leido de la metadata de Nest (paramtype 4 = QUERY). */
+function queryDeLaRuta(controller: new (...args: never[]) => unknown, metodo: string) {
+  const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, metodo) as
+    | Record<string, { index: number; data?: string; pipes: unknown[] }>
+    | undefined;
+  return Object.entries(meta ?? {})
+    .filter(([clave]) => clave.startsWith('4:'))
+    .map(([, valor]) => valor);
+}
+
+/** El ZodValidationPipe que la ruta tiene puesto en su `@Query`. */
+function pipeDeLaQuery(controller: new (...args: never[]) => unknown, metodo: string) {
+  return queryDeLaRuta(controller, metodo)[0]?.pipes.find((p) => p instanceof ZodValidationPipe) as
+    | ZodValidationPipe<unknown>
+    | undefined;
+}
+
+describe('Los filtros de lectura ?from&to validan el calendario en la ruta', () => {
+  it('son cuatro: si aparece una lista con rango de fechas, se suma aca', () => {
+    expect(FILTROS_DE_RANGO).toHaveLength(4);
+  });
+
+  const pipe = new ZodValidationPipe(RangoQuerySchema);
+
+  it('el ataque: un from que no existe se rechaza con 400', () => {
+    expect(() => pipe.transform({ from: INVENTADO })).toThrow(BadRequestException);
+  });
+
+  it('el ataque por el otro extremo: el 31 de febrero tampoco pasa', () => {
+    expect(() => pipe.transform({ from: '2026-02-01', to: '2026-02-31' })).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('el hermano alcanzable: un rango real pasa', () => {
+    expect(() => pipe.transform({ from: '2026-02-01', to: REAL })).not.toThrow();
+  });
+
+  it('el otro hermano: sin rango sigue pasando (es el preset "Todo")', () => {
+    for (const vacio of [{}, { from: '', to: '' }, { from: null, to: null }]) {
+      expect(() => pipe.transform(vacio)).not.toThrow();
+    }
+  });
+
+  for (const filtro of FILTROS_DE_RANGO) {
+    describe(filtro.ruta, () => {
+      it('la ruta valida la QUERY con ZodValidationPipe (metadata real de Nest)', () => {
+        const queries = queryDeLaRuta(filtro.controller, filtro.metodo);
+
+        if (queries.length === 0) throw new Error(`${filtro.ruta} no lee nada de la query`);
+        // ⚠️ Un `@Query('from')` suelto NO puede quedar: con el pipe al lado
+        // de un parametro sin validar, el otro extremo del rango sigue abierto.
+        expect(queries).toHaveLength(1);
+        expect(queries[0].data).toBeUndefined();
+        expect(queries[0].pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+      });
+
+      it('el pipe que la ruta tiene puesto rechaza el dia inventado y deja pasar el real', () => {
+        const real = pipeDeLaQuery(filtro.controller, filtro.metodo);
+
+        if (!real) throw new Error(`falta @Query(new ZodValidationPipe(...)) en ${filtro.ruta}`);
+        expect(() => real.transform({ from: INVENTADO })).toThrow(BadRequestException);
+        expect(() => real.transform({ to: INVENTADO })).toThrow(BadRequestException);
+        expect(() => real.transform({ from: REAL, to: REAL })).not.toThrow();
+        expect(() => real.transform({})).not.toThrow();
+      });
+    });
+  }
+});
+
+describe('Y los QUINTOS: los filtros por mes que tenian su gemela ya cerrada', () => {
+  it('son dos: metas y lecturas de impresora', () => {
+    expect(FILTROS_DE_MES).toHaveLength(2);
+  });
+
+  for (const filtro of FILTROS_DE_MES) {
+    describe(filtro.ruta, () => {
+      it('la ruta valida el mes con ZodValidationPipe (metadata real de Nest)', () => {
+        const queries = queryDeLaRuta(filtro.controller, filtro.metodo);
+
+        if (queries.length === 0) throw new Error(`${filtro.ruta} no lee nada de la query`);
+        expect(queries[0].pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
+      });
+
+      it('el pipe de la ruta rechaza un mes imposible y deja pasar el real', () => {
+        const real = pipeDeLaQuery(filtro.controller, filtro.metodo);
+
+        if (!real) throw new Error(`falta el pipe en ${filtro.ruta}`);
+        // `2026-13` es el que de verdad miente: la comparacion por TEXTO
+        // (`r.month < month`) lo deja entrar y arrastra todo 2026.
+        for (const malo of ['2026-13', '2026-00', '2026-1', 'hola']) {
+          expect(() => real.transform(malo)).toThrow(BadRequestException);
+        }
+      });
+
+      it('el hermano alcanzable: un mes real pasa', () => {
+        const real = pipeDeLaQuery(filtro.controller, filtro.metodo);
+
+        if (!real) throw new Error(`falta el pipe en ${filtro.ruta}`);
+        expect(() => real.transform('2026-02')).not.toThrow();
       });
     });
   }

@@ -12,8 +12,10 @@ import {
 } from '@nestjs/common';
 import {
   MonthSchema,
+  RangoQuerySchema,
   StockMonthCloseSchema,
   StockMonthReopenSchema,
+  type RangoQueryDto,
   type StockMonthCloseDto,
   type StockMonthReopenDto,
 } from '@calc3d/shared';
@@ -32,8 +34,16 @@ export class FilamentController {
   constructor(private readonly service: FilamentService) {}
 
   @Get('purchases')
-  purchases(@CurrentUser() user: AuthUser, @Query('from') from?: string, @Query('to') to?: string) {
-    return this.service.purchases(user.organizationId, from, to);
+  /**
+   * ⚠️ El rango va con DTO y pipe: `@Query('from') from?: string` dejaba
+   * pasar un dia inventado, y `new Date('2026-02-30')` lo corre al 2 de marzo.
+   * La lista salia mal filtrada SIN avisar. Ver `RangoQuerySchema`.
+   */
+  purchases(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(RangoQuerySchema)) q: RangoQueryDto,
+  ) {
+    return this.service.purchases(user.organizationId, q.from ?? undefined, q.to ?? undefined);
   }
 
   /**

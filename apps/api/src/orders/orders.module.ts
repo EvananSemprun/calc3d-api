@@ -18,6 +18,7 @@ import {
   OrderCreateSchema,
   OrderUpdateSchema,
   PaymentCreateSchema,
+  RangoQuerySchema,
   orderBalance,
   orderPaid,
   orderTotal,
@@ -25,6 +26,7 @@ import {
   type OrderLine,
   type OrderUpdateDto,
   type PaymentCreateDto,
+  type RangoQueryDto,
 } from '@calc3d/shared';
 import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -232,13 +234,21 @@ export class OrdersController {
   }
 
   // Ruta literal ANTES de ':id' para que no la capture como id='payments'.
+  /**
+   * ⚠️ El rango va con DTO y pipe: `@Query('from') from?: string` dejaba
+   * pasar un dia inventado, y `new Date('2026-02-30')` lo corre al 2 de marzo.
+   * La lista salia mal filtrada SIN avisar. Ver `RangoQuerySchema`.
+   */
   @Get('payments')
   listPayments(
     @CurrentUser() user: AuthUser,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @Query(new ZodValidationPipe(RangoQuerySchema)) q: RangoQueryDto,
   ) {
-    return this.service.listPayments(user.organizationId, from, to);
+    return this.service.listPayments(
+      user.organizationId,
+      q.from ?? undefined,
+      q.to ?? undefined,
+    );
   }
 
   @Get(':id')
