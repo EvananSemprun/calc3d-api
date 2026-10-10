@@ -739,3 +739,102 @@ describe('Último mes cerrado', () => {
     await expect(service(prisma).lastClosedMonth(ORG)).resolves.toBeNull();
   });
 });
+
+/**
+ * EL PRECIO DE CADA TIPO (2026-10-10) — lo que la calculadora ofrece por
+ * defecto. El motor puro vive en `shared/calc/filament-type-price.ts` y tiene
+ * sus propios tests con los números a mano; acá se fija la PARTE DEL SERVIDOR:
+ * de dónde salen las compras, que sean de ESTA organización y que el promedio
+ * se DERIVE de ellas en vez de leer un número guardado.
+ */
+describe('Precio por tipo de filamento', () => {
+  /** Un gasto de filamento como lo devuelve Prisma: `amount` es string. */
+  function gasto(p: {
+    amount: string;
+    quantity: number | null;
+    type?: string | null;
+    rollGrams?: number;
+  }) {
+    return {
+      amount: p.amount,
+      quantity: p.quantity,
+      material: { type: p.type ?? 'PLA', rollGrams: p.rollGrams ?? 1000 },
+    };
+  }
+
+  it('deriva el promedio de las COMPRAS, ponderado por rollos', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ amount: '25', quantity: 1 }),
+      gasto({ amount: '180', quantity: 9 }),
+      gasto({ amount: '38', quantity: 2, type: 'PETG' }),
+    ]);
+
+    const r = await service(prisma).typePrices(ORG);
+
+    expect(r).toHaveLength(2);
+    expect(r[0]).toMatchObject({ type: 'PLA', rolls: 10, purchases: 2, rollGrams: 1000 });
+    expect(r[0].rollPrice).toBeCloseTo(20.5, 10);
+    expect(r[1]).toMatchObject({ type: 'PETG', rolls: 2 });
+    expect(r[1].rollPrice).toBeCloseTo(19, 10);
+  });
+
+  it('solo mira los gastos de ESTA organización que tienen ficha de material', async () => {
+    const prisma = makePrisma();
+    await service(prisma).typePrices(ORG);
+
+    expect(prisma.expense.findMany.mock.calls[0][0]).toMatchObject({
+      where: { organizationId: ORG, materialId: { not: null } },
+    });
+  });
+
+  /**
+   * ⚠️ La regla central del dominio: **los precios no se persisten, se
+   * derivan.** `Material.rollPrice` existe y es el de la ÚLTIMA compra; si el
+   * promedio saliera de ahí, un tipo quedaría cotizado al precio de su último
+   * color comprado y el promedio sería decorativo.
+   */
+  it('NO lee el precio guardado en la ficha: sale de lo que se pagó', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([gasto({ amount: '40', quantity: 2 })]);
+
+    const r = await service(prisma).typePrices(ORG);
+
+    expect(r[0].rollPrice).toBeCloseTo(20, 10);
+    // La consulta no pide `rollPrice`: no hay por dónde colarse.
+    expect(JSON.stringify(prisma.expense.findMany.mock.calls[0][0])).not.toContain('rollPrice');
+    expect(prisma.material.findMany).not.toHaveBeenCalled();
+  });
+
+  it('un gasto sin rollos (`quantity` en null) no rompe ni cuenta', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ amount: '20', quantity: null }),
+      gasto({ amount: '40', quantity: 2, type: 'PETG' }),
+    ]);
+
+    const r = await service(prisma).typePrices(ORG);
+
+    expect(r.map((t) => t.type)).toEqual(['PETG']);
+  });
+
+  it('el rollo REGALADO no entra en el promedio', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ amount: '80', quantity: 4 }),
+      // `PLA Creality Azul oscuro`: se lo regalaron. Incluirlo daría 16.
+      gasto({ amount: '0', quantity: 1 }),
+    ]);
+
+    const r = await service(prisma).typePrices(ORG);
+
+    expect(r[0].rollPrice).toBeCloseTo(20, 10);
+    expect(r[0].rolls).toBe(4);
+  });
+
+  it('sin compras devuelve una lista vacía: no se ofrece ningún tipo en $0', async () => {
+    const prisma = makePrisma();
+
+    await expect(service(prisma).typePrices(ORG)).resolves.toEqual([]);
+  });
+});

@@ -8,8 +8,10 @@ import {
   previousMonth,
   purchaseCostPerGram,
   purchaseCostPerRoll,
+  preciosPorTipo,
   stockTotal,
   type FilamentPurchase,
+  type PrecioPorTipo,
   type MaterialStatus,
   type StockCountRow,
   type StockMonthCloseDto,
@@ -115,6 +117,36 @@ export class FilamentService {
         fromInvoice: g.purchaseInvoiceLineId != null,
       };
     });
+  }
+
+  /**
+   * El precio de cada TIPO de filamento, para que la calculadora arranque en el
+   * promedio del tipo en vez de obligar a elegir un color (2026-10-10).
+   *
+   * ⚠️ **Es DERIVADO, como el saldo de un pedido o el gastado de una campaña**:
+   * no hay ninguna columna "promedio del PLA" que pueda quedar vieja. Sale de
+   * los MISMOS gastos que muestra `GET /filament/purchases`, así que la
+   * calculadora y la pantalla de Compras no pueden contradecirse.
+   *
+   * ⚠️ Tampoco lee `Material.rollPrice`: ese es el precio de la ÚLTIMA compra
+   * de UNA ficha. El promedio del tipo sale de lo que se pagó, compra por
+   * compra. Las reglas (el regalo afuera, ponderado por rollos, un tipo sin
+   * precio no se ofrece) viven en `preciosPorTipo`, en shared.
+   */
+  async typePrices(organizationId: string): Promise<PrecioPorTipo[]> {
+    const compras = await this.prisma.expense.findMany({
+      where: { organizationId, materialId: { not: null } },
+      select: { amount: true, quantity: true, material: { select: { type: true, rollGrams: true } } },
+    });
+
+    return preciosPorTipo(
+      compras.map((c) => ({
+        type: c.material?.type ?? null,
+        rolls: c.quantity ?? 0,
+        amount: Number(c.amount),
+        rollGrams: c.material?.rollGrams ?? 0,
+      })),
+    );
   }
 
   /** El conteo del mes, con TODOS los materiales (los no contados, en cero). */

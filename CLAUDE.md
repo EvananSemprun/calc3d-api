@@ -1275,6 +1275,41 @@ en el repo web: se sobrescribe al sincronizar.
     ahora devuelve `brand`/`type`/`color`. Dos fuentes para el mismo total
     terminan discrepando, y en un resumen no se nota. Tests:
     `filament-analytics.spec.ts`.
+  - **La calculadora cotiza por TIPO, no por color (2026-10-10, shared 0.43.0)** —
+    `GET /filament/type-prices` (`FilamentService.typePrices`) devuelve el
+    precio de cada tipo, DERIVADO de las compras. El motor puro es
+    `preciosPorTipo` en `shared/calc/filament-type-price.ts`.
+    - **Por qué.** Medido en producción ese día: el PLA tiene **47 fichas entre
+      $0,00 y $25,94 y casi todas valen 20**, así que elegir el COLOR no
+      compraba precisión. Entre TIPOS sí: PLA PURE $13 contra PLA SILK $22,84
+      es 75 % de diferencia, y cotizar los dos a 20 deja el primero 54 % caro
+      (se pierde el trabajo) y el segundo 12 % barato (se pierde el margen).
+    - ⚠️ **El rollo REGALADO no entra.** `PLA Creality Azul oscuro` costó $0
+      porque se lo regalaron: el gasto en $0 es verdadero y **se queda en el
+      ledger**, pero no es una señal de precio. La regla es exactamente
+      `amount <= 0` ("no hay precio"), **nunca** "es sospechosamente barato":
+      el PLA PURE a $13 es un dato real y es justo el que hace que cotizar por
+      tipo valga la pena. Cualquier regla de atípicos lo borraría con el regalo.
+    - **Se pondera por ROLLOS comprados, no por ficha.** Hoy casi todas las
+      fichas tienen una sola compra (entraron con el import del 31/08) y los
+      dos números coinciden; está fijado con test **ahora**, mientras no se
+      nota.
+    - ⚠️ **Los GRAMOS se promedian igual, ponderados por rollos**, así
+      `rollPrice / rollGrams` da el costo por gramo REAL del tipo
+      (Σdinero / Σgramos). Fijarlos en 1000 haría mentir al par que la
+      calculadora copia en cuanto haya un rollo que no sea de 1 kg.
+    - Un tipo **sin ninguna compra con precio** (o sin gramos, o sin rollos) no
+      tiene promedio: **no se ofrece**, en vez de ofrecerse en $0.
+    - ⚠️ **No lee `Material.rollPrice`**, que es el precio de la ÚLTIMA compra
+      de UNA ficha: es la regla central del dominio (los precios se DERIVAN).
+      Sale de los MISMOS gastos que `GET /filament/purchases`, así que la
+      calculadora y Compras no pueden contradecirse.
+    - Las fichas **descontinuadas SÍ entran** en el promedio del tipo:
+      descontinuar es una decisión sobre la VARIEDAD, y lo que se pagó por ese
+      color sigue siendo evidencia de lo que cuesta el tipo.
+    - Tests: `filament-type-price.spec.ts` (shared, 12 con números a mano),
+      `filament.service.spec.ts` y `filament.controller.spec.ts` (la ruta y que
+      la organización sale de la SESIÓN).
   - **Importación del Excel** (`prisma/import-filamento.mjs` + `filamento-excel.json`):
     trae el control de filamento desde las hojas "Inventario" y "Stock mensual".
     Se corre a mano (`node --env-file=.env prisma/import-filamento.mjs`), **sin

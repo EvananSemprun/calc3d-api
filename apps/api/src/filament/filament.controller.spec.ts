@@ -84,4 +84,20 @@ describe('FilamentController', () => {
       expect(monthArg.pipes.some((p) => p instanceof ZodValidationPipe)).toBe(true);
     }
   });
+  /**
+   * El precio por tipo es la fuente que la calculadora usa para cotizar. La
+   * organización sale de la SESIÓN: si alguna vez entrara por un parámetro,
+   * cotizarías con los precios de otro negocio.
+   */
+  it('GET /filament/type-prices es de lectura y la organización sale de la sesión', async () => {
+    const proto = FilamentController.prototype as unknown as Record<string, object>;
+    expect(Reflect.getMetadata(PATH_METADATA, proto.typePrices)).toBe('type-prices');
+    expect(Reflect.getMetadata(METHOD_METADATA, proto.typePrices)).toBe(RequestMethod.GET);
+
+    const service = { typePrices: jest.fn().mockResolvedValue([]) };
+    const controller = new FilamentController(service as never);
+    await controller.typePrices({ organizationId: 'org-A' } as never);
+
+    expect(service.typePrices).toHaveBeenCalledWith('org-A');
+  });
 });

@@ -36,6 +36,16 @@ export class FilamentController {
     return this.service.purchases(user.organizationId, from, to);
   }
 
+  /**
+   * El precio de cada TIPO, para que la calculadora arranque en el promedio en
+   * vez de obligar a elegir un color. Es DERIVADO de las compras: no hay ningún
+   * promedio guardado que pueda quedar viejo.
+   */
+  @Get('type-prices')
+  typePrices(@CurrentUser() user: AuthUser) {
+    return this.service.typePrices(user.organizationId);
+  }
+
   @Get('stock/status')
   status(@CurrentUser() user: AuthUser, @Query('month', new ZodValidationPipe(MonthSchema)) month: string) {
     return this.service.monthStatus(user.organizationId, month);

@@ -88,24 +88,24 @@ cuestan 20. **Entre tipos sí**: PLA PURE 13 contra SILK 22,84 es 75 % de
 diferencia, y cotizar los dos a 20 deja el primero 54 % caro y el segundo 12 %
 barato.
 
-- [ ] La calculadora arranca en **el promedio del tipo** ("PLA — promedio
+- [x] La calculadora arranca en **el promedio del tipo** ("PLA — promedio
       $20.26") y se puede cambiar de tipo. **La ficha puntual sigue
       disponible** para cuando importe.
-- [ ] ⚠️ **El rollo regalado no entra en el promedio.** `PLA Creality Azul
+- [x] ⚠️ **El rollo regalado no entra en el promedio.** `PLA Creality Azul
       oscuro` costó $0 porque se lo regalaron: es un dato verdadero y se queda
       como gasto, pero **no es una señal de precio** y hundiría el promedio del
       PLA. Su test, con el número a mano.
-- [ ] El promedio se **pondera por rollos comprados**, no por ficha: un color
+- [x] El promedio se **pondera por rollos comprados**, no por ficha: un color
       que compraste una vez no puede pesar lo mismo que uno que comprás siempre.
       Hoy casi todas las fichas tienen una compra, así que los dos números
       coinciden — por eso hay que fijarlo con un test ahora, mientras no se
       nota, y no después cuando empiece a importar.
-- [ ] ⚠️ Un tipo **sin ninguna compra con precio** no tiene promedio: no se
+- [x] ⚠️ Un tipo **sin ninguna compra con precio** no tiene promedio: no se
       ofrece, en vez de ofrecer $0.
-- [ ] El cálculo es una **función pura en `shared`** con sus tests de números a
+- [x] El cálculo es una **función pura en `shared`** con sus tests de números a
       mano. El JSX solo elige.
-- [ ] Mutación: incluir el regalo en el promedio tiene que tumbar un test.
-- [ ] `git commit`.
+- [x] Mutación: incluir el regalo en el promedio tiene que tumbar un test.
+- [x] `git commit`.
 
 ---
 
