@@ -1164,6 +1164,20 @@ en el repo web: se sobrescribe al sincronizar.
     **la cuota NO se guarda**, se deriva de los préstamos abiertos. El "costo
     variable" de la hoja y el `breakEvenMarginPct` de la app son el mismo dato
     al revés (0,25 ⇄ 0,75). Tests: `breakeven-levels.spec.ts`, `loan.spec.ts`.
+    - ⚠️ **Lo COMPROMETIDO en facturas de compra NO entra en el equilibrio**
+      (2026-10-10, shared 0.40.0). Una factura se paga **una vez**: sumarla a
+      los costos fijos haría saltar el número mes a mes —arriba el mes de una
+      compra grande, abajo el siguiente— y lo volvería inútil justo para lo que
+      sirve, que es decidir precios. Los fijos son lo que se repite TODOS los
+      meses; un compromiso puntual no es uno de ellos. Va **al lado** del
+      número, con `equilibrioYCompromiso()` (`shared/calc/breakeven.ts`), que
+      devuelve los niveles **calculados sin el compromiso** más el monto, la
+      cantidad de facturas y un `mostrar`. El monto es `totals.proveedores` de
+      `GET /loans/overview` —la cuarta forma de contar lo mismo no existe— y lo
+      pagado **de más** no se resta (no compensa; decisión de la Tarea 3).
+      Regresión: `breakeven-compromiso.spec.ts` (el equilibrio con y sin
+      facturas da **el mismo** objeto; mutación obligatoria = sumar `monto` a
+      `fixedMonthly`, tumba 2 tests).
   - **Costos fijos + punto de equilibrio (Fase 2B)** — `Settings.fixedCosts`
     (JSON `[{concept, monthlyAmount}]`) y `Settings.breakEvenMarginPct` (fracción,
     default 0.4). NO entran en el precio por pieza. Helpers puros en
