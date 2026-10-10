@@ -511,10 +511,42 @@ en el repo web: se sobrescribe al sincronizar.
       `schemas/fecha-calendario.spec.ts` (las tres puertas, con su hermano
       alcanzable) y `cash/cash.service.spec.ts` (contra el pipe REAL + metadata
       de Nest de `addMovement` y `saveReconciliation`).
-      ⚠️ **Los otros `date` de `api.ts` NO usan `FECHA`**: son
-      `z.string().min(1)` (ventas, gastos, abonos, cuotas, facturas) y siguen
-      aceptando un día inventado. Pendiente aparte; ver "Lo que falta" del plan
-      de la Fase 1.
+      ⚠️ **Las otras OCHO puertas se cerraron el 2026-10-10 (shared 0.41.0).**
+      `SaleCreateSchema`, `ExpenseCreateSchema`, `ExpenseWithDefinitionSchema`,
+      `PaymentCreateSchema`, `LoanPaymentCreateSchema`,
+      `PurchaseInvoiceUpsertSchema`, `PurchaseInvoicePaymentSchema` y
+      `PurchaseReceiveSchema` eran `z.string().min(1)` y aceptaban cualquier
+      texto; todas pasan por `new Date(dto.date)` en su servicio, así que el 30
+      de febrero se guardaba el 2 de marzo. Ahora usan `FECHA` (y las
+      gemelas de edición lo heredan por `.partial()`).
+      - ⚠️ **`FECHA` se mudó al PRINCIPIO de `api.ts`.** Es un `const`: estando
+        declarada en la sección de Caja, los schemas de arriba **no podían
+        usarla** (TDZ al cargar el módulo) — esa fue la razón mecánica de que
+        siguieran flojas. Si se vuelve a mover para abajo, vuelve el agujero.
+      - **`FECHA_OPCIONAL`** (al lado) es para los campos donde "sin fecha" es
+        válido: `Expense.endDate`, `PurchaseInvoice.expectedAt` y la fecha de
+        una recepción. Acepta `''`/`null`/ausente porque **ya los aceptaba** (un
+        `<input type="date">` vacío manda `''` y los servicios lo tratan como
+        "no hay fecha"); exigirles fecha rompía el panel sin cerrar nada.
+      - **Medido antes de apretar**: el panel manda SIEMPRE `AAAA-MM-DD`
+        (`<Input type="date">`, `todayKey()` o `.slice(0, 10)`) y los
+        importadores del Excel escriben por Prisma **sin pasar por estos
+        schemas**. Nadie manda un ISO con hora, así que la forma es el día
+        pelado. Si algún cliente lo necesitara, se amplía en la constante.
+      - Regresión: `schemas/fecha-calendario.spec.ts` (shared, las 12 puertas
+        con su hermano alcanzable) y **`common/fecha-calendario.audit.spec.ts`**
+        (api), que prueba el `ZodValidationPipe` REAL y además lee la metadata
+        de Nest: un schema cerrado con la ruta sin pipe no cierra nada y los
+        tipos no lo notan.
+      - ⚠️ **Siguen flojas, fuera del alcance de esa tarea**: las fechas que no
+        mueven plata del ledger — `CampaignCreateSchema.startDate`/`endDate`,
+        `LoanCreateSchema` (`startDate`/`nextDueDate`/`closedAt`) y
+        `OrderCreateSchema.deliveryDate`. **Medido**: el panel les manda
+        `AAAA-MM-DD` o `null`/`''` igual que a las otras ocho, así que se
+        cierran con `FECHA`/`FECHA_OPCIONAL` **en una línea cada una, sin tocar
+        el cliente**. Vale la pena hacerlo: un `nextDueDate` corrido al mes
+        siguiente es un compromiso mal fechado, y un `deliveryDate` inventado
+        sale impreso en la nota de entrega.
     - ⚠️ Es una ruta **literal**, declarada ANTES de las paramétricas del
       controlador (la regla que avisan sus propios comentarios).
     - `previousDay` / `isCalendarDay` viven en `shared/calc/stock.ts`, con el

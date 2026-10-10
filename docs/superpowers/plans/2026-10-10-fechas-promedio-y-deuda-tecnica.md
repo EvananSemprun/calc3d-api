@@ -26,21 +26,21 @@ La Tarea 8 de la fase 1 cerró el calendario en tres campos (`FECHA` + el helper
 `PurchaseInvoicePaymentSchema`, `PurchaseReceiveSchema` (y los `endDate` /
 `expectedAt` opcionales que cuelgan de ellos).
 
-- [ ] ⚠️ **Primero medí qué manda cada cliente.** Esos campos hoy admiten
+- [x] ⚠️ **Primero medí qué manda cada cliente.** Esos campos hoy admiten
       también un ISO con hora, así que apretarlos a `AAAA-MM-DD` a secas puede
       romper el panel o los scripts de importación. Revisá el panel campo por
       campo y decilo en el reporte **antes** de elegir la forma.
-- [ ] La validación acepta lo que ya se manda y **rechaza el día que no existe**
+- [x] La validación acepta lo que ya se manda y **rechaza el día que no existe**
       (`2026-02-30`, `2026-04-31`, `2026-13-01`). Si hace falta un validador
       nuevo que admita las dos formas, que viva **al lado de `FECHA`** y no
       duplicado en ocho lugares: el agujero de la Tarea 8 fue exactamente que el
       `refine` colgaba de uno solo.
-- [ ] ⚠️ **Superficie sensible** (DTOs de entrada + dinero): el test de ataque
+- [x] ⚠️ **Superficie sensible** (DTOs de entrada + dinero): el test de ataque
       va **por cada puerta**, primero en rojo, y la suite de seguridad verde
       antes de dar la tarea por terminada.
-- [ ] Mutación por puerta: sacarle la validación a una tiene que tumbar su test.
+- [x] Mutación por puerta: sacarle la validación a una tiene que tumbar su test.
       Si una mutación tumba menos de lo esperado, sospechá del código.
-- [ ] `git commit`.
+- [x] `git commit`.
 
 ---
 

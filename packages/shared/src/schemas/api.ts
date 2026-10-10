@@ -15,6 +15,59 @@ const CatalogScopeSchema = z.enum(['PER_PIECE', 'PER_ORDER']);
  * frontend (formularios con React Hook Form + Zod). Mensajes en español.
  */
 
+/**
+ * UN DÍA DE NEGOCIO: `AAAA-MM-DD` **que exista en el calendario**.
+ *
+ * ⚠️ El regex solo valida la FORMA, y eso no alcanza: `'2026-02-30'` la pasa y
+ * `new Date()` lo **corre al 2 de marzo** sin avisar. Entra por TODAS las
+ * puertas de dinero escritas por el cliente —ventas, gastos, abonos de pedido,
+ * cuotas de préstamo, facturas de compra, sus abonos, sus recepciones y los
+ * movimientos y conciliaciones de caja—, así que el asiento queda fechado en
+ * otro mes: el saldo "hasta el 28 de febrero" no lo cuenta y después aparece
+ * como un faltante sin causa visible. `'2026-13-01'` es peor todavía en el
+ * recorte del motor, que compara TEXTO: deja entrar todo 2026 y el "saldo
+ * hasta esa fecha" vuelve a ser el saldo entero (ver `CashBalanceQuerySchema`).
+ *
+ * ⚠️ El chequeo del calendario va ACÁ, en la constante, no en cada uso: una
+ * puerta cerrada con su gemela abierta al lado no cierra nada. Todo lo que use
+ * `FECHA` lo hereda, y un `date: FECHA` nuevo nace cerrado.
+ *
+ * ⚠️ **Y vive ARRIBA DE TODO a propósito.** Es un `const`, así que un schema
+ * declarado antes que ella reventaría al cargar el módulo ("Cannot access
+ * 'FECHA' before initialization"): el único orden que funciona es este.
+ * Hasta el 2026-10-10 estaba declarada en la mitad del archivo, con la sección
+ * de Caja, y por eso las ocho puertas de arriba **no podían usarla** — fue la
+ * razón mecánica de que siguieran siendo `z.string().min(1)`.
+ *
+ * ⚠️ **Es `AAAA-MM-DD` a secas, sin hora, y eso está medido**: el panel manda
+ * siempre un día pelado (`<Input type="date">`, `todayKey()` o
+ * `.slice(0, 10)`), y los importadores del Excel escriben por Prisma sin pasar
+ * por estos schemas. Nadie manda un ISO con hora. Si algún día un cliente
+ * nuevo lo necesitara, se amplía ACÁ y en un solo lugar.
+ */
+const FECHA = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD')
+  .refine(isCalendarDay, 'Ese día no existe en el calendario');
+
+/**
+ * La misma fecha, para los campos donde **"sin fecha" es un valor legítimo**:
+ * el `endDate` de un gasto de período, el `expectedAt` de una factura y la
+ * fecha de una recepción (sin ella, el servidor usa hoy).
+ *
+ * ⚠️ Acepta `''` además de `null` y ausente porque **ya los aceptaba**: un
+ * `<input type="date">` vacío manda `''` y los servicios lo tratan desde
+ * siempre como "no hay fecha" (`dto.endDate ? new Date(dto.endDate) : null`).
+ * Exigirles una fecha no cerraría ningún agujero: rompería al panel. Lo que se
+ * cierra es el día inventado, que es lo que se guardaba corrido.
+ */
+const FECHA_OPCIONAL = z
+  .string()
+  .regex(/^(\d{4}-\d{2}-\d{2})?$/, 'La fecha va como AAAA-MM-DD')
+  .refine((v) => v === '' || isCalendarDay(v), 'Ese día no existe en el calendario')
+  .optional()
+  .nullable();
+
 export const LoginSchema = z.object({
   email: z.string().email('Correo inválido'),
   password: z.string().min(1, 'La contraseña es obligatoria'),
@@ -401,7 +454,7 @@ export const OrderUpdateSchema = OrderCreateSchema.partial();
 export type OrderUpdateDto = z.infer<typeof OrderUpdateSchema>;
 
 export const PaymentCreateSchema = z.object({
-  date: z.string().min(1, 'La fecha es obligatoria'),
+  date: FECHA,
   amount: z.number().positive('El abono debe ser mayor que 0'),
   note: z.string().optional().nullable(),
 });
@@ -433,7 +486,7 @@ const SaleKindNuevaSchema = SaleKindSchema.refine((k) => k === 'COUNTER', {
 });
 
 export const SaleCreateSchema = z.object({
-  date: z.string().min(1, 'La fecha es obligatoria'),
+  date: FECHA,
   amount: z.number().min(0, 'El monto no puede ser negativo'),
   kind: SaleKindNuevaSchema.default('COUNTER'),
   clientId: z.string().optional().nullable(),
@@ -461,13 +514,13 @@ export const ExpenseCategorySchema = z.enum([
 export type ExpenseCategoryDto = z.infer<typeof ExpenseCategorySchema>;
 
 export const ExpenseCreateSchema = z.object({
-  date: z.string().min(1, 'La fecha es obligatoria'),
+  date: FECHA,
   category: ExpenseCategorySchema.default('OTHER'),
   description: z.string().min(1, 'La descripción es obligatoria'),
   amount: z.number().min(0, 'El monto no puede ser negativo'),
   isInvestment: z.boolean().default(false),
   quantity: z.number().int().positive().optional().nullable(),
-  endDate: z.string().optional().nullable(),
+  endDate: FECHA_OPCIONAL,
   /**
    * A quién le compraste: un contacto del directorio con tipo "Proveedor".
    *
@@ -505,7 +558,7 @@ export type ExpenseLinkKind = z.infer<typeof ExpenseLinkKindSchema>;
 
 export const ExpenseWithDefinitionSchema = z.object({
   expense: z.object({
-    date: z.string().min(1, 'La fecha es obligatoria'),
+    date: FECHA,
     amount: z.number().min(0, 'El monto no puede ser negativo'),
     category: ExpenseCategorySchema,
     description: z.string().min(1, 'La descripción es obligatoria'),
@@ -562,7 +615,7 @@ export const LoanUpdateSchema = LoanCreateSchema.partial();
 export type LoanUpdateDto = z.infer<typeof LoanUpdateSchema>;
 
 export const LoanPaymentCreateSchema = z.object({
-  date: z.string().min(1, 'Falta la fecha del pago'),
+  date: FECHA,
   amount: z.number().positive('El pago tiene que ser mayor que cero'),
   /** Referencia bancaria o lo que sirva para reconciliar después. */
   reference: z.string().optional().nullable(),
@@ -590,26 +643,9 @@ export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 
 // ---------- Caja ----------
 
-/**
- * UN DÍA DE NEGOCIO: `AAAA-MM-DD` **que exista en el calendario**.
- *
- * ⚠️ El regex solo valida la FORMA, y eso no alcanza: `'2026-02-30'` la pasa y
- * `new Date()` lo **corre al 2 de marzo** sin avisar. Entra por los movimientos
- * de caja y por el upsert de conciliaciones —dinero, y escrito por el cliente—,
- * así que el movimiento queda fechado en otro mes: el saldo "hasta el 28 de
- * febrero" no lo cuenta y después aparece como un faltante sin causa visible.
- * `'2026-13-01'` es peor todavía en el recorte del motor, que compara TEXTO:
- * deja entrar todo 2026 y el "saldo hasta esa fecha" vuelve a ser el saldo
- * entero (ver `CashBalanceQuerySchema`).
- *
- * ⚠️ El chequeo del calendario va ACÁ, en la constante, no en cada uso: una
- * puerta cerrada con su gemela abierta al lado no cierra nada. Todo lo que use
- * `FECHA` lo hereda, y un `date: FECHA` nuevo nace cerrado.
- */
-const FECHA = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD')
-  .refine(isCalendarDay, 'Ese día no existe en el calendario');
+// `FECHA` y `FECHA_OPCIONAL` se declaran ARRIBA DE TODO (ver su comentario):
+// son `const`, y los schemas de ventas, gastos, abonos y compras —declarados
+// antes que esta sección— también las usan.
 
 /** Plata PURA entre el bolsillo de la contraparte y la caja (no es un gasto). */
 export const OwnerMovementCreateSchema = z.object({
@@ -876,10 +912,10 @@ export const PurchaseInvoiceLineSchema = z
 export type PurchaseInvoiceLineDto = z.infer<typeof PurchaseInvoiceLineSchema>;
 
 export const PurchaseInvoiceUpsertSchema = z.object({
-  date: z.string().min(1, 'Falta la fecha de la factura'),
+  date: FECHA,
   supplierId: z.string().min(1).optional().nullable(),
   /** Cuándo se espera que llegue. Es una expectativa, no un compromiso. */
-  expectedAt: z.string().optional().nullable(),
+  expectedAt: FECHA_OPCIONAL,
   reference: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
   lines: z.array(PurchaseInvoiceLineSchema).min(1, 'Una factura sin líneas no compra nada'),
@@ -888,7 +924,7 @@ export type PurchaseInvoiceUpsertDto = z.infer<typeof PurchaseInvoiceUpsertSchem
 
 /** Un abono. **Esto es lo que mueve la caja.** */
 export const PurchaseInvoicePaymentSchema = z.object({
-  date: z.string().min(1, 'Falta la fecha del abono'),
+  date: FECHA,
   amount: z.number().positive('El abono tiene que ser mayor que cero'),
   /** QUIÉN puso la plata. `null` = la caja del negocio. */
   counterpartyId: z.string().min(1).optional().nullable(),
@@ -914,7 +950,7 @@ export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;
 export const PurchaseReceiveSchema = z.object({
   quantity: z.number().int().positive('¿Cuántos llegaron?'),
   /** Cuándo llegó. Por defecto, hoy. */
-  date: z.string().optional().nullable(),
+  date: FECHA_OPCIONAL,
   /** Para una ficha que nace en esta recepción. */
   rollGrams: z.number().int().positive().optional().nullable(),
 });
