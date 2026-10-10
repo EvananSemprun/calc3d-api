@@ -1668,6 +1668,18 @@ en el repo web: se sobrescribe al sincronizar.
     REABIERTO sí deja borrar fichas que solo tengan conteos en él (la guarda mira
     meses con `closedAt` — "un mes reabierto no es dato final").
     Carrera borrar-ficha vs cerrar-mes aceptada sin candado (un solo dueño).
+    - **`GET /filament/stock/last-closed`** (2026-10-10, shared 0.48.0) —
+      `{ month: 'AAAA-MM' | null }`, el último mes cerrado. Lo pide el aviso del
+      Dashboard que recuerda contar (`conteoDeStockPendiente` en shared, Fase 6).
+      ⚠️ **No se puede reemplazar por `/stock/status?month=`**: ese dice si
+      septiembre está cerrado, pero no distingue "no lo cerró" de "este negocio
+      todavía no cerró ningún mes" — y es justo ese caso el que apaga el aviso.
+      ⚠️ Devuelve `null` y **no un 404**: "no hay ningún cierre" es un dato, y
+      con un error el panel tendría que tratar un fallo de red como "no hay".
+      Reusa el `lastClosedMonth` que ya existía para el reporte en Excel: no hay
+      una segunda cuenta del mismo número. Regresión:
+      `filament.controller.spec.ts` (ruta, verbo y que la organización salga de
+      la sesión).
     `import-filamento.mjs` aborta si hay meses cerrados, incluso en ensayo (ver
     "Importación del Excel" más arriba). Regresión de seguridad: `filament.service.spec.ts`,
     `filament.controller.spec.ts` (fija por metadata de Nest el guard JWT de

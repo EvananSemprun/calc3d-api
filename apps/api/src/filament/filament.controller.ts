@@ -56,6 +56,24 @@ export class FilamentController {
     return this.service.typePrices(user.organizationId);
   }
 
+  /**
+   * El ÚLTIMO mes cerrado, para el aviso del Dashboard que recuerda contar.
+   *
+   * ⚠️ **El panel no puede deducirlo del estado de un mes suelto.**
+   * `/stock/status?month=2026-09` dice si septiembre está cerrado, pero no
+   * distingue "no lo cerró" de "este negocio todavía no cerró ningún mes", que
+   * es justo el caso en el que el aviso NO tiene que aparecer (ver
+   * `conteoDeStockPendiente` en shared).
+   *
+   * ⚠️ Devuelve `{ month: null }` y no un 404: "no hay ningún cierre" es un
+   * DATO que apaga el aviso. Con un error, el panel tendría que tratar un fallo
+   * de red como "no hay", que es cómo se termina avisando de más o de menos.
+   */
+  @Get('stock/last-closed')
+  async lastClosed(@CurrentUser() user: AuthUser): Promise<{ month: string | null }> {
+    return { month: await this.service.lastClosedMonth(user.organizationId) };
+  }
+
   @Get('stock/status')
   status(@CurrentUser() user: AuthUser, @Query('month', new ZodValidationPipe(MonthSchema)) month: string) {
     return this.service.monthStatus(user.organizationId, month);

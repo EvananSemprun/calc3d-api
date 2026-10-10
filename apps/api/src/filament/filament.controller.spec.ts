@@ -85,6 +85,42 @@ describe('FilamentController', () => {
     }
   });
   /**
+   * EL ÚLTIMO MES CERRADO, para el aviso del Dashboard (2026-10-10).
+   *
+   * ⚠️ El Dashboard **no puede deducirlo** del estado de un mes suelto:
+   * `/stock/status?month=2026-09` dice si septiembre está cerrado, pero no
+   * distingue "no lo cerró" de "este negocio todavía no cerró ningún mes", que
+   * es justo el caso en el que el aviso NO tiene que aparecer.
+   */
+  it('GET /filament/stock/last-closed es de lectura y la organización sale de la sesión', async () => {
+    const proto = FilamentController.prototype as unknown as Record<string, object>;
+    expect(Reflect.getMetadata(PATH_METADATA, proto.lastClosed)).toBe('stock/last-closed');
+    expect(Reflect.getMetadata(METHOD_METADATA, proto.lastClosed)).toBe(RequestMethod.GET);
+
+    const service = { lastClosedMonth: jest.fn().mockResolvedValue('2026-09') };
+    const controller = new FilamentController(service as never);
+
+    await expect(controller.lastClosed({ organizationId: 'org-A' } as never)).resolves.toEqual({
+      month: '2026-09',
+    });
+    expect(service.lastClosedMonth).toHaveBeenCalledWith('org-A');
+  });
+
+  /**
+   * Sin ningún mes cerrado devuelve `null`, y eso es un DATO: es lo que apaga
+   * el aviso en un negocio que arranca. Un 404 obligaría al panel a tratar un
+   * error como "no hay", que es cómo se termina avisando de más.
+   */
+  it('sin ningún mes cerrado devuelve null, no un error ni un mes inventado', async () => {
+    const service = { lastClosedMonth: jest.fn().mockResolvedValue(null) };
+    const controller = new FilamentController(service as never);
+
+    await expect(controller.lastClosed({ organizationId: 'org-A' } as never)).resolves.toEqual({
+      month: null,
+    });
+  });
+
+  /**
    * El precio por tipo es la fuente que la calculadora usa para cotizar. La
    * organización sale de la SESIÓN: si alguna vez entrara por un parámetro,
    * cotizarías con los precios de otro negocio.

@@ -387,3 +387,68 @@ export function monthsBefore(day: string, months: number): string {
   const f = new Date(Date.UTC(anio, mes - 1 - months, Math.min(dia, ultimo)));
   return f.toISOString().slice(0, 10);
 }
+
+// ----- El recordatorio del conteo -----
+//
+// El dueño no contó septiembre porque **no entró** a la pantalla de Stock, así
+// que el aviso vive en el Dashboard (decisión del dueño, 2026-10-10) y esta
+// función es la que decide si aparece. Un aviso que sale cuando no hay nada que
+// hacer entrena a ignorarlo, y el que se pierde después es el que importaba:
+// por eso las tres puertas de abajo son tan importantes como el aviso mismo.
+
+/** Lo que falta contar, con lo que hace falta para redactar el aviso. */
+export interface ConteoPendiente {
+  /** El mes que toca contar: el ANTERIOR al de `hoy` (`AAAA-MM`). */
+  mes: string;
+  /** El último mes que SÍ se cerró (`AAAA-MM`). */
+  ultimoCerrado: string;
+  /** Cuántos meses quedaron sin cerrar, contando `mes`. */
+  meses: number;
+}
+
+/**
+ * true si falta cerrar el conteo del mes anterior, con el detalle para el aviso.
+ * `null` cuando no hay nada que hacer.
+ *
+ * ⚠️ **`hoy` entra como PARÁMETRO** (`'AAAA-MM-DD'`, día LOCAL calculado por
+ * quien llama): el reloj no se lee adentro. Un test que dependa de la fecha de
+ * la máquina pasa hoy y falla solo algún día, y con el reloj adentro el borde
+ * del cambio de mes no se podría probar. Misma convención que `cashChainCuts`,
+ * `facturasAtrasadas`, `preciosPorTipo` y `campaignLifecycle`.
+ *
+ * ⚠️ **Sin ningún mes cerrado no avisa.** Un negocio que arranca no tiene nada
+ * que contar: no hay cierre anterior con el que comparar y el aviso aparecería
+ * el día uno, antes de que exista un estante.
+ *
+ * ⚠️ Los dos meses se comparan como TEXTO, que para `AAAA-MM` ordena bien —
+ * pero solo si los dos son meses de verdad. Un `'2026-13'` compararía mal sin
+ * avisar (es el error que ya mordió en `CashBalanceQuerySchema` y en las
+ * lecturas de impresora), así que `monthStart` los valida y LANZA.
+ */
+export function conteoDeStockPendiente(
+  ultimoMesCerrado: string | null,
+  hoy: string,
+): ConteoPendiente | null {
+  if (!isCalendarDay(hoy)) {
+    throw new Error(`Hoy inválido: "${hoy}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+  // Sin un cierre previo no hay olvido que recordar.
+  if (ultimoMesCerrado == null) return null;
+  // Valida los dos meses: lanza si alguno no existe en el calendario.
+  const cerrado = monthStart(ultimoMesCerrado);
+  const mes = previousMonth(hoy.slice(0, 7));
+  if (monthKey(cerrado) >= mes) return null;
+
+  return {
+    mes,
+    ultimoCerrado: monthKey(cerrado),
+    meses: mesesEntre(monthKey(cerrado), mes),
+  };
+}
+
+/** Cuántos meses hay de `desde` (excluido) a `hasta` (incluido). */
+function mesesEntre(desde: string, hasta: string): number {
+  const [a1, m1] = desde.split('-').map(Number);
+  const [a2, m2] = hasta.split('-').map(Number);
+  return (a2 * 12 + m2) - (a1 * 12 + m1);
+}
