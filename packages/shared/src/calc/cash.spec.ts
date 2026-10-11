@@ -96,6 +96,41 @@ describe('businessCash', () => {
     expect(c.balance).toBe(-100);
   });
 
+  /**
+   * UNA CUOTA ANULADA NO LA PAGÓ NADIE (2026-10-11).
+   *
+   * La fila se queda en el historial con su motivo, pero la caja no soltó esa
+   * plata. La regla vivía en `cash.service.ts`, fuera del motor: cualquier
+   * otro consumidor del motor habría contado plata que no salió sin que
+   * fallara nada. Regresión de la divergencia entre Caja y Deuda, donde Caja
+   * terminaba diciendo que se debía MENOS de lo que se debe.
+   */
+  it('una cuota anulada no sale de la caja', () => {
+    const l = vacio();
+    l.loanPayments = [
+      { date: '2026-10-08', amount: 100, payer: null, refundable: true },
+      { date: '2026-10-09', amount: 70, payer: null, refundable: true, voided: true },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.loanPayments).toBe(100);
+    expect(c.balance).toBe(-100);
+  });
+
+  /** Y tampoco aparece en el detalle: el desplegable suma lo mismo que su total. */
+  it('una cuota anulada tampoco deja un asiento en el detalle', () => {
+    const l = vacio();
+    l.loanPayments = [
+      { id: 'c1', date: '2026-10-08', amount: 100, payer: null, refundable: true },
+      { id: 'c2', date: '2026-10-09', amount: 70, payer: null, refundable: true, voided: true },
+    ];
+
+    const asientos = cashEntries(l).filter((e) => e.category === 'loanPayments');
+
+    expect(asientos.map((a) => a.id)).toEqual(['c1']);
+  });
+
   it('los movimientos de plata pura suman y restan', () => {
     const l = vacio();
     l.movements = [

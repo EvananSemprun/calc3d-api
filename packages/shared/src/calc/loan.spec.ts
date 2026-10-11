@@ -21,6 +21,35 @@ describe('loanPaid / loanBalance', () => {
   it('no deja el saldo en negativo si se pagó de más', () => {
     expect(loanBalance(100, [{ amount: 150 }])).toBe(0);
   });
+
+  /**
+   * UNA CUOTA ANULADA NO AMORTIZA (2026-10-11).
+   *
+   * La fila se queda en el historial con su motivo, pero ese pago **no
+   * ocurrió**: el saldo vuelve a subir. La regla estaba en `cash.service.ts`,
+   * así que cada consumidor tenía que acordarse de filtrar antes de llamar —y
+   * alcanzó con que uno se olvidara para que Caja y Deuda dieran dos saldos
+   * distintos del mismo préstamo, con Caja diciendo que se debía MENOS.
+   */
+  it('una cuota anulada no cuenta: el saldo vuelve a subir', () => {
+    const conAnulada = [{ amount: 50 }, { amount: 50, voided: true }, { amount: 100 }];
+
+    expect(loanPaid(conAnulada)).toBe(150);
+    expect(loanBalance(1000, conAnulada)).toBe(850);
+  });
+
+  it('anular todas las cuotas deja el préstamo como el primer día', () => {
+    const todas = [{ amount: 50, voided: true }, { amount: 100, voided: true }];
+
+    expect(loanPaid(todas)).toBe(0);
+    expect(loanBalance(1000, todas)).toBe(1000);
+    expect(loanProgress(1000, todas)).toBe(0);
+  });
+
+  /** Sin la marca, una cuota es vigente: lo normal no necesita escribirla. */
+  it('una cuota sin la marca cuenta, como siempre', () => {
+    expect(loanPaid([{ amount: 50, voided: false }, { amount: 50 }])).toBe(100);
+  });
 });
 
 describe('loanProgress', () => {

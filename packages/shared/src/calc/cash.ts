@@ -80,6 +80,17 @@ export interface CashLedger {
     amount: number;
     payer: PayerKind | null;
     refundable: boolean;
+    /**
+     * ANULADA: la fila sigue en el historial con su motivo, pero **ese pago no
+     * ocurrió**. La caja no pagó nada.
+     *
+     * ⚠️ Vive acá y no en quien arma el ledger (2026-10-11). Antes el filtro
+     * estaba en `cash.service.ts` y el motor no sabía que una cuota se podía
+     * anular: cualquier otro consumidor del motor habría contado la plata que
+     * no salió, sin que fallara nada. Es la misma regla que `voided` en
+     * `LoanPaymentLike`, y por eso las dos se llaman igual.
+     */
+    voided?: boolean;
     id?: string;
   }[];
   /**
@@ -275,8 +286,10 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     }
   }
 
+  // Una cuota ANULADA no la pagó nadie: no sale de la caja, y quien la había
+  // puesto de su bolsillo no tiene nada que cobrar.
   for (const c of ledger.loanPayments) {
-    if (vale(c.date) && c.payer == null) push('loanPayments', c);
+    if (vale(c.date) && !c.voided && c.payer == null) push('loanPayments', c);
   }
 
   return out;

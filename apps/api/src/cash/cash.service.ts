@@ -5,28 +5,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  applyPayment,
   businessCash,
   cashEntries,
   loanBalance,
-  obligationLedger,
   ownerFinancing,
   reconcile,
-  UnknownObligationError,
-  type ApplicationOrder,
   type CashCategory,
-  type CashLedger,
-  type PayerKind,
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type CashShortfallPlanQueryDto,
-  type Obligation,
-  type ObligationInput,
-  type ObligationRef,
-  type ObligationSource,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
-import type { RecordSource } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -40,104 +29,24 @@ import { PrismaService } from '../prisma/prisma.service';
  * entra o sale del bolsillo de la contraparte, a qué deuda fue cada pago y lo
  * que decía la cuenta el día que se concilió.
  */
-const dia = (d: Date) => d.toISOString().slice(0, 10);
-const n = (x: unknown) => Number(x);
-
-/**
- * De qué TIPO es quien puso la plata, para el motor. `null` = la caja.
- *
- * ⚠️ Una contraparte que no está en la lista (borrada en el mismo instante)
- * cae a `null`, o sea "lo puso la caja". Es lo correcto y no lo inventado: sin
- * contraparte NO hay a quién deberle, y suponer un tipo movería el saldo. La
- * relación es `onDelete: Restrict`, así que no debería pasar nunca.
- */
-const tipoPagador = (
-  fila: { counterpartyId: string | null },
-  contrapartes: { id: string; kind: string }[],
-): PayerKind | null => {
-  if (!fila.counterpartyId) return null;
-  const kind = contrapartes.find((c) => c.id === fila.counterpartyId)?.kind;
-  return kind === 'OWNER' || kind === 'PARTNER' || kind === 'EXTERNAL_LENDER' ? kind : null;
-};
-const round2 = (x: number) => Math.round(x * 100) / 100;
-
-/**
- * LAS CUOTAS VIGENTES: las que de verdad se pagaron.
- *
- * Anular una cuota NO la borra —la fila se queda en el historial con su
- * motivo— pero ese pago **no ocurrió**: el saldo del préstamo vuelve a subir,
- * la caja no pagó nada y quien la puso de su bolsillo no tiene nada que
- * cobrar. Es la regla del módulo de préstamos (`serialize()` de
- * `loans.module.ts` calcula sobre los vigentes) y Caja la ignoraba: anular
- * subía el saldo en Deuda y **no** en Caja, así que Caja **subestimaba** la
- * deuda con el prestamista. Dos definiciones del mismo número.
- *
- * ⚠️ La exclusión NO va en el `where` de Prisma, a propósito: lo anulado viaja
- * con su `voidedAt` y la decisión la toma ESTE código, que es el que los tests
- * corren. El motor (`loanBalance`, `cashEntries`) no conoce `voidedAt`, así que
- * con el filtro en SQL no quedaría ninguna guarda ejercida —la base falsa de
- * los specs no resuelve el `where` anidado de una relación— y borrarla no
- * tumbaría un solo test: peor que no tenerla, porque parece puesta.
- *
- * Regresión: `cash.service.spec.ts`, "Caja y Deuda cuentan lo mismo".
- */
-const vigentes = <T extends { voidedAt: Date | null }>(filas: T[]) =>
-  filas.filter((f) => f.voidedAt == null);
-
-/**
- * Qué fracción de una factura es filamento. El resto es equipo.
- *
- * ⚠️ Es una **convención de prorrateo**: un abono no "fue" a una línea
- * concreta. Se reparte así para que "Filamento comprado" siga queriendo decir
- * todo el filamento que compraste, venga de una factura o de una compra
- * directa. Con facturas de una sola cosa —lo normal— es exacto.
- *
- * Una factura sin líneas (recién creada) cuenta como filamento: es el caso de
- * lejos más común y deja el abono en una línea con sentido en vez de en
- * "equipos".
- */
-function proporcionDeFilamento(
-  lineas: { quantity: number; unitPrice: unknown; printerId: string | null }[],
-): number {
-  let total = 0;
-  let deFilamento = 0;
-  for (const l of lineas) {
-    const monto = Math.max(l.quantity, 0) * Math.max(n(l.unitPrice), 0);
-    total += monto;
-    if (l.printerId == null) deFilamento += monto;
-  }
-  return total > 0 ? deFilamento / total : 1;
-}
-
-/** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */
-interface EtiquetaAsiento {
-  label: string;
-  source: RecordSource;
-}
-
-/**
- * Cuando el asiento no trae id —o su origen no está en el mapa— la plata se
- * muestra igual, sin etiqueta. El número es lo importante: esconder la fila
- * haría que el detalle sumara menos que su propio total.
- */
-const SIN_DETALLE: EtiquetaAsiento = { label: 'Sin detalle', source: 'MANUAL' };
-
-/** Un texto vacío o en blanco no es una etiqueta: hay que caer al respaldo. */
-const texto = (s: string | null | undefined) => (s?.trim() ? s.trim() : null);
-
-/**
- * Los dos campos sueltos del DTO, como la referencia que entiende el motor.
- *
- * El schema ya garantiza que vengan los dos o ninguno; esto solo traduce. NO
- * valida que la deuda exista: eso lo decide la lista derivada de obligaciones.
- */
-const destinoDe = (dto: {
-  targetSource?: ObligationSource | null;
-  targetSourceId?: string | null;
-}): ObligationRef | null =>
-  dto.targetSource && dto.targetSourceId
-    ? { source: dto.targetSource, sourceId: dto.targetSourceId }
-    : null;
+import {
+  aUsd,
+  planDe,
+  planDeFaltante,
+  repartoDeFaltante,
+} from './conciliacion';
+import {
+  cargarDatosDeCaja,
+  etiquetasDe,
+  obligacionesDe,
+} from './datos-de-caja';
+import {
+  destinoDe,
+  dia,
+  n,
+  round2,
+  SIN_DETALLE,
+} from './helpers-de-caja';
 
 @Injectable()
 export class CashService {
@@ -156,230 +65,8 @@ export class CashService {
     return cp;
   }
 
-  /** Todos los datos crudos, una sola vez. */
-  private async datos(organizationId: string) {
-    const where = { organizationId };
-    const [ventas, abonos, gastos, cuotasTodas, movimientos, aplicaciones, prestamos, cuentas, conciliaciones, settings, contrapartes, abonosDeCompra] =
-      await Promise.all([
-        // El desplegable necesita además el id (para el join con la etiqueta),
-        // el texto de cada fila y su origen (la insignia "Importado").
-        this.prisma.sale.findMany({
-          where,
-          select: { id: true, date: true, amount: true, kind: true, note: true, source: true },
-        }),
-        this.prisma.payment.findMany({
-          where,
-          select: { id: true, date: true, amount: true, note: true, source: true },
-        }),
-        this.prisma.expense.findMany({ where }),
-        this.prisma.loanPayment.findMany({ where }),
-        this.prisma.ownerMovement.findMany({ where, orderBy: { date: 'asc' } }),
-        this.prisma.debtApplication.findMany({ where }),
-        this.prisma.loan.findMany({
-          where: { organizationId, closedAt: null },
-          // `voidedAt` VIAJA con cada cuota: a quién amortiza lo decide
-          // `vigentes`, no el `where`. Ver su comentario.
-          select: { principal: true, payments: { select: { amount: true, voidedAt: true } } },
-        }),
-        this.prisma.cashAccount.findMany({ where, orderBy: { isDefault: 'desc' } }),
-        this.prisma.cashReconciliation.findMany({
-          where,
-          orderBy: { date: 'desc' },
-          include: { adjustment: { select: { id: true, amount: true, concept: true } } },
-        }),
-        this.prisma.settings.findUnique({ where: { organizationId } }),
-        // Hacen falta para saber A QUIÉN se le debe cada fila, no solo de qué
-        // TIPO era quien pagó. Ver `idPagador`.
-        this.prisma.counterparty.findMany({ where }),
-        // Los abonos a facturas son lo que mueve la plata de una compra
-        // encargada. Vienen con las líneas de SU factura porque el reparto
-        // entre filamento y equipo sale de ahí.
-        this.prisma.purchaseInvoicePayment.findMany({
-          where: { organizationId, voidedAt: null, invoice: { voidedAt: null } },
-          include: { invoice: { select: { lines: { select: { quantity: true, unitPrice: true, printerId: true } } } } },
-        }),
-      ]);
-
-    /**
-     * ⚠️ Las cuotas anuladas se van ACÁ, en un solo lugar, porque el mismo
-     * hecho lo leen TRES veces: la línea "Cuotas del préstamo" del saldo, las
-     * obligaciones con quien la puso de su bolsillo y las etiquetas del
-     * desplegable. Filtrar en cada uso deja la puerta de al lado abierta, que
-     * es el error que este proyecto ya cometió varias veces.
-     */
-    const cuotas = vigentes(cuotasTodas);
-
-    // Lo aplicado a CADA obligación y lo aplicado POR cada pago.
-    const porObligacion = new Map<string, number>();
-    const porPago = new Map<string, number>();
-    for (const a of aplicaciones) {
-      const obligacion = a.expenseId ?? a.loanPaymentId ?? a.obligationMovementId;
-      if (obligacion) porObligacion.set(obligacion, (porObligacion.get(obligacion) ?? 0) + n(a.amount));
-      porPago.set(a.paymentId, (porPago.get(a.paymentId) ?? 0) + n(a.amount));
-    }
-
-    const ledger: CashLedger = {
-      // El `id` viaja en los cinco arrays: el motor no lo mira, solo lo
-      // arrastra hasta `cashEntries` para que acá se le pueda pegar la etiqueta.
-      sales: ventas.map((v) => ({ id: v.id, date: dia(v.date), amount: n(v.amount) })),
-      orderPayments: abonos.map((p) => ({ id: p.id, date: dia(p.date), amount: n(p.amount) })),
-      expenses: gastos.map((g) => ({
-        id: g.id,
-        date: dia(g.date),
-        amount: n(g.amount),
-        payer: tipoPagador(g, contrapartes),
-        isInvestment: g.isInvestment,
-        isFilament: g.materialId != null,
-        refundable: g.refundable,
-        // Su plata ya se contó al abonar la factura.
-        fromInvoice: g.purchaseInvoiceLineId != null,
-      })),
-      purchasePayments: abonosDeCompra.map((a) => ({
-        id: a.id,
-        date: dia(a.date),
-        amount: n(a.amount),
-        payer: tipoPagador(a, contrapartes),
-        refundable: true,
-        filamentShare: proporcionDeFilamento(a.invoice.lines),
-        // ⚠️ Tomado del saldo a favor con el proveedor: **no mueve la caja**.
-        // Esa plata ya salió el día que se pagó de más; contarla otra vez es la
-        // misma doble carga que el gasto nacido de una factura, por la otra
-        // puerta. Lo guardado es de qué factura sale; el saldo se deriva.
-        fromCredit: a.tomadoDeFacturaId != null,
-      })),
-      loanPayments: cuotas.map((c) => ({
-        id: c.id,
-        date: dia(c.date),
-        amount: n(c.amount),
-        payer: tipoPagador(c, contrapartes),
-        refundable: c.refundable,
-      })),
-      movements: movimientos.map((m) => ({
-        id: m.id,
-        date: dia(m.date),
-        amount: n(m.amount),
-        kind: m.kind,
-        refundable: m.refundable,
-        applied: porPago.get(m.id) ?? 0,
-      })),
-    };
-
-    return {
-      ledger, ventas, abonos, gastos, cuotas, movimientos, prestamos, cuentas, conciliaciones,
-      contrapartes, abonosDeCompra, porObligacion, porPago,
-      order: (settings?.debtApplicationOrder ?? 'OLDEST_FIRST') as ApplicationOrder,
-    };
-  }
-
-  /** Las obligaciones de una contraparte, con lo ya aplicado. */
-  private obligaciones(
-    d: Awaited<ReturnType<CashService['datos']>>,
-    counterpartyId: string,
-    hasta?: string,
-  ) {
-    const vale = (f: Date) => !hasta || dia(f) <= hasta;
-    // Quien puso la plata es a quien se le debe, sea el dueño, un socio o el
-    // prestamista. No hace falta excluir al prestamista aparte: `summary()`
-    // pregunta por la contraparte PROPIETARIA, así que sus gastos no entran
-    // por el id, y su préstamo se cuenta por el saldo, no por acá.
-    const loPuso = (fila: { counterpartyId: string | null }) =>
-      fila.counterpartyId === counterpartyId;
-    const items: ObligationInput[] = [
-      ...d.gastos
-        .filter((g) => loPuso(g) && g.refundable && vale(g.date))
-        .map((g) => ({
-          source: 'EXPENSE' as const,
-          sourceId: g.id,
-          date: dia(g.date),
-          category: g.isInvestment
-            ? ('EQUIPMENT' as const)
-            : g.category === 'DESIGN'
-              ? ('DESIGN' as const)
-              : ('PURCHASE' as const),
-          amount: n(g.amount),
-          applied: d.porObligacion.get(g.id) ?? 0,
-        })),
-      ...d.cuotas
-        .filter((c) => loPuso(c) && c.refundable && vale(c.date))
-        .map((c) => ({
-          source: 'LOAN_PAYMENT' as const,
-          sourceId: c.id,
-          date: dia(c.date),
-          category: 'LOAN_PAYMENT' as const,
-          amount: n(c.amount),
-          applied: d.porObligacion.get(c.id) ?? 0,
-        })),
-      ...d.movimientos
-        .filter(
-          (m) =>
-            m.counterpartyId === counterpartyId &&
-            m.kind === 'CONTRIBUTION' &&
-            m.refundable &&
-            vale(m.date),
-        )
-        .map((m) => ({
-          source: 'MOVEMENT' as const,
-          sourceId: m.id,
-          date: dia(m.date),
-          category: 'CONTRIBUTION' as const,
-          amount: n(m.amount),
-          applied: d.porObligacion.get(m.id) ?? 0,
-        })),
-    ];
-    return obligationLedger(items);
-  }
-
-  /**
-   * El join `id → texto` de los cinco orígenes del ledger.
-   *
-   * Vive acá y no en `shared` a propósito: el motor es puro y no conoce los
-   * nombres de columna de Prisma (`description`, `concept`, `reference`).
-   * Meterle etiquetas lo ataría al esquema de la base.
-   *
-   * ⚠️ Los ids son cuid de tablas distintas, así que no chocan entre sí. Un
-   * mismo id SÍ puede aparecer en dos asientos —un retiro se parte en
-   * devolución y retiro, un gasto de la contraparte es gasto y aporte—, y eso
-   * es correcto: las dos mitades llevan la misma etiqueta porque son el mismo
-   * registro visto por sus dos caras.
-   */
-  private etiquetas(d: Awaited<ReturnType<CashService['datos']>>) {
-    const m = new Map<string, EtiquetaAsiento>();
-
-    for (const v of d.ventas) {
-      m.set(v.id, {
-        label: texto(v.note) ?? (v.kind === 'ENCARGO' ? 'Venta por encargo' : 'Venta de mostrador'),
-        source: v.source,
-      });
-    }
-    for (const p of d.abonos) m.set(p.id, { label: texto(p.note) ?? 'Abono de pedido', source: p.source });
-    for (const g of d.gastos) m.set(g.id, { label: texto(g.description) ?? 'Gasto sin descripción', source: g.source });
-    for (const c of d.cuotas) m.set(c.id, { label: texto(c.reference) ?? 'Cuota del préstamo', source: c.source });
-    for (const mv of d.movimientos) m.set(mv.id, { label: texto(mv.concept) ?? 'Movimiento', source: mv.source });
-
-    return m;
-  }
-
-  /**
-   * EL SALDO DEL NEGOCIO HASTA UN DÍA (inclusive): con cuánta plata venía el
-   * negocio al cerrar esa fecha.
-   *
-   * Es lo que hace posible la cadena del Dashboard —"venías con $X · este mes
-   * $Y · te queda $Z"— con UNA sola definición de caja. El motor ya sabía
-   * recortar por fecha (`businessCash(ledger, hasta)`, el mismo corte que usa
-   * el esperado de una conciliación); lo que faltaba era exponerlo.
-   *
-   * ⚠️ `at` llega del cliente y se valida en el PIPE. Si una fecha inválida
-   * cayera acá, el recorte compara TEXTO y devolvería el saldo entero: un
-   * número que parece bueno. Por eso el schema exige un día que exista, y por
-   * eso la fecha NO es opcional — faltarla no puede valer por "toda la
-   * historia".
-   *
-   * ⚠️ Pasa el `at` a `businessCash`. Sin eso devuelve el saldo de toda la
-   * historia, la pantalla muestra el mismo número dos veces y la cadena da
-   * $0 de movimiento en el periodo.
-   */
   async balanceAt(organizationId: string, at: string) {
-    const d = await this.datos(organizationId);
+    const d = await cargarDatosDeCaja(this.prisma, organizationId);
     return { at, balance: businessCash(d.ledger, at) };
   }
 
@@ -394,8 +81,8 @@ export class CashService {
    * contradice a sí misma es peor que no tener desplegable.
    */
   async breakdown(organizationId: string, category: CashCategory) {
-    const d = await this.datos(organizationId);
-    const etiquetas = this.etiquetas(d);
+    const d = await cargarDatosDeCaja(this.prisma, organizationId);
+    const etiquetas = etiquetasDe(d);
 
     const entries = cashEntries(d.ledger)
       .filter((e) => e.category === category)
@@ -424,159 +111,17 @@ export class CashService {
   }
 
   /** Convierte a USD con la tasa congelada. Sin tasa, ya está en USD. */
-  private aUsd(monto: number, rate: unknown) {
-    const tasa = rate == null ? 1 : n(rate);
-    return tasa > 0 ? Math.round((monto / tasa) * 100) / 100 : monto;
-  }
-
   /**
-   * A quién y hasta cuándo se le atribuiría el faltante de esta conciliación,
-   * o `null` si no se atribuiría nada.
-   *
-   * Es la MISMA condición que evalúa `confirm()`. Existe aparte para que la
-   * previsualización y el resumen no la vuelvan a escribir cada uno.
-   */
-  private atribucionDe(
-    d: Awaited<ReturnType<CashService['datos']>>,
-    c: { accountId: string; date: Date; status: string },
-    r: { kind: string },
-  ) {
-    if (c.status !== 'DRAFT' || r.kind !== 'SHORT') return null;
-    const cuenta = d.cuentas.find((a) => a.id === c.accountId);
-    if (!cuenta?.shared || !cuenta.autoAttributeShortfall || !cuenta.sharedWithId) return null;
-    return { counterpartyId: cuenta.sharedWithId, fecha: dia(c.date) };
-  }
-
-  /**
-   * El reparto, con la traducción del único error que puede devolver el motor.
-   *
-   * ⚠️ `deudas` es la ÚNICA puerta: son las obligaciones que el servidor ya
-   * derivó para ESTA organización, la contraparte de la CUENTA y hasta la
-   * fecha del conteo. La deuda destino se acepta por ser MIEMBRO de esa lista,
-   * no por pasar una lista de chequeos. Buscarla por id contra la base sería
-   * un camino paralelo —y uno que no sabe de la contraparte ni de la fecha—:
-   * ahí vuelve el IDOR.
-   */
-  private reparto(
-    deudas: Obligation[],
-    monto: number,
-    order: ApplicationOrder,
-    destino: ObligationRef | null,
-  ) {
-    try {
-      return applyPayment(deudas, monto, order, destino);
-    } catch (e) {
-      if (e instanceof UnknownObligationError) {
-        throw new BadRequestException(
-          'Esa deuda no se puede saldar con esta conciliación: tiene que ser una deuda ' +
-            'reembolsable de la contraparte de la cuenta, con fecha anterior al conteo.',
-        );
-      }
-      throw e;
-    }
-  }
-
-  /**
-   * Qué va a pasar si se confirma este borrador: contra qué deudas se aplica
-   * el faltante y cuánto queda como retiro.
-   *
-   * Tiene que usar EXACTAMENTE las mismas entradas que `confirm()` —la
-   * contraparte de la CUENTA y las obligaciones filtradas HASTA la fecha de la
-   * conciliación—, o la pantalla prometería un reparto distinto del que
-   * ocurre. Devuelve `null` cuando no habría ajuste.
-   *
-   * Con `destino`, esa deuda cobra primero. ⚠️ Si no habría ajuste, una deuda
-   * destino se RECHAZA en vez de ignorarse: aceptarla y no usarla es
-   * exactamente la clase de mentira que esta pantalla existe para evitar.
-   */
-  private planDe(
-    d: Awaited<ReturnType<CashService['datos']>>,
-    c: { accountId: string; date: Date; status: string },
-    r: { kind: string; differenceUsd: number },
-    destino: ObligationRef | null = null,
-  ) {
-    const atribucion = this.atribucionDe(d, c, r);
-    if (!atribucion) {
-      if (destino) {
-        throw new BadRequestException(
-          'Esta conciliación no va a atribuir ningún faltante, así que no hay deuda destino que elegir',
-        );
-      }
-      return null;
-    }
-
-    const { counterpartyId, fecha } = atribucion;
-    const deudas = this.obligaciones(d, counterpartyId, fecha);
-    const plan = this.reparto(deudas, Math.abs(r.differenceUsd), d.order, destino);
-    const porId = new Map(deudas.map((o) => [o.sourceId, o]));
-
-    return {
-      applications: plan.applications.map((a) => ({
-        sourceId: a.sourceId,
-        source: a.source,
-        amount: a.amount,
-        date: porId.get(a.sourceId)?.date ?? fecha,
-        category: porId.get(a.sourceId)?.category ?? null,
-      })),
-      /** Lo que sobra después de cancelar todo: se registra como retiro. */
-      leftover: plan.leftover,
-      order: d.order,
-    };
-  }
-
-  /**
-   * PREVISUALIZAR el reparto de un faltante contra una deuda elegida, SIN
-   * escribir nada.
-   *
-   * ⚠️ Existe porque el reparto lo calcula el SERVIDOR, siempre. En la fase 1
-   * el front lo deducía de `obligations` —una lista sin filtro de fecha y con
-   * la contraparte por defecto de la organización— mientras el servidor
-   * filtraba hasta la fecha del conteo y usaba la contraparte de la CUENTA.
-   * Conciliando con retraso, el dueño aprobaba un reparto que no era el que
-   * ocurría. Por eso acá también viajan las obligaciones ELEGIBLES: la lista
-   * que la pantalla ofrece para elegir tiene que ser la misma que el servidor
-   * va a aceptar.
+   * EL PLAN DEL FALTANTE, para previsualizar antes de confirmar. La cuenta
+   * vive en `conciliacion.ts`; acá queda la puerta del endpoint.
    */
   async shortfallPlan(organizationId: string, id: string, query: CashShortfallPlanQueryDto) {
-    const c = await this.prisma.cashReconciliation.findFirst({ where: { id, organizationId } });
-    if (!c) throw new NotFoundException('No existe esa conciliación');
-
-    const d = await this.datos(organizationId);
-    const fecha = dia(c.date);
-    // Una confirmada muestra lo CONGELADO, igual que en el resumen: es un
-    // documento, no una vista que se recalcula sola.
-    const congelado = c.status === 'CONFIRMED' && c.expectedUsd != null;
-    const expectedUsd = congelado ? n(c.expectedUsd) : businessCash(d.ledger, fecha).balance;
-    const totalUsd = congelado ? n(c.totalUsd) : this.aUsd(n(c.totalAmount), c.rate);
-    const personalUsd = congelado ? n(c.personalUsd) : this.aUsd(n(c.personalAmount), c.rate);
-    const r = reconcile({ expectedUsd, totalUsd, personalUsd });
-
-    const destino = destinoDe(query);
-    const atribucion = this.atribucionDe(d, c, r);
-
-    return {
-      reconciliationId: c.id,
-      accountId: c.accountId,
-      date: fecha,
-      status: c.status,
-      expectedUsd,
-      totalUsd,
-      personalUsd,
-      ...r,
-      applicationOrder: d.order,
-      /** Si confirmar hoy registraría el ajuste. Con `false`, `plan` es null. */
-      willAttribute: atribucion != null,
-      counterpartyId: atribucion?.counterpartyId ?? null,
-      target: destino,
-      /** Las deudas que se pueden elegir. Vacía si no habría atribución. */
-      obligations: atribucion ? this.obligaciones(d, atribucion.counterpartyId, fecha) : [],
-      plan: this.planDe(d, c, r, destino),
-    };
+    return planDeFaltante(this.prisma, organizationId, id, query);
   }
 
   async summary(organizationId: string) {
     const cp = await this.defaultCounterparty(organizationId);
-    const d = await this.datos(organizationId);
+    const d = await cargarDatosDeCaja(this.prisma, organizationId);
 
     /**
      * La deuda de TODOS los que ponen plata de su bolsillo, no solo la de la
@@ -593,8 +138,8 @@ export class CashService {
      */
     const deTodos = d.contrapartes.filter((c) => c.kind === 'OWNER' || c.kind === 'PARTNER');
     const deudas = deTodos.length
-      ? deTodos.flatMap((c) => this.obligaciones(d, c.id))
-      : this.obligaciones(d, cp.id);
+      ? deTodos.flatMap((c) => obligacionesDe(d, c.id))
+      : obligacionesDe(d, cp.id);
     const bolsillos = new Set(deTodos.length ? deTodos.map((c) => c.id) : [cp.id]);
 
     const financing = ownerFinancing({
@@ -603,13 +148,19 @@ export class CashService {
         .filter((m) => m.counterpartyId && bolsillos.has(m.counterpartyId) && m.kind === 'WITHDRAWAL')
         .reduce((s, m) => s + n(m.amount), 0),
       /**
-       * ⚠️ `vigentes` es lo que hace que este número sea el MISMO que el
-       * `totals.prestamista` de Deuda. Sin él, anular una cuota sube el saldo
-       * allá y no acá, y Caja le dice al dueño que debe menos de lo que debe.
+       * ⚠️ Este número tiene que ser el MISMO que el `totals.prestamista` de
+       * Deuda. Antes lo garantizaba un `vigentes()` acá; desde 2026-10-11 lo
+       * garantiza `loanPaid`, que ignora las anuladas: la marca viaja y el
+       * motor decide. Sin eso, anular una cuota subía el saldo en Deuda y no
+       * en Caja, y Caja le decía al dueño que debía menos de lo que debe.
        */
       lenderBalance: d.prestamos.reduce(
         (s, l) =>
-          s + loanBalance(n(l.principal), vigentes(l.payments).map((p) => ({ amount: n(p.amount) }))),
+          s +
+          loanBalance(
+            n(l.principal),
+            l.payments.map((p) => ({ amount: n(p.amount), voided: p.voidedAt != null })),
+          ),
         0,
       ),
     });
@@ -661,8 +212,8 @@ export class CashService {
          */
         const ajuste = c.adjustment ? n(c.adjustment.amount) : 0;
         const expectedUsd = congelado ? n(c.expectedUsd) : esperadoHoy;
-        const totalUsd = congelado ? n(c.totalUsd) : this.aUsd(n(c.totalAmount), c.rate);
-        const personalUsd = congelado ? n(c.personalUsd) : this.aUsd(n(c.personalAmount), c.rate);
+        const totalUsd = congelado ? n(c.totalUsd) : aUsd(n(c.totalAmount), c.rate);
+        const personalUsd = congelado ? n(c.personalUsd) : aUsd(n(c.personalAmount), c.rate);
         const resultado = reconcile({ expectedUsd, totalUsd, personalUsd });
 
         return {
@@ -690,7 +241,7 @@ export class CashService {
            * que el servidor va a ignorar, y firmaría un reparto que no es el
            * que ocurre. Esta pantalla existe justamente para que eso no pase.
            */
-          plan: this.planDe(d, c, resultado),
+          plan: planDe(d, c, resultado),
           /** Lo que daría hoy, sin contar el ajuste propio de esta conciliación. */
           expectedNow: Math.round((esperadoHoy + ajuste) * 100) / 100,
           /** De verdad entraron movimientos con fecha anterior después de conciliar. */
@@ -803,11 +354,11 @@ export class CashService {
       throw new ConflictException('Esa conciliación ya se confirmó o se anuló');
     }
 
-    const d = await this.datos(organizationId);
+    const d = await cargarDatosDeCaja(this.prisma, organizationId);
     const fecha = dia(c.date);
     const expectedUsd = businessCash(d.ledger, fecha).balance;
-    const totalUsd = this.aUsd(n(c.totalAmount), c.rate);
-    const personalUsd = this.aUsd(n(c.personalAmount), c.rate);
+    const totalUsd = aUsd(n(c.totalAmount), c.rate);
+    const personalUsd = aUsd(n(c.personalAmount), c.rate);
     const r = reconcile({ expectedUsd, totalUsd, personalUsd });
 
     const atribuir =
@@ -835,7 +386,7 @@ export class CashService {
     const contraparte = atribuir ? c.account.sharedWithId! : null;
     const monto = Math.abs(r.differenceUsd);
     const plan = contraparte
-      ? this.reparto(this.obligaciones(d, contraparte, fecha), monto, d.order, destino)
+      ? repartoDeFaltante(obligacionesDe(d, contraparte, fecha), monto, d.order, destino)
       : null;
 
     await this.prisma.$transaction(async (tx) => {

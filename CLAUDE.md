@@ -495,11 +495,19 @@ en el repo web: se sobrescribe al sincronizar.
       vigentes) y Caja no: leía `loan.payments` y `LoanPayment` enteros, así que
       anular una cuota subía el saldo allá y **no** acá — Caja **subestimaba la
       deuda** con el prestamista. Dos definiciones del mismo número.
-      - El filtro vive en **`vigentes()`** de `cash.service.ts`, aplicado en UN
-        solo lugar (`const cuotas = vigentes(cuotasTodas)` en `datos()`), porque
-        el mismo hecho lo leen **tres** veces: la línea "Cuotas del préstamo"
-        del saldo, las obligaciones con quien la puso de su bolsillo y las
-        etiquetas del desplegable. Filtrar en cada uso deja la gemela abierta.
+      - ⚠️ **Desde 2026-10-11 la regla vive en el MOTOR**, no en el servicio:
+        `LoanPaymentLike.voided` (lo ignora `loanPaid`, y con él `loanBalance`
+        y `loanProgress`) y `CashLedger.loanPayments[].voided` (lo ignora
+        `cashEntries`). El servicio **manda las anuladas con su marca** y no
+        las filtra antes: filtrarlas dejaría la guarda sin ejercer, y una
+        guarda que borrarla no tumba ningún test es peor que no tenerla.
+        Regresiones: `loan.spec.ts` y `cash.spec.ts` en shared, más
+        "Caja y Deuda cuentan lo mismo" en `cash.service.spec.ts`. Por
+        mutación, devolver cualquiera de las dos al estado anterior tumba 3.
+      - `vigentes()` (ahora en `cash/helpers-de-caja.ts`) **sigue existiendo**
+        para lo que NO es el motor: las obligaciones con quien puso la cuota de
+        su bolsillo y las etiquetas del desplegable. Que queden dos filtros es
+        deliberado: ese decide qué se MUESTRA, el del motor decide qué AMORTIZA.
       - ⚠️ **NO va en el `where` de Prisma**: lo anulado viaja con su
         `voidedAt`. `loanBalance` y `cashEntries` no conocen `voidedAt`, así que
         con el filtro en SQL **ningún test ejercería la regla** —la base falsa
@@ -688,8 +696,17 @@ en el repo web: se sobrescribe al sincronizar.
       pipe real).
   - **ABM de contrapartes y cuentas (fase 2, 2026-10-05, shared 0.22.0)** —
     `cash/counterparties.service.ts` y `cash/cash-accounts.service.ts`, cada uno
-    en su archivo (`cash.service.ts` ya tiene 480 lineas con el resumen, las
-    obligaciones y la conciliacion). Rutas: `/counterparties` y `/cash-accounts`,
+    en su archivo. ⚠️ **`cash.service.ts` se partio el 2026-10-11**, cuando
+    llego a 931 lineas: quedo en 464 (bajo las 480 que pedia su propia nota) y
+    salieron `cash/helpers-de-caja.ts` (traducciones de Prisma al motor, sin
+    estado), `cash/datos-de-caja.ts` (`cargarDatosDeCaja`, `obligacionesDe` y
+    `etiquetasDe` — **que hay**) y `cash/conciliacion.ts` (`atribucionDe`,
+    `repartoDeFaltante`, `planDe`, `planDeFaltante` — **quien se hace cargo de
+    un faltante**). Son FUNCIONES y no providers de Nest a proposito: no hay
+    estado que inyectar y asi el controller y los specs no se tocan. `confirm`,
+    `saveReconciliation` y `voidReconciliation` se quedaron en el servicio
+    porque los tres devuelven `summary()`, y moverlos seria una dependencia
+    circular disfrazada de refactor. Rutas: `/counterparties` y `/cash-accounts`,
     las dos con `GET`, `POST`, `PUT /:id`, `POST /:id/default` y `DELETE /:id`.
     Plan: `docs/superpowers/plans/2026-10-05-caja-fase-2.md`.
     - ⚠️ **Las guardas de borrado no son cosmeticas.** Una contraparte con

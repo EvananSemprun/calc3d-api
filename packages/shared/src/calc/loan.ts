@@ -13,6 +13,17 @@
 
 export interface LoanPaymentLike {
   amount: number;
+  /**
+   * ANULADA: la fila sigue en el historial con su motivo, pero **ese pago no
+   * ocurrió**. No amortiza.
+   *
+   * ⚠️ Vive en el motor y no en quien lo llama (2026-10-11). Antes cada
+   * consumidor filtraba antes de llamar, y alcanzaba con que uno se olvidara
+   * para que el mismo préstamo tuviera dos saldos: pasó entre Caja y Deuda, y
+   * Caja le decía al dueño que debía MENOS de lo que debe. Una regla de plata
+   * que hay que acordarse de aplicar afuera no es una regla, es una costumbre.
+   */
+  voided?: boolean;
 }
 
 /** Cada cuánto se propone pagar. Es el período del OBJETIVO, no una promesa. */
@@ -43,9 +54,12 @@ export interface LoanLike {
   closedAt?: string | Date | null;
 }
 
-/** Lo devuelto hasta hoy. */
+/** Lo devuelto hasta hoy. Las cuotas anuladas no cuentan: ver `voided`. */
 export function loanPaid(payments: LoanPaymentLike[]): number {
-  return payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
+  return payments.reduce(
+    (s, p) => (p.voided || !Number.isFinite(p.amount) ? s : s + p.amount),
+    0,
+  );
 }
 
 /** Lo que falta. Nunca negativo: pagar de más no genera un saldo a favor. */
