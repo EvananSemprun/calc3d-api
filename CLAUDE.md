@@ -1441,6 +1441,29 @@ en el repo web: se sobrescribe al sincronizar.
     diga el tamaño de la muestra. `failureRate` es reimpresas ÷ piezas
     ENTREGADAS, para que sea comparable con `waste.pct` del motor (que es un
     recargo sobre lo que sí se entrega). Tests: `production.spec.ts`.
+    - **El RECORDATORIO de la lectura (2026-10-10, shared 0.48.0)** —
+      `lecturaDeHorasPendiente(maquinas, hoy)` en `production.ts`: avisa cuando
+      hace mucho que no se lee ningún contador. Lo consume el Dashboard sobre el
+      `printers[].lastReading` que ya devuelve `GET /printers/usage` (sin
+      endpoint nuevo).
+      - **Había DOS lecturas desde que existe la pantalla, y las dos del mismo
+        mes** (2026-09, una por máquina, cargadas el 26/09): un solo acto de
+        lectura. Decisión del dueño: no era una pantalla de más, era una
+        pantalla sin aviso — va el recordatorio y la pantalla se queda.
+      - ⚠️ **El umbral es `DIAS_SIN_LECTURA = 35`, una constante con su razón
+        escrita y no un número suelto en un `if`**: la lectura es MENSUAL y se
+        anota al cierre, así que durante TODO el mes siguiente la próxima
+        todavía está a tiempo (31 días como máximo), y se le suman 4 de gracia
+        porque los números del mes a veces se cierran en los primeros días del
+        siguiente (el conteo de septiembre se cerró el 1/10). Cualquier umbral
+        de 31 o menos avisaría sin que nada esté atrasado.
+      - ⚠️ **Sin NINGUNA lectura devuelve `{ultimoMes: null, dias: null}`**, no
+        un número: el aviso no puede decir "pasaron N días desde la última"
+        cuando no hubo una última. Sin impresoras, `null`.
+      - ⚠️ Los días se cuentan desde `monthCloseDay` del mes leído (no desde su
+        día 1, que sumaría un mes) y `hoy` entra como PARÁMETRO. Los meses se
+        validan antes de compararlos: `latestReading` compara TEXTO y un
+        `'2026-13'` ganaría sin avisar. Tests: `lectura-pendiente.spec.ts` (11).
   - **Reposición de equipos (2026-09-07)** — `GET /printers/recovery` (⚠️ ruta
     literal declarada ANTES de `:id`) con `equipmentRecovery` de
     `shared/calc/equipment.ts`: reparte la ganancia acumulada entre las

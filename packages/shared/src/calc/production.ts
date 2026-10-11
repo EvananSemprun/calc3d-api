@@ -1,3 +1,5 @@
+import { daysBetween, isCalendarDay, monthCloseDay } from './stock';
+
 /**
  * MEDICIÓN DE LA PRODUCCIÓN — los tres datos que ni el Excel ni la app tenían.
  *
@@ -144,4 +146,95 @@ export function hoursThisMonth(
   // Un contador que baja (placa cambiada, lectura mal anotada) no da horas
   // negativas: como consumo, eso no significa nada.
   return Math.max(0, round4(actual.hours - anterior.hours));
+}
+
+// ----- El recordatorio de la lectura -----
+//
+// Hay DOS lecturas desde que existe la pantalla, y las dos son del MISMO mes
+// (2026-09, una por máquina, cargadas el 26/09/2026): o sea, un solo acto de
+// lectura. El dueño, preguntado derecho, dijo que sí quiere llevar el control
+// de horas y que lo que faltó fue acordarse (decisión del 2026-10-10): va el
+// recordatorio y la pantalla se queda.
+
+/**
+ * CUÁNTOS DÍAS SON "MUCHO" SIN LEER EL CONTADOR.
+ *
+ * ⚠️ **Es una constante con su razón escrita, no un número suelto en medio de
+ * un `if`.** Cómo sale:
+ *
+ * - La lectura es **mensual** (`@@unique([printerId, month])`) y se anota al
+ *   CIERRE del mes: la única que existe es de septiembre y se cargó el 26/09.
+ * - Entonces, durante **todo** el mes siguiente la próxima lectura todavía está
+ *   a tiempo. Del último día de un mes al último del siguiente hay **31 días**
+ *   como máximo, así que cualquier umbral de 31 o menos avisaría con la lectura
+ *   legítimamente pendiente — y un aviso que aparece cuando no hay nada que
+ *   hacer es el que enseña a ignorar a los otros tres.
+ * - Se le suman **4 días de gracia**, porque los números del mes a veces se
+ *   cierran en los primeros días del siguiente: el conteo de stock de
+ *   septiembre se cerró el **1/10/2026**.
+ *
+ * Resultado: 31 + 4 = **35**, que cae alrededor del día 4 del mes siguiente al
+ * que se saltó. O sea, el aviso aparece cuando se perdió un mes entero de
+ * horas, que es exactamente lo que pasó entre septiembre y hoy.
+ */
+export const DIAS_SIN_LECTURA = 35;
+
+/** Lo que hace falta para redactar el aviso de las lecturas. */
+export interface LecturaPendiente {
+  /**
+   * Mes de la última lectura (`AAAA-MM`), o **`null` si NUNCA se leyó ningún
+   * contador**: ahí el aviso no puede decir "pasaron N días desde la última" y
+   * tiene que decir otra cosa.
+   */
+  ultimoMes: string | null;
+  /** Días desde el cierre de ese mes; `null` si nunca se leyó. */
+  dias: number | null;
+}
+
+/** Una máquina, con su última lectura (`null` = nunca se leyó). */
+export interface MaquinaConLectura {
+  lastReading: { month: string } | null;
+}
+
+/**
+ * true si hace mucho que no se lee ningún contador, con el detalle para el
+ * aviso. `null` cuando no hay nada que hacer.
+ *
+ * ⚠️ **`hoy` entra como PARÁMETRO** (`'AAAA-MM-DD'`, día local calculado por
+ * quien llama): el reloj no se lee adentro, igual que en `cashChainCuts`,
+ * `facturasAtrasadas` y `conteoDeStockPendiente`.
+ *
+ * ⚠️ **Sin impresoras no avisa**: no hay contador que leer.
+ *
+ * ⚠️ Mira la lectura **MÁS RECIENTE de todas las máquinas**, que es lo que mide
+ * el hábito. Las máquinas sin lectura propia se cuentan aparte
+ * (`printersWithoutReading`, en la pantalla de Producción): si una sola máquina
+ * sin leer volviera el aviso "nunca", diría que el hábito no existe cuando sí.
+ */
+export function lecturaDeHorasPendiente(
+  maquinas: MaquinaConLectura[],
+  hoy: string,
+): LecturaPendiente | null {
+  if (!isCalendarDay(hoy)) {
+    throw new Error(`Hoy inválido: "${hoy}". Se espera un día real en AAAA-MM-DD (ej. 2026-10-01).`);
+  }
+  if (maquinas.length === 0) return null;
+
+  const meses = maquinas
+    .map((m) => m.lastReading?.month)
+    .filter((mes): mes is string => !!mes);
+  // ⚠️ Valida CADA mes antes de compararlos: `latestReading` compara TEXTO, y
+  // un `'2026-13'` ganaría sin avisar — el mismo error que ya mordió en el
+  // `?month=` de las lecturas y en `CashBalanceQuerySchema`. `monthCloseDay`
+  // lanza si el mes no existe.
+  for (const mes of meses) monthCloseDay(mes);
+  // La "más reciente" sale de `latestReading`, la misma función que usa la
+  // pantalla de Producción: dos definiciones de "la última" divergen.
+  const ultima = latestReading(meses.map((month) => ({ month, hours: 0 })));
+  // Nunca se leyó ningún contador: hay algo que hacer, pero no hay "última".
+  if (!ultima) return { ultimoMes: null, dias: null };
+
+  const dias = daysBetween(monthCloseDay(ultima.month), hoy);
+  if (dias < DIAS_SIN_LECTURA) return null;
+  return { ultimoMes: ultima.month, dias };
 }
