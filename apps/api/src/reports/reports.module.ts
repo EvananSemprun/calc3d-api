@@ -6,8 +6,6 @@ import {
   fixedCostsTotal,
   businessDateKey,
   groupPurchases,
-  loanBalance,
-  loanPaid,
   monthlyLoanPayments,
   orderBalance,
   orderPaid,
@@ -404,20 +402,37 @@ export class ReportsService {
       ]);
       cab.font = { bold: true };
       for (const p of l.payments) {
+        /**
+         * ⚠️ Una cuota ANULADA no se esconde —el historial tiene que mostrar
+         * que existió y por qué se anuló— pero TAMPOCO puede verse igual que
+         * una pagada: su monto no entra en el "Saldo pendiente" de abajo, así
+         * que sin la marca la columna de montos no suma lo que dice el total y
+         * la hoja se contradice a sí misma.
+         */
         hDeuda.addRow([
-          `   pago`,
+          p.voidedAt ? '   pago ANULADO' : '   pago',
           fecha(new Date(p.date)),
           p.amount,
-          p.reference ?? '',
+          p.voidedAt ? `ANULADA: ${p.voidReason ?? 'sin motivo'}` : (p.reference ?? ''),
           pagadoPor(p),
         ]);
       }
-      const pagos = l.payments.map((p) => ({ amount: p.amount }));
+      /**
+       * ⚠️ EL SALDO Y LO PAGADO LOS TRAE `LoansService`, ya calculados sobre
+       * las cuotas VIGENTES: acá NO se recalculan.
+       *
+       * Hasta el 2026-10-10 esta hoja corría su propio
+       * `loanBalance(l.principal, l.payments)` sobre TODAS las cuotas, anuladas
+       * incluidas — una cuarta definición del mismo número, y la que decía que
+       * se debía MENOS de lo que se debe. Es exactamente lo que el comentario
+       * de cabecera de este archivo prohíbe: si el reporte hace sus propias
+       * cuentas, termina diciendo algo distinto de lo que muestra la app.
+       */
       hDeuda.addRow([
         '   Saldo pendiente',
         '',
-        loanBalance(l.principal, pagos),
-        `Pagado ${moneda(loanPaid(pagos))}`,
+        l.balance,
+        `Pagado ${moneda(l.paid)}`,
       ]).font = { bold: true };
       hDeuda.addRow([]);
     }

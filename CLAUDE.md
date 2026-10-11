@@ -489,6 +489,45 @@ en el repo web: se sobrescribe al sincronizar.
     - Rutas: `GET /cash`, `POST/DELETE /cash/movements`,
       `PUT /cash/reconciliations`, `POST /cash/reconciliations/:id/confirm`,
       `POST /cash/reconciliations/:id/void`.
+    - ⚠️ **UNA CUOTA ANULADA NO AMORTIZA, Y CAJA LO IGNORABA (2026-10-10).**
+      Anular no borra: la fila queda en el historial con su motivo y el saldo
+      **vuelve a subir**. Deuda lo hacía (`serialize()` calcula sobre los
+      vigentes) y Caja no: leía `loan.payments` y `LoanPayment` enteros, así que
+      anular una cuota subía el saldo allá y **no** acá — Caja **subestimaba la
+      deuda** con el prestamista. Dos definiciones del mismo número.
+      - El filtro vive en **`vigentes()`** de `cash.service.ts`, aplicado en UN
+        solo lugar (`const cuotas = vigentes(cuotasTodas)` en `datos()`), porque
+        el mismo hecho lo leen **tres** veces: la línea "Cuotas del préstamo"
+        del saldo, las obligaciones con quien la puso de su bolsillo y las
+        etiquetas del desplegable. Filtrar en cada uso deja la gemela abierta.
+      - ⚠️ **NO va en el `where` de Prisma**: lo anulado viaja con su
+        `voidedAt`. `loanBalance` y `cashEntries` no conocen `voidedAt`, así que
+        con el filtro en SQL **ningún test ejercería la regla** —la base falsa
+        de los specs no resuelve el `where` anidado de una relación— y borrarla
+        no tumbaría nada: una guarda que parece puesta y no está. Es la misma
+        lección del saldo a favor.
+      - ⚠️ **Y HABÍA UNA CUARTA definición**: la hoja **Deuda del Excel**
+        corría su propio `loanBalance(l.principal, l.payments)` sobre TODAS las
+        cuotas, teniendo al lado el `balance`/`paid` que `LoansService` ya le
+        entregaba bien. Ahora los usa tal cual y la cuota anulada sale marcada
+        (`   pago ANULADO` + su motivo): su monto no entra en el "Saldo
+        pendiente", así que sin la marca la columna no sumaba lo que decía el
+        total y la hoja se contradecía a sí misma.
+      - **Lo que falló no fue una cuenta, fue que nadie las comparó.** Por eso
+        la regresión corre **las DOS lecturas sobre los mismos datos**:
+        `cash.service.spec.ts`, "Caja y Deuda cuentan lo mismo" (6 tests, con
+        `LoansService` y `CashService` sobre la misma base falsa; capital 750 y
+        una cuota anulada de 50 → **650** en las dos, contra los **600** del
+        contrafáctico) y `reports.controller.spec.ts` (3). Mutaciones: la guarda
+        apagada tumba **3**, solo `lenderBalance` sin filtro **1**, solo las
+        cuotas del ledger **2**, el predicado invertido **10**, el reporte
+        recalculando **1** y la cuota anulada sin marca **1**.
+      - Las únicas tablas con `voidedAt` son `LoanPayment`,
+        `PurchaseInvoicePayment`, `PurchaseInvoice` y `CashReconciliation`:
+        `Sale`, `Payment`, `Expense` y `OwnerMovement` se borran de verdad, así
+        que no hay más gemelas de esta clase. Los abonos de compra ya se
+        excluían (en el `where`, con su factura) y las conciliaciones por
+        `status`.
   - **El saldo HASTA una fecha (2026-10-10, shared 0.35.0)** —
     `GET /cash/balance?at=AAAA-MM-DD` devuelve `{ at, balance: BusinessCash }`
     con el mismo corte que ya usaba el esperado de una conciliación
@@ -944,7 +983,10 @@ en el repo web: se sobrescribe al sincronizar.
       el CALENDARIO, no por cantidad de pagos.
     - **Anular no borra** (`POST /loans/:id/payments/:pid/void`, con motivo). Es
       POST y no DELETE porque DELETE promete que la fila desaparece. Anular dos
-      veces es 409.
+      veces es 409. ⚠️ **Todo lector nuevo de `LoanPayment` o de
+      `loan.payments` tiene que descontar las anuladas**: Caja y la hoja Deuda
+      del Excel no lo hacían y decían que se debía menos de lo que se debe. Ver
+      "Una cuota anulada no amortiza" en la sección de Caja.
     - Un pago **no puede amortizar más que el saldo**: `loanBalance` recorta en 0
       y sin la guarda el exceso quedaba invisible.
     - Que un pago personal **genere deuda se pregunta** (`generatesDebt`). El
