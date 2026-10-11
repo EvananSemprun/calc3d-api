@@ -186,6 +186,15 @@ export interface FilamentPurchaseInvoice {
    * de más es `aFavor`, no un saldo al revés) y no se recalcula acá.
    */
   saldo: number;
+  /**
+   * Lo que cuesta la factura entera (`invoiceTotals(...).total`).
+   *
+   * Lo usa el **prorrateo** del pie del KPI de Gastos (`repartoDePagadores`):
+   * sin el total no hay forma de saber qué parte del saldo le toca a los
+   * gastos de esta factura que caen en el periodo. La pantalla de Compras no
+   * lo muestra: ahí el saldo se dice entero y de la factura.
+   */
+  total: number;
   /** Cuántas líneas tiene la factura. Con más de 1, `saldo` NO es de este rollo. */
   lineas: number;
 }

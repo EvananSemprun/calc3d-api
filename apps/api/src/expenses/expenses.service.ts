@@ -8,6 +8,7 @@ import {
   type ExpenseUpdateDto,
   type ExpenseWithDefinitionDto,
 } from '@calc3d/shared';
+import { INCLUIR_FACTURA, facturaDeLaCompra } from '../common/factura-de-la-compra';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Rango de fechas opcional [from, to]. Las fechas date-only (`YYYY-MM-DD`) se
@@ -49,12 +50,36 @@ export class ExpensesService {
     counterparty: { select: { id: true, name: true, kind: true } },
   };
 
-  list(organizationId: string, from?: string, to?: string) {
-    return this.prisma.expense.findMany({
+  /**
+   * La lista del periodo, con **la factura de la que nació cada gasto**.
+   *
+   * ⚠️ El `invoice` lo pide el pie del KPI de Gastos del Dashboard: el dueño
+   * leyó «GASTOS $202.00» y creyó que la caja había soltado $202, cuando $50
+   * los puso él de su bolsillo y $10 todavía no se pagaron. Los dos primeros
+   * hechos ya viajaban (`counterparty`, `purchaseInvoiceLineId`); lo que
+   * faltaba era **cuánto** falta pagar, que es de la factura y no del gasto.
+   *
+   * ⚠️ **Sale de `facturaDeLaCompra`, el MISMO helper que usa
+   * `FilamentService`**: la línea de cada compra en Filamento → Compras y este
+   * pie son el mismo hecho, uno suelto y el otro sumado. Dos cuentas para eso
+   * es el bug que produjo el lío.
+   *
+   * Solo lo devuelve `list()`: las mutaciones devuelven la fila cruda, y el
+   * panel recarga la lista después de cada una.
+   */
+  async list(organizationId: string, from?: string, to?: string) {
+    const gastos = await this.prisma.expense.findMany({
       where: { organizationId, ...dateWhere(from, to) },
-      include: this.linkInclude,
+      include: { ...this.linkInclude, purchaseInvoiceLine: INCLUIR_FACTURA },
       orderBy: { date: 'desc' },
     });
+
+    // `purchaseInvoiceLine` se saca del objeto: `purchaseInvoiceLineId` sigue
+    // estando (es columna de la fila) y es lo que mira la pantalla de Gastos.
+    return gastos.map(({ purchaseInvoiceLine, ...g }) => ({
+      ...g,
+      invoice: facturaDeLaCompra(purchaseInvoiceLine?.invoice),
+    }));
   }
 
   /**

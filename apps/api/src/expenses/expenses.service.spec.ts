@@ -854,3 +854,110 @@ describe('ExpensesService — el gasto nacido de una factura', () => {
     expect(res).toEqual({ ok: true });
   });
 });
+
+/**
+ * LA FACTURA DE CADA GASTO EN LA LISTA (2026-10-11, shared 0.50.0).
+ *
+ * Lo pide el pie del KPI de Gastos: el dueño leyó «GASTOS $202.00» y creyó
+ * que la caja había soltado $202, cuando $50 los puso él y $10 no se habían
+ * pagado. `counterparty` y `purchaseInvoiceLineId` ya viajaban; lo que faltaba
+ * era CUÁNTO falta pagar, que es de la factura.
+ */
+describe('ExpensesService — la factura de la que nació cada gasto', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+  let service: ExpensesService;
+
+  const linea = (over: Record<string, unknown> = {}) => ({
+    quantity: 1,
+    unitPrice: '25',
+    received: 1,
+    expenses: [],
+    ...over,
+  });
+
+  const gasto = (over: Record<string, unknown> = {}) => ({
+    id: 'e1',
+    date: new Date('2026-10-08T00:00:00Z'),
+    amount: '25',
+    purchaseInvoiceLineId: null,
+    purchaseInvoiceLine: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    service = new ExpensesService(prisma as any);
+  });
+
+  it('devuelve el saldo y el total de la factura, y null en una compra a mano', async () => {
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-cyan',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: {
+            id: 'f1',
+            lines: [linea()],
+            payments: [{ amount: '15', voidedAt: null }],
+          },
+        },
+      }),
+      gasto({ id: 'e-mano' }),
+    ]);
+
+    const [deFactura, aMano] = await service.list(ORG);
+
+    expect(deFactura.invoice).toEqual({ id: 'f1', saldo: 10, total: 25, lineas: 1 });
+    expect(aMano.invoice).toBeNull();
+  });
+
+  /**
+   * ⚠️ El pie del KPI PRORRATEA el saldo con `total` y agrupa por `id`: sin
+   * esos dos campos la misma factura se contaría una vez por línea.
+   */
+  it('una factura de varias líneas viaja con su total y su número de líneas', async () => {
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-de-cuatro',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: {
+            id: 'f9',
+            lines: [linea(), linea(), linea(), linea()],
+            payments: [{ amount: '60', voidedAt: null }],
+          },
+        },
+      }),
+    ]);
+
+    const [g] = await service.list(ORG);
+
+    expect(g.invoice).toEqual({ id: 'f9', saldo: 40, total: 100, lineas: 4 });
+  });
+
+  /** `purchaseInvoiceLineId` sigue viajando: es lo que mira la pantalla de Gastos. */
+  it('no se lleva por delante el id de la línea, que la pantalla de Gastos usa', async () => {
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: { invoice: { id: 'f1', lines: [linea()], payments: [] } },
+      }),
+    ]);
+
+    const [g] = await service.list(ORG);
+
+    expect(g.purchaseInvoiceLineId).toBe('l1');
+    // Y el objeto crudo de Prisma NO sale en la respuesta.
+    expect('purchaseInvoiceLine' in g).toBe(false);
+  });
+
+  /** Una consulta, no una por fila. */
+  it('trae las facturas en la MISMA consulta', async () => {
+    prisma.expense.findMany.mockResolvedValue([]);
+
+    await service.list(ORG);
+
+    expect(prisma.expense.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.expense.findMany.mock.calls[0][0].include.purchaseInvoiceLine).toBeDefined();
+  });
+});

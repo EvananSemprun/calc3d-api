@@ -11,7 +11,7 @@ export * from './calc/charge-equivalents';
 export * from './calc/stock';
 export * from './calc/restock-order';
 export * from './calc/filament-analytics';
-export * from './calc/filament-payer';
+export * from './calc/pagador';
 export * from './calc/filament-type-price';
 export * from './calc/breakeven';
 export * from './calc/loan';

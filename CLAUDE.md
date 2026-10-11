@@ -1585,10 +1585,38 @@ en el repo web: se sobrescribe al sincronizar.
     ahora devuelve `brand`/`type`/`color`. Dos fuentes para el mismo total
     terminan discrepando, y en un resumen no se nota. Tests:
     `filament-analytics.spec.ts`.
+  - **EL PIE DEL KPI DE GASTOS: el mismo hecho, SUMADO (2026-10-11, shared
+    0.50.0)** — `GET /expenses` devuelve también `invoice` (el mismo objeto que
+    `GET /filament/purchases`, con `saldo`, `total` y `lineas`), y el Dashboard
+    arma el pie con **`repartoDePagadores` + `textoDeReparto`**, en
+    `shared/calc/pagador.ts` — el MISMO módulo que escribe la línea de cada
+    compra. Dos lugares calculando "cuánto de esto pagó la caja" es el bug que
+    produjo todo esto.
+    - **Por qué.** El dueño leyó «GASTOS $202.00» y se creyó $202 más pobre de
+      caja. Soltó $142: $50 los puso él y $10 no estaban pagados.
+    - ⚠️ **`facturaDeLaCompra` vive en `common/factura-de-la-compra.ts`**
+      porque la leen DOS servicios (`FilamentService` y `ExpensesService`).
+    - ⚠️ **El prorrateo es una CONVENCIÓN declarada**, como `filamentShare` en
+      `cash.ts`: a cada gasto nacido de una factura se le imputa
+      `su monto × (saldo ÷ total de la factura)`. Un abono de $60 contra una
+      factura de cuatro líneas no "fue" a una línea concreta. Con facturas de
+      una sola cosa —lo normal acá— el reparto es exacto.
+    - ⚠️ **`caja` es el RESIDUO** (`total − deBolsillo − sinPagar`), no una
+      cuarta suma: parado al lado del KPI, un desglose que no cierra destruye
+      la confianza en los dos números. Medido en la base real: $2.558,15 =
+      $1.817,32 + $740,83.
+    - ⚠️ **No hace falta agrupar por factura, y el intento de hacerlo era
+      CÓDIGO MUERTO**: `Σ monto × (saldo ÷ total)` da lo mismo agrupado que
+      suelto. Se escribió con un `Map` por id y la verificación por mutación lo
+      destapó —desarmarlo no tumbaba un solo test—. Lo que sí hay que no hacer
+      es sumar `invoice.saldo` fila por fila (daría $160 de una factura de
+      $100): eso lo fija un test.
+    - Tests: 20 nuevos en `pagador.spec.ts` (con el barrido de 7 escenarios que
+      exige que las partes sumen el total) + 4 en `expenses.service.spec.ts`.
   - **QUIÉN PUSO LA PLATA de cada compra (2026-10-11, shared 0.49.0)** —
     `GET /filament/purchases` devuelve además `counterpartyName` y, en lugar del
     booleano `fromInvoice`, un objeto **`invoice: { id, saldo, lineas } | null`**.
-    La pantalla lo escribe con `notaDePagador` (`shared/calc/filament-payer.ts`).
+    La pantalla lo escribe con `notaDePagador` (`shared/calc/pagador.ts`).
     - **Por qué.** En octubre de 2026 la pantalla listaba **$202** en compras y
       la caja había soltado **$142**: dos rollos los puso el dueño de su
       bolsillo (gastos con `counterpartyId`) y un tercero entró por una factura
@@ -1614,7 +1642,7 @@ en el repo web: se sobrescribe al sincronizar.
     - ⚠️ **Las facturas viajan en el `include` del `findMany`**, no en una
       consulta por fila: con 40 compras en pantalla serían 40 viajes a la base
       para dibujar una línea de texto. Lo fija un test.
-    - Tests: `filament-payer.spec.ts` (shared, 9) y 6 nuevos en
+    - Tests: `pagador.spec.ts` (shared, 9) y 6 nuevos en
       `filament/filament.service.spec.ts`. Por mutación: ignorar `lineas` tumba
       1, el saldo a mano tumba 2 (el abono anulado y la entrega más cara) y no
       devolver ni factura ni nombre tumba 6.

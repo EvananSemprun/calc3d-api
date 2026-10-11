@@ -702,7 +702,7 @@ describe('Compras de filamento', () => {
     ]);
 
     const [cyan, saldada] = await service(prisma).purchases(ORG);
-    expect(cyan.invoice).toEqual({ id: 'f1', saldo: 10, lineas: 1 });
+    expect(cyan.invoice).toEqual({ id: 'f1', saldo: 10, total: 25, lineas: 1 });
     expect(saldada.invoice?.saldo).toBe(0);
   });
 
