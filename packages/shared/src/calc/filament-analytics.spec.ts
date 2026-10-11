@@ -20,6 +20,7 @@ function compra(p: Partial<FilamentPurchase>): FilamentPurchase {
     providerId: null,
     counterpartyId: null,
     counterpartyName: null,
+    counterpartyKind: null,
     rate: null,
     currencyCode: null,
     invoice: null,

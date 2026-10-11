@@ -28,14 +28,45 @@
  * calculó. Por eso el texto nombra a la FACTURA como sujeto, y cuando tiene más
  * de una línea lo dice de frente.
  */
-import type { FilamentPurchase } from '../schemas/stock';
+import type { FilamentPurchase, FilamentPurchaseInvoice } from '../schemas/stock';
 import { D, toCents } from './money';
 
 /** Lo único que hace falta saber de una compra para contar quién la pagó. */
 export type CompraParaPagador = Pick<
   FilamentPurchase,
-  'counterpartyId' | 'counterpartyName' | 'invoice'
+  'counterpartyId' | 'counterpartyName' | 'counterpartyKind' | 'invoice'
 >;
+
+/**
+ * DE DÓNDE SALIÓ LA PLATA DE LOS ABONOS DE UNA FACTURA, en texto corto, o
+ * `null` cuando salió toda de la caja.
+ *
+ * ⚠️ **Con más de un origen se dice el total y no el detalle.** Esta frase vive
+ * en una celda de tabla, debajo del nombre del proveedor: el detalle completo
+ * la parte en tres renglones y deja de leerse. Cuando hay un solo origen —lo
+ * normal— se nombra; cuando hay varios, lo que importa en esta pantalla es que
+ * esa plata **no salió de la caja**, y el desglose se mira en Compras, que es
+ * adonde ibas a ir igual.
+ *
+ * "No salió de la caja" es cierto para los tres: el bolsillo de alguien, el
+ * saldo a favor (esa plata salió antes) y el prestamista.
+ */
+function origenDeLosAbonos(f: FilamentPurchaseInvoice, money: FormatoDeMonto): string | null {
+  const { bolsillo, saldoAFavor, prestamista } = f.abonado;
+  const fuera = bolsillo + saldoAFavor + prestamista;
+  if (fuera <= 0) return null;
+
+  const origenes = [bolsillo, saldoAFavor, prestamista].filter((x) => x > 0).length;
+  if (origenes > 1) return `${money(fuera)} no salió de la caja`;
+
+  if (bolsillo > 0) {
+    return f.bolsillos.length === 1
+      ? `${money(bolsillo)} lo puso ${f.bolsillos[0]}`
+      : `${money(bolsillo)} de bolsillo`;
+  }
+  if (saldoAFavor > 0) return `${money(saldoAFavor)} con saldo a favor`;
+  return `${money(prestamista)} lo puso el prestamista`;
+}
 
 /** Cómo se escribe un monto: lo pone quien llama (el panel formatea con la moneda del dueño). */
 export type FormatoDeMonto = (n: number) => string;
@@ -64,20 +95,36 @@ const ALGUIEN = 'otra persona';
  */
 export function notaDePagador(c: CompraParaPagador, money: FormatoDeMonto): string | null {
   if (c.invoice) {
+    const partes: string[] = [];
+
     // ⚠️ `saldo` NO se recalcula acá: viene de `invoiceTotals`, que es la única
     // definición de "lo que falta pagar" en el proyecto.
-    if (c.invoice.saldo <= 0) return null;
+    if (c.invoice.saldo > 0) {
+      // ⚠️ **No se repite el nombre del proveedor**: la nota va justo DEBAJO de
+      // ese nombre, en la misma celda, y repetirlo triplicaba el alto de la fila
+      // (medido: 3 renglones en el caso de varias líneas). Lo que no puede
+      // faltar es el SUJETO, que es la factura.
+      partes.push(
+        c.invoice.lineas > 1
+          ? `Faltan ${money(c.invoice.saldo)} de la factura entera (${c.invoice.lineas} líneas)`
+          : `Faltan ${money(c.invoice.saldo)} de esta factura`,
+      );
+    }
 
-    // ⚠️ **No se repite el nombre del proveedor**: la nota va justo DEBAJO de
-    // ese nombre, en la misma celda, y repetirlo triplicaba el alto de la fila
-    // (medido: 3 renglones en el caso de varias líneas). Lo que no puede
-    // faltar es el SUJETO, que es la factura.
-    return c.invoice.lineas > 1
-      ? `Faltan ${money(c.invoice.saldo)} de la factura entera (${c.invoice.lineas} líneas)`
-      : `Faltan ${money(c.invoice.saldo)} de esta factura`;
+    // ⚠️ **Una factura SALDADA puede igual tener algo que decir**: si la abonó
+    // alguien de su bolsillo, la plata no salió de la caja y el negocio se la
+    // debe. Hasta shared 0.50.0 ese caso devolvía `null` y la fila se callaba
+    // justo cuando más tenía para contar.
+    const origen = origenDeLosAbonos(c.invoice, money);
+    if (origen) partes.push(origen);
+
+    return partes.length > 0 ? partes.join(' · ') : null;
   }
 
   if (c.counterpartyId == null) return null;
+  // ⚠️ Lo del prestamista NO lleva "el negocio se lo debe": esa deuda ya vive
+  // en el saldo del préstamo, y prometerla también acá la cuenta dos veces.
+  if (c.counterpartyKind === 'EXTERNAL_LENDER') return 'Lo puso el prestamista';
   return `Lo puso ${c.counterpartyName ?? ALGUIEN} · el negocio se lo debe`;
 }
 
@@ -101,9 +148,19 @@ export interface RepartoDePagadores {
   caja: number;
   /** Lo que puso alguien de su bolsillo. El negocio se lo debe. */
   deBolsillo: number;
+  /**
+   * Lo abonado con **saldo a favor** del proveedor. No movió plata en este
+   * periodo: ya había salido el día que se pagó de más.
+   */
+  conSaldoAFavor: number;
+  /**
+   * Lo que puso el **prestamista**. No toca la caja y no se le debe por acá:
+   * esa deuda ya vive en el saldo del préstamo.
+   */
+  delPrestamista: number;
   /** Lo que todavía no se pagó: la parte sin abonar de las facturas. */
   sinPagar: number;
-  /** Quiénes pusieron plata, sin repetir y en orden. Vacío = nadie. */
+  /** Quiénes pusieron plata de su bolsillo, sin repetir y en orden. Vacío = nadie. */
   nombres: string[];
 }
 
@@ -140,8 +197,13 @@ export interface RepartoDePagadores {
 export function repartoDePagadores(gastos: GastoParaPagador[]): RepartoDePagadores {
   let total = D(0);
   let deBolsillo = D(0);
+  let conSaldoAFavor = D(0);
+  let delPrestamista = D(0);
   let sinPagar = D(0);
   const nombres: string[] = [];
+  const sumarNombre = (n: string) => {
+    if (!nombres.includes(n)) nombres.push(n);
+  };
 
   for (const g of gastos) {
     const monto = D(g.amount);
@@ -159,33 +221,92 @@ export function repartoDePagadores(gastos: GastoParaPagador[]): RepartoDePagador
       //
       // Una factura sin total (o con el total en cero) no tiene fracción
       // posible: no se inventa una. Con `saldo` en 0 no hay nada que imputar.
-      if (g.invoice.total > 0 && g.invoice.saldo > 0) {
-        sinPagar = sinPagar.plus(monto.times(Math.min(g.invoice.saldo / g.invoice.total, 1)));
+      if (g.invoice.total <= 0) continue;
+
+      const f = g.invoice;
+      const fraccionSinPagar = Math.min(f.saldo / f.total, 1);
+      if (fraccionSinPagar > 0) sinPagar = sinPagar.plus(monto.times(fraccionSinPagar));
+
+      // ⚠️ **DE DÓNDE SALIÓ LO QUE SÍ SE ABONÓ** (2026-10-11). Hasta acá todo
+      // lo pagado caía en `caja` por residuo, y el diálogo de Abonar deja
+      // elegir otra cosa: bastaba un abono de bolsillo para que el pie dijera
+      // que esa plata salió del negocio. Un número de plata que miente sin
+      // avisar es peor que uno que falta.
+      //
+      // La parte pagada de este gasto es `monto × (1 − fracciónSinPagar)`, y
+      // se reparte entre los orígenes a prorrata de lo que cada uno abonó.
+      // `abonado.total` es el denominador correcto y NO `f.total`: si se pagó
+      // de más, el excedente es `aFavor` y no corresponde a esta factura, pero
+      // los orígenes siguen estando en la misma proporción entre sí.
+      if (f.abonado.total > 0) {
+        const porAbono = monto.times(1 - fraccionSinPagar).div(f.abonado.total);
+        if (f.abonado.bolsillo > 0) {
+          deBolsillo = deBolsillo.plus(porAbono.times(f.abonado.bolsillo));
+          for (const n of f.bolsillos) sumarNombre(n);
+        }
+        if (f.abonado.saldoAFavor > 0) {
+          conSaldoAFavor = conSaldoAFavor.plus(porAbono.times(f.abonado.saldoAFavor));
+        }
+        if (f.abonado.prestamista > 0) {
+          delPrestamista = delPrestamista.plus(porAbono.times(f.abonado.prestamista));
+        }
       }
       continue;
     }
 
     if (g.counterpartyId != null) {
-      deBolsillo = deBolsillo.plus(monto);
-      const nombre = g.counterpartyName ?? ALGUIEN;
-      if (!nombres.includes(nombre)) nombres.push(nombre);
+      // ⚠️ Lo del prestamista NO es bolsillo: no toca la caja y su deuda ya
+      // vive en el saldo del préstamo. Es la misma distinción que hace
+      // `generaObligacion` en `cash.ts`, y meterlos juntos contaría esa deuda
+      // dos veces. Tampoco entra en `nombres`: el pie lo nombra aparte.
+      if (g.counterpartyKind === 'EXTERNAL_LENDER') {
+        delPrestamista = delPrestamista.plus(monto);
+      } else {
+        deBolsillo = deBolsillo.plus(monto);
+        sumarNombre(g.counterpartyName ?? ALGUIEN);
+      }
     }
   }
 
   const totalC = toCents(total);
-  const deBolsilloC = toCents(deBolsillo);
-  // ⚠️ Los dos pedazos son subconjuntos DISJUNTOS del total, así que sin
-  // redondear nunca lo pasan. Redondeando cada uno por su cuenta sí pueden,
-  // por un centavo, y ahí `caja` saldría en −$0.01: un número imposible en el
-  // pie de un KPI. El tope es contra el redondeo y solo se activa por debajo
-  // del centavo — no esconde ningún faltante.
-  const sinPagarC = Math.min(toCents(sinPagar), totalC - deBolsilloC);
+  // ⚠️ Los pedazos son subconjuntos DISJUNTOS del total, así que sin redondear
+  // nunca lo pasan. Redondeando cada uno por su cuenta sí pueden, por un
+  // centavo, y ahí `caja` saldría en −$0.01: un número imposible en el pie de
+  // un KPI. Los topes son contra el redondeo y solo se activan por debajo del
+  // centavo — no esconden ningún faltante.
+  //
+  // El orden del recorte importa y es deliberado: primero se respetan los
+  // orígenes, que son HECHOS (alguien abonó tanto), y el centavo se le quita a
+  // `sinPagar`, que es el único que sale de una CONVENCIÓN (el prorrateo).
+  //
+  // ⚠️ El recorte modifica **lo que se devuelve**, no solo una suma interna.
+  // Devolver los pedazos sin recortar y restar aparte dejaría un pie cuyos
+  // números no suman su propio total: el defecto exacto que este desglose vino
+  // a arreglar, reintroducido por la puerta del redondeo.
+  const pedazos = [
+    { clave: 'sinPagar', cents: toCents(sinPagar) },
+    { clave: 'deBolsillo', cents: toCents(deBolsillo) },
+    { clave: 'conSaldoAFavor', cents: toCents(conSaldoAFavor) },
+    { clave: 'delPrestamista', cents: toCents(delPrestamista) },
+  ];
+  let exceso = D(pedazos.reduce((s, p) => s + p.cents, 0)).minus(totalC);
+  for (const p of pedazos) {
+    if (exceso.lte(0)) break;
+    const quita = Math.min(exceso.toNumber(), p.cents);
+    p.cents = toCents(D(p.cents).minus(quita));
+    exceso = exceso.minus(quita);
+  }
+  const [sinPagarC, deBolsilloC, conSaldoAFavorC, delPrestamistaC] = pedazos.map((p) => p.cents);
 
   return {
     total: totalC,
-    // El RESIDUO, para que las tres partes sumen el total exacto.
-    caja: toCents(D(totalC).minus(deBolsilloC).minus(sinPagarC)),
+    // El RESIDUO, para que las cinco partes sumen el total exacto.
+    caja: toCents(
+      D(totalC).minus(deBolsilloC).minus(conSaldoAFavorC).minus(delPrestamistaC).minus(sinPagarC),
+    ),
     deBolsillo: deBolsilloC,
+    conSaldoAFavor: conSaldoAFavorC,
+    delPrestamista: delPrestamistaC,
     sinPagar: sinPagarC,
     nombres,
   };
@@ -203,9 +324,17 @@ export function repartoDePagadores(gastos: GastoParaPagador[]): RepartoDePagador
  * tres nombres en el pie de un KPI no entran y no es ahí donde se leen.
  */
 export function textoDeReparto(r: RepartoDePagadores, money: FormatoDeMonto): string | null {
-  if (r.deBolsillo <= 0 && r.sinPagar <= 0) return null;
+  if (r.deBolsillo <= 0 && r.conSaldoAFavor <= 0 && r.delPrestamista <= 0 && r.sinPagar <= 0) {
+    return null;
+  }
 
-  const partes = [`${money(r.caja)} de la caja`];
+  // El orden va de lo más común a lo más raro, y **lo que falta pagar va
+  // último** porque es lo único que todavía no ocurrió.
+  const partes: string[] = [];
+  // ⚠️ La caja también se omite si es cero: "$0.00 de la caja" es la misma
+  // clase de ruido que los otros ceros, y el mes que el dueño no haya puesto
+  // un peso del negocio esa frase sería lo primero que se lee.
+  if (r.caja > 0) partes.push(`${money(r.caja)} de la caja`);
   if (r.deBolsillo > 0) {
     partes.push(
       r.nombres.length === 1
@@ -213,6 +342,8 @@ export function textoDeReparto(r: RepartoDePagadores, money: FormatoDeMonto): st
         : `${money(r.deBolsillo)} de bolsillo`,
     );
   }
+  if (r.conSaldoAFavor > 0) partes.push(`${money(r.conSaldoAFavor)} con saldo a favor`);
+  if (r.delPrestamista > 0) partes.push(`${money(r.delPrestamista)} lo puso el prestamista`);
   if (r.sinPagar > 0) partes.push(`${money(r.sinPagar)} sin pagar`);
   return partes.join(' · ');
 }

@@ -669,6 +669,48 @@ describe('Compras de filamento', () => {
   });
 
   /**
+   * Y QUE ES, no solo quien (2026-10-11, shared 0.51.0).
+   *
+   * Lo que puso el prestamista NO es un aporte que el negocio le devuelva por
+   * este lado: esa deuda ya vive en el saldo del prestamo, y contarla junto al
+   * bolsillo del dueno seria contarla dos veces. Sin el tipo, la pantalla y el
+   * pie del KPI no pueden distinguirlos.
+   */
+  it('dice tambien QUE es la contraparte, para no mezclar al prestamista con un bolsillo', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ id: 'e-duenno', counterpartyId: 'cp1', counterparty: { name: 'Evanan', kind: 'OWNER' } }),
+      gasto({
+        id: 'e-prestamista',
+        counterpartyId: 'cp9',
+        counterparty: { name: 'Prestamista', kind: 'EXTERNAL_LENDER' },
+      }),
+      gasto({ id: 'e-caja' }),
+    ]);
+
+    const [duenno, prestamista, caja] = await service(prisma).purchases(ORG);
+    expect(duenno.counterpartyKind).toBe('OWNER');
+    expect(prestamista.counterpartyKind).toBe('EXTERNAL_LENDER');
+    expect(caja.counterpartyKind).toBeNull();
+  });
+
+  /**
+   * Un tipo que el motor no conoce cae en null, o sea "lo puso la caja". Es lo
+   * correcto y no lo inventado: sin saber que es esa contraparte no hay a
+   * quien deberle, y suponer un tipo moveria plata en el desglose.
+   */
+  it('un tipo de contraparte desconocido no se inventa: cae en null', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ id: 'e-raro', counterpartyId: 'cpX', counterparty: { name: 'Raro', kind: 'MARCIANO' } }),
+    ]);
+
+    const [raro] = await service(prisma).purchases(ORG);
+    expect(raro.counterpartyKind).toBeNull();
+    expect(raro.counterpartyName).toBe('Raro');
+  });
+
+  /**
    * EL SALDO ES DE LA FACTURA Y SALE DE `invoiceTotals`.
    *
    * El Cyan de octubre: factura de $25, la caja abono $15 y quedan $10 por
@@ -702,7 +744,14 @@ describe('Compras de filamento', () => {
     ]);
 
     const [cyan, saldada] = await service(prisma).purchases(ORG);
-    expect(cyan.invoice).toEqual({ id: 'f1', saldo: 10, total: 25, lineas: 1 });
+    expect(cyan.invoice).toEqual({
+      id: 'f1',
+      saldo: 10,
+      total: 25,
+      lineas: 1,
+      abonado: { total: 15, bolsillo: 0, saldoAFavor: 0, prestamista: 0 },
+      bolsillos: [],
+    });
     expect(saldada.invoice?.saldo).toBe(0);
   });
 

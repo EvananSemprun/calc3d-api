@@ -907,7 +907,16 @@ describe('ExpensesService — la factura de la que nació cada gasto', () => {
 
     const [deFactura, aMano] = await service.list(ORG);
 
-    expect(deFactura.invoice).toEqual({ id: 'f1', saldo: 10, total: 25, lineas: 1 });
+    expect(deFactura.invoice).toEqual({
+      id: 'f1',
+      saldo: 10,
+      total: 25,
+      lineas: 1,
+      // Lo abonado salió todo de la caja: es el caso normal y el único que
+      // había en producción cuando esto se escribió.
+      abonado: { total: 15, bolsillo: 0, saldoAFavor: 0, prestamista: 0 },
+      bolsillos: [],
+    });
     expect(aMano.invoice).toBeNull();
   });
 
@@ -932,7 +941,14 @@ describe('ExpensesService — la factura de la que nació cada gasto', () => {
 
     const [g] = await service.list(ORG);
 
-    expect(g.invoice).toEqual({ id: 'f9', saldo: 40, total: 100, lineas: 4 });
+    expect(g.invoice).toEqual({
+      id: 'f9',
+      saldo: 40,
+      total: 100,
+      lineas: 4,
+      abonado: { total: 60, bolsillo: 0, saldoAFavor: 0, prestamista: 0 },
+      bolsillos: [],
+    });
   });
 
   /** `purchaseInvoiceLineId` sigue viajando: es lo que mira la pantalla de Gastos. */

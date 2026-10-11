@@ -1613,6 +1613,44 @@ en el repo web: se sobrescribe al sincronizar.
       $100): eso lo fija un test.
     - Tests: 20 nuevos en `pagador.spec.ts` (con el barrido de 7 escenarios que
       exige que las partes sumen el total) + 4 en `expenses.service.spec.ts`.
+  - **DE DÓNDE SALIÓ LA PLATA DE LOS ABONOS (2026-10-11, shared 0.51.0)** —
+    hasta la 0.50.0, **todo lo abonado a una factura se contaba como "de la
+    caja"**. El diálogo de Abonar deja elegir otra cosa desde que existe, así
+    que bastaba un abono de bolsillo para que el pie del KPI dijera que esa
+    plata la había puesto el negocio. No es un número que se vea mal: es un
+    número que **miente sin avisar**.
+    - `FilamentPurchaseInvoice` lleva ahora `abonado: { total, bolsillo,
+      saldoAFavor, prestamista }` y `bolsillos: string[]`, y `FilamentPurchase`
+      lleva `counterpartyKind`. La clasificación vive en `origenDelAbono`
+      (`common/factura-de-la-compra.ts`); el reparto y los textos, en
+      `shared/calc/pagador.ts`.
+    - ⚠️ **LA PRECEDENCIA NO SE ELIGE AHÍ: es la de `cashEntries`**
+      (`shared/calc/cash.ts`). Primero `fromCredit`, después el prestamista,
+      después la contraparte. Un abono tomado del saldo a favor que ADEMÁS
+      tenga contraparte es **saldo a favor**: esa plata ya había salido y quien
+      figure como pagador no puso nada esta vez. Invertirla hace que Caja y el
+      Dashboard cuenten el mismo abono de dos maneras, y no se nota hasta que
+      la diferencia es grande. Lo fija un test con ese nombre.
+    - ⚠️ **El prestamista NO es bolsillo**, ni en un abono ni en un gasto
+      directo: su deuda ya vive en el saldo del préstamo y sumarla como aporte
+      la contaría dos veces. Mismo criterio que `generaObligacion`.
+    - ⚠️ **El denominador del prorrateo es `abonado.total`, NO el total de la
+      factura**: con una factura pagada de más, el excedente es `aFavor` y no
+      corresponde a esta factura, pero los orígenes siguen en la misma
+      proporción entre sí. Hay un test de "pagada de más" que lo fija.
+    - ⚠️ **Los anulados quedan fuera con el MISMO criterio que `invoiceTotals`.**
+      Si uno de los dos los contara, `abonado.total` y `total − saldo` dejarían
+      de ser el mismo número y el pie repartiría plata que nadie puso.
+    - ⚠️ **ESTOS TESTS SON LA ÚNICA EVIDENCIA.** Medido en producción ese día:
+      **1 factura y 1 abono**, pagado por la caja. Cero de bolsillo, cero con
+      saldo a favor, cero del prestamista, cero facturas de varias líneas. No
+      hay pantalla donde ir a mirarlo, así que si se tocan estas funciones hay
+      que confiar en los tests o volver a crear datos a mano.
+    - Tests: `common/factura-de-la-compra.spec.ts` (11, la precedencia) + 20 en
+      `pagador.spec.ts` + 2 en `filament.service.spec.ts`. Por mutación:
+      invertir la precedencia tumba 2, contar al prestamista como bolsillo
+      tumba 1, contar los anulados tumba 1, y del lado de shared las seis
+      mutaciones probadas tumban entre 1 y 6 cada una.
   - **QUIÉN PUSO LA PLATA de cada compra (2026-10-11, shared 0.49.0)** —
     `GET /filament/purchases` devuelve además `counterpartyName` y, en lugar del
     booleano `fromInvoice`, un objeto **`invoice: { id, saldo, lineas } | null`**.

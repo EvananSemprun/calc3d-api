@@ -1,4 +1,9 @@
 import { z } from 'zod';
+// ⚠️ El TIPO de contraparte no se redeclara acá: `PayerKind` es el que usa el
+// motor de caja para decidir si lo que alguien puso genera una obligación. Dos
+// listas de tipos de contraparte terminan divergiendo el día que se agregue
+// una, y la que mueve plata es esa.
+import type { PayerKind } from '../calc/cash';
 
 /**
  * Contratos del CONTROL DE FILAMENTO: compras y conteo mensual de rollos.
@@ -197,6 +202,60 @@ export interface FilamentPurchaseInvoice {
   total: number;
   /** Cuántas líneas tiene la factura. Con más de 1, `saldo` NO es de este rollo. */
   lineas: number;
+  /**
+   * LO YA ABONADO, PARTIDO POR DE DÓNDE SALIÓ LA PLATA.
+   *
+   * Hasta shared 0.50.0 todo lo abonado se contaba como "de la caja", y el
+   * diálogo de Abonar deja elegir otra cosa desde que existe: el día que el
+   * dueño abonara una factura de su bolsillo, el pie del KPI iba a decir que
+   * esa plata salió del negocio. No es un número que se vea mal — es un número
+   * que miente sin avisar.
+   *
+   * ⚠️ **La caja NO está acá: es el RESIDUO** (`total − bolsillo −
+   * saldoAFavor − prestamista`). Un quinto número que tuviera que coincidir
+   * con la resta de los otros cuatro es una contradicción esperando el
+   * redondeo que la active.
+   */
+  abonado: AbonadoPorOrigen;
+  /**
+   * Quiénes abonaron de su bolsillo, sin repetir y en el orden en que
+   * aparecieron. Vacío cuando nadie lo hizo.
+   */
+  bolsillos: string[];
+}
+
+/**
+ * De dónde salió la plata de los abonos de una factura. Los montos son de la
+ * FACTURA entera, no de una línea.
+ *
+ * ⚠️ **EL ORDEN EN QUE SE CLASIFICA UN ABONO NO SE ELIGE ACÁ: lo fija
+ * `cashEntries`** (`calc/cash.ts`), que es quien mueve la caja de verdad.
+ * Primero `fromCredit`, después el prestamista, después la contraparte. Un
+ * abono tomado del saldo a favor que ADEMÁS tenga contraparte es saldo a
+ * favor. Clasificarlo distinto acá haría que Caja y el Dashboard dijeran dos
+ * cosas del mismo abono, y nadie lo notaría hasta que la diferencia fuera
+ * grande.
+ */
+export interface AbonadoPorOrigen {
+  /** Σ de los abonos NO anulados. Es `invoiceTotals(...).pagado`. */
+  total: number;
+  /**
+   * Lo que puso una persona de su bolsillo (`OWNER` o `PARTNER`). No salió de
+   * la caja: el negocio se lo debe a esa persona.
+   */
+  bolsillo: number;
+  /**
+   * Lo tomado del **saldo a favor** con ese proveedor. **No mueve plata ahora**:
+   * ya salió el día que se pagó de más, y el proveedor la reconoce. Contarla
+   * otra vez es la misma doble carga que descuadraba la hoja del Excel.
+   */
+  saldoAFavor: number;
+  /**
+   * Lo que puso el **prestamista**. No toca la caja, y tampoco es un aporte que
+   * el negocio devuelva por este lado: esa deuda ya vive en el saldo del
+   * préstamo, así que sumarla acá sería contarla dos veces.
+   */
+  prestamista: number;
 }
 
 /** Una compra de filamento, con lo que costó de verdad. */
@@ -235,6 +294,16 @@ export interface FilamentPurchase {
    * línea de texto, y hasta que llegara la fila diría "lo puso alguien".
    */
   counterpartyName: string | null;
+  /**
+   * QUÉ ES quien la pagó, no quién. `null` = la caja del negocio.
+   *
+   * ⚠️ No alcanza con saber que la pagó "alguien": lo que puso el
+   * **prestamista** no es un aporte que el negocio le devuelva por este lado
+   * —esa deuda ya vive en el saldo del préstamo— y contarlo junto al bolsillo
+   * del dueño sería contarla dos veces. Es la misma distinción que hace
+   * `generaObligacion` en `calc/cash.ts`.
+   */
+  counterpartyKind: PayerKind | null;
   /** tasa y moneda si el pago fue en bolívares */
   rate: number | null;
   currencyCode: string | null;

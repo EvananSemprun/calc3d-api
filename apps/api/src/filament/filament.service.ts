@@ -23,6 +23,7 @@ import {
   type RestockGroup,
 } from '@calc3d/shared';
 import { INCLUIR_FACTURA, facturaDeLaCompra } from '../common/factura-de-la-compra';
+import { tipoDeContraparte } from '../common/tipo-de-contraparte';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Fila del conteo tal como sale de la base. */
@@ -91,7 +92,7 @@ export class FilamentService {
         // QUIÉN PUSO LA PLATA, por su nombre: la pantalla lo dice ("Lo puso
         // Evanan"), y con solo el id tendría que pedir la lista de contrapartes
         // aparte para dibujar una línea de texto.
-        counterparty: { select: { name: true } },
+        counterparty: { select: { name: true, kind: true } },
         /**
          * ⚠️ **La FACTURA de la que nació, si nació de una.** Lo que la
          * pantalla necesita no es el renglón: es el estado de la factura
@@ -128,6 +129,10 @@ export class FilamentService {
         providerId: g.providerId,
         counterpartyId: g.counterpartyId,
         counterpartyName: g.counterparty?.name ?? null,
+        // ⚠️ El TIPO decide si lo que puso esa persona es una deuda del
+        // negocio con ella o una cuota del préstamo que ya está contada en
+        // otro lado. Sin esto, lo del prestamista se leía como bolsillo.
+        counterpartyKind: tipoDeContraparte(g.counterparty?.kind),
         rate: g.rate == null ? null : Number(g.rate),
         currencyCode: g.currencyCode ?? null,
         // Entró por una factura de Compras: la pantalla no la deja corregir ni
