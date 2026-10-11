@@ -540,6 +540,42 @@ describe('Resumen del mes', () => {
   });
 });
 
+/** Un gasto de filamento tal como lo trae Prisma, con lo minimo que mira `purchases()`. */
+const gasto = (over: Record<string, unknown> = {}) => ({
+  id: 'e1',
+  date: new Date('2026-10-10T00:00:00Z'),
+  amount: '25',
+  quantity: 1,
+  description: 'Compra PLA',
+  rate: null,
+  currencyCode: null,
+  material: { id: 'm1', name: 'PLA Cyan', rollGrams: 1000 },
+  provider: null,
+  providerId: null,
+  counterpartyId: null,
+  counterparty: null,
+  purchaseInvoiceLineId: null,
+  purchaseInvoiceLine: null,
+  ...over,
+});
+
+/** Una linea de factura: lo pedido y, aparte, lo que costo cada entrega. */
+const linea = (over: Record<string, unknown> = {}) => ({
+  quantity: 1,
+  unitPrice: '25',
+  received: 0,
+  expenses: [],
+  ...over,
+});
+
+/** Una factura de compra con sus lineas y sus abonos. */
+const factura = (over: Record<string, unknown> = {}) => ({
+  id: 'f1',
+  lines: [linea()],
+  payments: [],
+  ...over,
+});
+
 describe('Compras de filamento', () => {
   it('deriva el costo por rollo y por gramo con los gramos REALES', async () => {
     const prisma = makePrisma();
@@ -586,42 +622,197 @@ describe('Compras de filamento', () => {
   /**
    * La pantalla de Compras de filamento ofrece corregir y borrar, y las dos
    * cosas pegan a `/expenses`, que rechaza un gasto nacido de una factura. Sin
-   * este campo la pantalla no puede saberlo y ofrece un lápiz que solo sabe
-   * fallar. Van las DOS compras: con una sola, un `fromInvoice` clavado en true
-   * (o en false) pasaría igual.
+   * este campo la pantalla no puede saberlo y ofrece un lapiz que solo sabe
+   * fallar. Van las DOS compras: con una sola, un `invoice` clavado en una
+   * factura (o en null) pasaria igual.
    */
-  it('dice cuál compra entró por una factura y cuál se cargó a mano', async () => {
+  it('dice cual compra entro por una factura y cual se cargo a mano', async () => {
     const prisma = makePrisma();
     prisma.expense.findMany.mockResolvedValue([
-      {
+      gasto({
         id: 'e-factura',
-        date: new Date('2026-10-10T00:00:00Z'),
-        amount: '25',
-        quantity: 1,
-        description: 'Compra PLA Cyan',
-        rate: null,
-        currencyCode: null,
         material: { id: 'm1', name: 'PLA Cyan', rollGrams: 1000 },
-        provider: null,
         purchaseInvoiceLineId: 'linea-1',
-      },
-      {
+        purchaseInvoiceLine: { invoice: factura() },
+      }),
+      gasto({
         id: 'e-mano',
-        date: new Date('2026-08-31T00:00:00Z'),
         amount: '40',
         quantity: 2,
-        description: 'Compra PLA',
-        rate: null,
-        currencyCode: null,
         material: { id: 'm2', name: 'PLA Amarillo', rollGrams: 1000 },
-        provider: null,
-        purchaseInvoiceLineId: null,
-      },
+      }),
     ]);
 
     const [deFactura, aMano] = await service(prisma).purchases(ORG);
-    expect(deFactura.fromInvoice).toBe(true);
-    expect(aMano.fromInvoice).toBe(false);
+    expect(deFactura.invoice?.id).toBe('f1');
+    expect(aMano.invoice).toBeNull();
+  });
+
+  /**
+   * QUIEN PUSO LA PLATA (2026-10-11).
+   *
+   * El caso real: la pantalla listaba $202 de compras y la caja solo habia
+   * soltado $142. Dos de esos rollos los pago el dueno de su bolsillo. El id ya
+   * viajaba; sin el NOMBRE la pantalla no puede decirlo.
+   */
+  it('dice el nombre de quien la pago de su bolsillo, y null si fue la caja', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ id: 'e-evanan', counterpartyId: 'cp1', counterparty: { name: 'Evanan' } }),
+      gasto({ id: 'e-caja' }),
+    ]);
+
+    const [deEvanan, deLaCaja] = await service(prisma).purchases(ORG);
+    expect(deEvanan.counterpartyName).toBe('Evanan');
+    expect(deLaCaja.counterpartyId).toBeNull();
+    expect(deLaCaja.counterpartyName).toBeNull();
+  });
+
+  /**
+   * EL SALDO ES DE LA FACTURA Y SALE DE `invoiceTotals`.
+   *
+   * El Cyan de octubre: factura de $25, la caja abono $15 y quedan $10 por
+   * pagarle a StratoFill. Numeros a mano, y el hermano alcanzable al lado: una
+   * factura saldada tiene que dar 0, o un saldo clavado pasaria igual.
+   */
+  it('deriva lo que falta pagar de la factura con invoiceTotals', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-cyan',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: factura({
+            lines: [linea({ quantity: 1, unitPrice: '25', received: 1 })],
+            payments: [{ amount: '15', voidedAt: null }],
+          }),
+        },
+      }),
+      gasto({
+        id: 'e-saldada',
+        purchaseInvoiceLineId: 'l2',
+        purchaseInvoiceLine: {
+          invoice: factura({
+            id: 'f2',
+            lines: [linea({ quantity: 1, unitPrice: '25', received: 1 })],
+            payments: [{ amount: '25', voidedAt: null }],
+          }),
+        },
+      }),
+    ]);
+
+    const [cyan, saldada] = await service(prisma).purchases(ORG);
+    expect(cyan.invoice).toEqual({ id: 'f1', saldo: 10, lineas: 1 });
+    expect(saldada.invoice?.saldo).toBe(0);
+  });
+
+  /**
+   * CUANTAS LINEAS TIENE LA FACTURA. Es lo que le permite a la pantalla decir
+   * la verdad: $40 de una factura de cuatro lineas NO son $40 de este rollo, y
+   * repartirlos entre las lineas seria una convencion inventada.
+   */
+  it('dice cuantas lineas tiene la factura, sin repartir el saldo entre ellas', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-de-cuatro',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: factura({
+            lines: [
+              linea({ quantity: 1, unitPrice: '25', received: 1 }),
+              linea({ quantity: 1, unitPrice: '25', received: 1 }),
+              linea({ quantity: 1, unitPrice: '25', received: 1 }),
+              linea({ quantity: 1, unitPrice: '25', received: 1 }),
+            ],
+            payments: [{ amount: '60', voidedAt: null }],
+          }),
+        },
+      }),
+    ]);
+
+    const [c] = await service(prisma).purchases(ORG);
+    // $100 pedidos menos $60 abonados: el saldo es de la factura ENTERA, no los
+    // $10 de este renglon que daria repartirlo.
+    expect(c.invoice?.saldo).toBe(40);
+    expect(c.invoice?.lineas).toBe(4);
+  });
+
+  /**
+   * EL PRECIO QUE TE COBRARON, no el que pediste. Pediste 2 a $7 y te
+   * facturaron $7,50: la factura cuesta $15, no $14. Es la regla de
+   * `invoiceTotals` (lo recibido vale lo que costo) y la razon por la que el
+   * saldo NO se puede recalcular aca: `cantidad x precio pedido` menos los
+   * abonos daria $4 y la pantalla de Compras diria $5.
+   */
+  it('el saldo cobra lo recibido al precio REAL de la entrega', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-mas-caro',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: factura({
+            lines: [
+              linea({
+                quantity: 2,
+                unitPrice: '7',
+                received: 2,
+                expenses: [{ quantity: 2, amount: '15' }],
+              }),
+            ],
+            payments: [{ amount: '10', voidedAt: null }],
+          }),
+        },
+      }),
+    ]);
+
+    const [c] = await service(prisma).purchases(ORG);
+    expect(c.invoice?.saldo).toBe(5);
+  });
+
+  /** Lo anulado no pago nada: la regla vive en el motor y aca se ejerce. */
+  it('un abono ANULADO no baja el saldo de la factura', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({
+        id: 'e-anulado',
+        purchaseInvoiceLineId: 'l1',
+        purchaseInvoiceLine: {
+          invoice: factura({
+            lines: [linea({ quantity: 1, unitPrice: '25', received: 1 })],
+            payments: [{ amount: '15', voidedAt: new Date('2026-10-09T00:00:00Z') }],
+          }),
+        },
+      }),
+    ]);
+
+    const [c] = await service(prisma).purchases(ORG);
+    expect(c.invoice?.saldo).toBe(25);
+  });
+
+  /**
+   * RENDIMIENTO: las facturas viajan en el `include`, no en una consulta por
+   * fila. Con 40 compras en pantalla, una consulta por fila son 40 viajes a la
+   * base para dibujar una linea de texto.
+   */
+  it('trae las facturas en la MISMA consulta, no una por fila', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ id: 'e1', purchaseInvoiceLineId: 'l1', purchaseInvoiceLine: { invoice: factura() } }),
+      gasto({
+        id: 'e2',
+        purchaseInvoiceLineId: 'l2',
+        purchaseInvoiceLine: { invoice: factura({ id: 'f2' }) },
+      }),
+    ]);
+
+    await service(prisma).purchases(ORG);
+
+    expect(prisma.expense.findMany).toHaveBeenCalledTimes(1);
+    const include = prisma.expense.findMany.mock.calls[0][0].include;
+    expect(include.counterparty).toBeDefined();
+    expect(include.purchaseInvoiceLine).toBeDefined();
   });
 
   it('solo trae los gastos ligados a un filamento, de la organización', async () => {

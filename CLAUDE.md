@@ -1585,6 +1585,39 @@ en el repo web: se sobrescribe al sincronizar.
     ahora devuelve `brand`/`type`/`color`. Dos fuentes para el mismo total
     terminan discrepando, y en un resumen no se nota. Tests:
     `filament-analytics.spec.ts`.
+  - **QUIÉN PUSO LA PLATA de cada compra (2026-10-11, shared 0.49.0)** —
+    `GET /filament/purchases` devuelve además `counterpartyName` y, en lugar del
+    booleano `fromInvoice`, un objeto **`invoice: { id, saldo, lineas } | null`**.
+    La pantalla lo escribe con `notaDePagador` (`shared/calc/filament-payer.ts`).
+    - **Por qué.** En octubre de 2026 la pantalla listaba **$202** en compras y
+      la caja había soltado **$142**: dos rollos los puso el dueño de su
+      bolsillo (gastos con `counterpartyId`) y un tercero entró por una factura
+      abonada a medias ($15 de $25). Los tres hechos estaban en la base y
+      ninguno en la tabla, así que la caja parecía mentir.
+    - ⚠️ **Un rollo que entró por factura NO tiene pagador propio.** Lo que se
+      paga es la FACTURA, y una factura puede tener varias líneas. El saldo
+      **no se reparte entre las líneas**: eso sería una convención escrita como
+      si fuera un hecho del rollo. Por eso viaja `lineas` y el texto cambia:
+      `"Faltan $10.00 de esta factura"` con una línea y
+      `"Faltan $40.00 de la factura entera (4 líneas)"` con varias.
+    - ⚠️ **El saldo sale de `invoiceTotals`** (`calc/purchase-invoice.ts`), no
+      de una cuenta propia: cobra lo recibido al precio REAL de cada entrega e
+      ignora los abonos anulados. Recalcularlo acá daba otro número que el de
+      la pantalla de Compras (medido: $4 contra $5 con una entrega más cara).
+    - ⚠️ **`supplierName` NO viaja**, a propósito: el gasto que nace al recibir
+      guarda como proveedor al de la factura, así que `providerName` de la
+      compra ya ES ese nombre.
+    - ⚠️ **`fromInvoice` se REEMPLAZÓ, no se dejó al lado**: dos definiciones de
+      "esta compra vino de una factura" en el mismo objeto es justo el bug que
+      este proyecto viene cazando. Cambia la FORMA de la respuesta → **API
+      primero, panel después**.
+    - ⚠️ **Las facturas viajan en el `include` del `findMany`**, no en una
+      consulta por fila: con 40 compras en pantalla serían 40 viajes a la base
+      para dibujar una línea de texto. Lo fija un test.
+    - Tests: `filament-payer.spec.ts` (shared, 9) y 6 nuevos en
+      `filament/filament.service.spec.ts`. Por mutación: ignorar `lineas` tumba
+      1, el saldo a mano tumba 2 (el abono anulado y la entrega más cara) y no
+      devolver ni factura ni nombre tumba 6.
   - **La calculadora cotiza por TIPO, no por color (2026-10-10, shared 0.43.0)** —
     `GET /filament/type-prices` (`FilamentService.typePrices`) devuelve el
     precio de cada tipo, DERIVADO de las compras. El motor puro es

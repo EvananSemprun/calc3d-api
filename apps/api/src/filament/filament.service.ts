@@ -7,6 +7,7 @@ import {
   monthKey,
   monthStart,
   previousMonth,
+  invoiceTotals,
   purchaseCostPerGram,
   purchaseCostPerRoll,
   preciosPorTipo,
@@ -23,6 +24,26 @@ import {
   type RestockGroup,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
+
+/**
+ * La factura de compra tal como la trae el `include` de `purchases()`.
+ *
+ * Se declara por su FORMA y no con los tipos generados de Prisma a propósito:
+ * lo único que mira `facturaDeLaCompra` son las líneas y los abonos, y así el
+ * spec puede armar una factura a mano sin una base de verdad.
+ */
+interface FacturaCruda {
+  id: string;
+  lines: {
+    quantity: number;
+    /** `Decimal` de Prisma. */
+    unitPrice: unknown;
+    received: number;
+    /** Las recepciones: cada una ES el gasto que nació al recibir. */
+    expenses: { quantity: number | null; amount: unknown }[];
+  }[];
+  payments: { amount: unknown; voidedAt: Date | null }[];
+}
 
 /** Fila del conteo tal como sale de la base. */
 interface CountRow {
@@ -87,6 +108,39 @@ export class FilamentService {
           select: { id: true, name: true, rollGrams: true, brand: true, type: true, color: true },
         },
         provider: { select: { name: true } },
+        // QUIÉN PUSO LA PLATA, por su nombre: la pantalla lo dice ("Lo puso
+        // Evanan"), y con solo el id tendría que pedir la lista de contrapartes
+        // aparte para dibujar una línea de texto.
+        counterparty: { select: { name: true } },
+        /**
+         * ⚠️ **La FACTURA de la que nació, si nació de una.** Lo que la
+         * pantalla necesita no es el renglón: es el estado de la factura
+         * (`invoiceTotals`), y eso son sus líneas y sus abonos.
+         *
+         * ⚠️ **Va acá, en el `include` del gasto, y NO en una consulta por
+         * fila.** Prisma lo resuelve de una con el `findMany`: una pantalla con
+         * 40 compras no puede disparar 40 consultas.
+         */
+        purchaseInvoiceLine: {
+          select: {
+            invoice: {
+              select: {
+                id: true,
+                lines: {
+                  select: {
+                    quantity: true,
+                    unitPrice: true,
+                    received: true,
+                    // Lo que de verdad te cobraron en cada entrega: el total de
+                    // la factura ya NO es `Σ cantidad × precio pedido`.
+                    expenses: { select: { quantity: true, amount: true } },
+                  },
+                },
+                payments: { select: { amount: true, voidedAt: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { date: 'desc' },
     });
@@ -112,11 +166,12 @@ export class FilamentService {
         note: g.description ?? null,
         providerId: g.providerId,
         counterpartyId: g.counterpartyId,
+        counterpartyName: g.counterparty?.name ?? null,
         rate: g.rate == null ? null : Number(g.rate),
         currencyCode: g.currencyCode ?? null,
         // Entró por una factura de Compras: la pantalla no la deja corregir ni
         // borrar, porque la API rechaza las dos cosas (ver `ExpensesService`).
-        fromInvoice: g.purchaseInvoiceLineId != null,
+        invoice: facturaDeLaCompra(g.purchaseInvoiceLine?.invoice ?? null),
       };
     });
   }
@@ -501,4 +556,42 @@ function dateWhere(from?: string, to?: string) {
   const gte = from ? new Date(from) : undefined;
   const lte = to ? new Date(`${to}T23:59:59.999Z`) : undefined;
   return { date: { ...(gte && { gte }), ...(lte && { lte }) } };
+}
+
+/**
+ * Lo que una factura, cruda de Prisma, le aporta a una compra de filamento:
+ * **cuánto falta pagarLE AL PROVEEDOR**.
+ *
+ * ⚠️ **El saldo sale de `invoiceTotals`, no de una cuenta propia.** "Lo que
+ * falta pagar de una factura" tiene UNA definición en el proyecto (recorta en 0
+ * los sobrepagos, ignora los abonos anulados y cobra lo ya recibido al precio
+ * REAL de cada entrega); una segunda acá diría un número distinto que el de la
+ * pantalla de Compras el día que cualquiera de las dos cambie.
+ *
+ * ⚠️ **No se reparte entre las líneas**, y por eso viaja `lineas`: el saldo es
+ * de la factura entera y la pantalla lo tiene que decir así.
+ */
+function facturaDeLaCompra(f: FacturaCruda | null): FilamentPurchase['invoice'] {
+  if (!f) return null;
+
+  const totals = invoiceTotals(
+    f.lines.map((l) => ({
+      quantity: l.quantity,
+      unitPrice: Number(l.unitPrice),
+      received: l.received,
+      // Mismo criterio que la pantalla de Compras: la recepción ES el gasto que
+      // nació al recibir, con el precio que de verdad te cobraron.
+      recepciones: l.expenses.map((e) => ({
+        quantity: e.quantity ?? 0,
+        unitPrice: purchaseCostPerRoll(Number(e.amount), e.quantity ?? 0),
+      })),
+    })),
+    f.payments.map((p) => ({ amount: Number(p.amount), voided: p.voidedAt != null })),
+  );
+
+  return {
+    id: f.id,
+    saldo: totals.saldo,
+    lineas: f.lines.length,
+  };
 }

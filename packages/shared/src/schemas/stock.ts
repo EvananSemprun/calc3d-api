@@ -160,6 +160,36 @@ export interface StockCountRow extends StockCountParts {
   lastRollPrice: number | null;
 }
 
+/**
+ * LA FACTURA de la que nació una compra, vista por una sola pregunta: ¿queda
+ * plata por pagarle al proveedor?
+ *
+ * ⚠️ **El saldo es de LA FACTURA, no del rollo.** Un rollo que entró por
+ * factura **no tiene pagador propio**: lo que se paga es la factura, y una
+ * factura puede tener varias líneas. Por eso viaja `lineas`: con más de una, el
+ * texto de la pantalla tiene que decir que esos $10 son de la factura entera.
+ * **Repartir el saldo entre las líneas sería una convención, no un hecho**, y
+ * escrita como si fuera del rollo es una mentira chiquita que después alguien
+ * usa para cuadrar algo.
+ *
+ * ⚠️ **No viaja el nombre del proveedor**, y no es un olvido: el gasto que nace
+ * al recibir una línea guarda como proveedor **al de la factura**, así que el
+ * `providerName` de la compra ya ES ese nombre. Mandarlo otra vez acá sería el
+ * mismo dato por dos caminos, listo para divergir — y la nota se dibuja justo
+ * debajo de él, en la misma celda.
+ */
+export interface FilamentPurchaseInvoice {
+  id: string;
+  /**
+   * Lo que falta pagar de la factura. Sale de **`invoiceTotals(...).saldo`**,
+   * la única definición de ese número en el proyecto: nunca negativo (lo pagado
+   * de más es `aFavor`, no un saldo al revés) y no se recalcula acá.
+   */
+  saldo: number;
+  /** Cuántas líneas tiene la factura. Con más de 1, `saldo` NO es de este rollo. */
+  lineas: number;
+}
+
 /** Una compra de filamento, con lo que costó de verdad. */
 export interface FilamentPurchase {
   id: string;
@@ -187,17 +217,31 @@ export interface FilamentPurchase {
    */
   providerId: string | null;
   counterpartyId: string | null;
+  /**
+   * CÓMO SE LLAMA quien la pagó de su bolsillo. `null` = la pagó la caja del
+   * negocio (igual que `counterpartyId`).
+   *
+   * Va además del id porque la pantalla lo DICE ("Lo puso Evanan"): sin el
+   * nombre habría que pedir la lista de contrapartes solo para dibujar una
+   * línea de texto, y hasta que llegara la fila diría "lo puso alguien".
+   */
+  counterpartyName: string | null;
   /** tasa y moneda si el pago fue en bolívares */
   rate: number | null;
   currencyCode: string | null;
   /**
-   * Nació de una línea de factura de Compras, no de una carga a mano.
+   * La FACTURA de la que nació, o `null` si se cargó a mano.
    *
-   * ⚠️ Con esto en `true` la compra **no se corrige ni se borra desde acá**: su
-   * monto y su cantidad son el espejo de la línea recibida, así que tocarla
-   * dejaría a la factura mintiendo y la API la rechaza con un 400. Va en el
-   * contrato y no como tipo del front porque es la pantalla la que tiene que
-   * dejar de ofrecer lo que sabe que va a fallar.
+   * ⚠️ Con esto distinto de `null` la compra **no se corrige ni se borra desde
+   * acá**: su monto y su cantidad son el espejo de la línea recibida, así que
+   * tocarla dejaría a la factura mintiendo y la API la rechaza con un 400. Va
+   * en el contrato y no como tipo del front porque es la pantalla la que tiene
+   * que dejar de ofrecer lo que sabe que va a fallar.
+   *
+   * ⚠️ **Reemplazó al booleano `fromInvoice` (2026-10-11, shared 0.49.0)** en
+   * vez de sumarse a su lado: "esta compra vino de una factura" tiene que
+   * tener **una sola** definición en el objeto, o el día que una de las dos se
+   * calcule distinto la pantalla ofrecería un lápiz que solo sabe fallar.
    */
-  fromInvoice: boolean;
+  invoice: FilamentPurchaseInvoice | null;
 }
