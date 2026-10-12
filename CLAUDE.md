@@ -706,7 +706,16 @@ en el repo web: se sobrescribe al sincronizar.
     estado que inyectar y asi el controller y los specs no se tocan. `confirm`,
     `saveReconciliation` y `voidReconciliation` se quedaron en el servicio
     porque los tres devuelven `summary()`, y moverlos seria una dependencia
-    circular disfrazada de refactor. Rutas: `/counterparties` y `/cash-accounts`,
+    circular disfrazada de refactor.
+    - ⚠️ **Segunda pasada (mismo día): las tres escrituras TAMBIEN salieron**,
+      a `cash/escribir-conciliacion.ts`, y el archivo quedo en **321 lineas**.
+      La razon por la que se habian quedado era falsa: no hacia falta pasarse
+      el servicio, porque **escribir y devolver el resumen son dos cosas
+      distintas**. Las funciones escriben y no devuelven nada; el servicio
+      compone (`await guardarConciliacion(...); return this.summary(...)`), asi
+      que cada endpoint responde exactamente lo mismo que antes. Si una
+      excusa de "dependencia circular" aparece en un refactor, conviene mirar
+      si lo circular es el codigo o el recorte que se eligio. Rutas: `/counterparties` y `/cash-accounts`,
     las dos con `GET`, `POST`, `PUT /:id`, `POST /:id/default` y `DELETE /:id`.
     Plan: `docs/superpowers/plans/2026-10-05-caja-fase-2.md`.
     - ⚠️ **Las guardas de borrado no son cosmeticas.** Una contraparte con
