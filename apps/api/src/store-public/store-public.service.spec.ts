@@ -49,15 +49,33 @@ const PRODUCTO = {
   ],
 };
 
+/** Un banner tal como lo devuelve Prisma (fila interna). */
+const BANNER = {
+  id: 'ban1',
+  organizationId: ORG,
+  title: 'Promo de temporada',
+  subtitle: 'Hasta agotar',
+  imageKey: `${ORG}/store/banners/promo.png`,
+  linkType: 'CATEGORY' as const,
+  linkValue: 'llaveros',
+  position: 0,
+  visible: true,
+  createdAt: new Date('2026-10-01T00:00:00Z'),
+  updatedAt: new Date('2026-10-01T00:00:00Z'),
+};
+
 function makeService(overrides: {
   storeOrganizationId?: string | null;
   findFirst?: jest.Mock;
   findMany?: jest.Mock;
+  bannerFindMany?: jest.Mock;
 } = {}) {
   const findFirst = overrides.findFirst ?? jest.fn().mockResolvedValue(PRODUCTO);
   const findMany = overrides.findMany ?? jest.fn().mockResolvedValue([PRODUCTO]);
+  const bannerFindMany = overrides.bannerFindMany ?? jest.fn().mockResolvedValue([BANNER]);
   const prisma = {
     storeProduct: { findFirst, findMany },
+    storeBanner: { findMany: bannerFindMany },
     storeCategory: { findMany: jest.fn().mockResolvedValue([]) },
     organization: { findUnique: jest.fn().mockResolvedValue({ name: 'Banano Lab' }) },
     settings: {
@@ -85,7 +103,7 @@ function makeService(overrides: {
     rates as never,
     storage as never,
   );
-  return { service, prisma, findFirst, findMany };
+  return { service, prisma, findFirst, findMany, bannerFindMany };
 }
 
 /** Campos que jamás pueden aparecer en una respuesta pública. */
@@ -104,6 +122,40 @@ function clavesDe(value: unknown, out = new Set<string>()): Set<string> {
   }
   return out;
 }
+
+describe('Banners públicos', () => {
+  it('devuelve solo banners visibles de la organización del entorno, por posición', async () => {
+    const { service, bannerFindMany } = makeService();
+    const { banners } = await service.banners();
+    expect(banners).toHaveLength(1);
+    expect(bannerFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: ORG, visible: true },
+        orderBy: { position: 'asc' },
+      }),
+    );
+  });
+
+  it('no expone id, clave de R2, organización ni posición', async () => {
+    const { service } = makeService();
+    const { banners } = await service.banners();
+    const claves = clavesDe(banners);
+    for (const campo of [...PROHIBIDOS, 'imageKey']) expect([...claves]).not.toContain(campo);
+  });
+
+  it('publica la URL de la imagen (campo imageUrl), sin el campo imageKey', async () => {
+    const { service } = makeService();
+    const { banners } = await service.banners();
+    expect(banners[0].imageUrl).toBe(`https://cdn.example/${ORG}/store/banners/promo.png`);
+    // 'imageKey' ya se verifica ausente en el test de arriba (lista blanca).
+    expect(banners[0]).not.toHaveProperty('imageKey');
+  });
+
+  it('sin STORE_ORGANIZATION_ID no responde', async () => {
+    const { service } = makeService({ storeOrganizationId: null });
+    await expect(service.banners()).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
 
 describe('Catálogo público', () => {
   describe('no filtra nada interno', () => {

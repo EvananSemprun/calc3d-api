@@ -31,6 +31,12 @@ export class StorePublicController {
     return this.service.categories();
   }
 
+  @Get('banners')
+  @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
+  banners() {
+    return this.service.banners();
+  }
+
   @Get('products')
   @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
   list(@Query('category') category?: string) {

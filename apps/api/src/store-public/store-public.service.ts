@@ -84,6 +84,14 @@ interface PublicProductDetail extends Omit<PublicProductCard, 'image'> {
   optionGroups: PublicOptionGroup[];
 }
 
+interface PublicBanner {
+  title: string;
+  subtitle: string | null;
+  imageUrl: string;
+  linkType: 'NONE' | 'CATEGORY' | 'PRODUCT' | 'URL';
+  linkValue: string | null;
+}
+
 @Injectable()
 export class StorePublicService {
   constructor(
@@ -135,6 +143,24 @@ export class StorePublicService {
       select: { name: true, slug: true },
     });
     return { categories };
+  }
+
+  /** Banners del carrusel: solo los visibles, en el orden del panel. Lista
+   *  blanca explícita — nunca sale id, clave de R2 ni la organización. */
+  async banners(): Promise<{ banners: PublicBanner[] }> {
+    const rows = await this.prisma.storeBanner.findMany({
+      where: { organizationId: this.organizationId, visible: true },
+      orderBy: { position: 'asc' },
+    });
+    return {
+      banners: rows.map((b) => ({
+        title: b.title,
+        subtitle: b.subtitle,
+        imageUrl: this.storage.publicUrl(b.imageKey),
+        linkType: b.linkType,
+        linkValue: b.linkValue,
+      })),
+    };
   }
 
   /** Vitrina: solo lo publicado, en el orden que fijó el dueño. */
