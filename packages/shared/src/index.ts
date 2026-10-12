@@ -21,6 +21,7 @@ export * from './calc/purchase-invoice';
 export * from './calc/supplier-credit';
 export * from './calc/reconcile';
 export * from './calc/goal';
+export * from './calc/encargos';
 export * from './calc/equipment';
 export * from './calc/production';
 export * from './calc/order';

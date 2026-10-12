@@ -1639,6 +1639,33 @@ en el repo web: se sobrescribe al sincronizar.
       $100): eso lo fija un test.
     - Tests: 20 nuevos en `pagador.spec.ts` (con el barrido de 7 escenarios que
       exige que las partes sumen el total) + 4 en `expenses.service.spec.ts`.
+  - **AVISOS DE ENCARGOS (2026-10-12, shared 0.52.0)** — `shared/calc/encargos.ts`,
+    función pura `avisosDeEncargos(encargos, hoy)` con cuatro listas:
+    **vencidos** (la fecha pasó y sigue abierto), **sinCobrar** (entregado con
+    saldo), **proximos** (se entregan dentro de `DIAS_ENTREGA_PROXIMA`) y
+    **cotizacionesFrias** (`QUOTED` hace más de `DIAS_COTIZACION_FRIA`). **No
+    hay endpoint nuevo**: el Dashboard agrega sobre `GET /orders`, que ya
+    devuelve `status`, `deliveryDate` y el `balance` derivado.
+    - ⚠️ **Los dos umbrales salen de los datos, no del gusto de nadie.**
+      `DIAS_ENTREGA_PROXIMA = 3` sale de medir el plazo real entre cargar y
+      entregar: **4-5 días** en los únicos tres encargos cargados al tomarlos
+      (el resto da NEGATIVO porque son la migración del Excel, cargados
+      después de entregar — por eso la mediana no sirve). Avisar a 7 sería
+      avisar el día que se toma el encargo. `DIAS_COTIZACION_FRIA = 14`
+      **no tiene datos detrás y está dicho en el código**: nunca hubo un
+      `QUOTED` en producción, así que está anclado a 3× el plazo medido y se
+      revisa cuando haya cotizaciones de verdad.
+    - ⚠️ **Un encargo avisa UNA sola vez.** Una cotización vieja que además se
+      pasó de fecha es las dos cosas; gana lo más urgente (vencida). Contarla
+      dos veces infla el renglón y manda al dueño a la misma fila por dos
+      caminos. Lo fija un test, y sacar ese `continue` tumba 2.
+    - ⚠️ **El saldo llega derivado** (`orderBalance` vía el backend): no se
+      recalcula ni acá ni en el panel.
+    - ⚠️ Una fecha imposible (`2026-02-30`) **se ignora en vez de romper**:
+      `daysBetween` lanza, y un aviso no puede tumbar el Dashboard.
+    - ⚠️ **Cero casos reales**: 24 encargos, 23 entregados y cobrados. Los
+      tests son la única evidencia. 21 en `encargos.spec.ts`, y las 7
+      mutaciones probadas tumban entre 1 y 2 cada una.
   - **DE DÓNDE SALIÓ LA PLATA DE LOS ABONOS (2026-10-11, shared 0.51.0)** —
     hasta la 0.50.0, **todo lo abonado a una factura se contaba como "de la
     caja"**. El diálogo de Abonar deja elegir otra cosa desde que existe, así
