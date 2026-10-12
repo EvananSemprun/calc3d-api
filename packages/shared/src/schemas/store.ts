@@ -166,3 +166,50 @@ export const StoreImageConfirmSchema = z.object({
   height: z.number().int().positive().max(20000).nullable().optional(),
 });
 export type StoreImageConfirmDto = z.infer<typeof StoreImageConfirmSchema>;
+
+// ----- Banners del carrusel -----
+//
+// La imagen se sube con el MISMO flujo de 2 pasos que las fotos de ficha
+// (StoreImageUploadUrlSchema arriba): se guarda la clave de R2, no la URL.
+
+/** A dónde lleva el banner al hacerle clic. UN solo tipo por banner. */
+export const StoreBannerLinkTypeSchema = z.enum(['NONE', 'CATEGORY', 'PRODUCT', 'URL']);
+export type StoreBannerLinkType = z.infer<typeof StoreBannerLinkTypeSchema>;
+
+export const StoreBannerCreateSchema = z
+  .object({
+    title: z.string().min(1, 'El título es obligatorio').max(120),
+    subtitle: z.string().max(200).nullable().optional(),
+    /** Clave del objeto en R2 (ya subido vía URL firmada). */
+    imageKey: z.string().min(1, 'Falta la imagen').max(200),
+    linkType: StoreBannerLinkTypeSchema.default('NONE'),
+    /** slug de categoría/producto, o URL http(s); vacío para NONE. */
+    linkValue: z.string().max(500).nullable().optional(),
+    visible: z.boolean().default(true),
+  })
+  .superRefine((v, ctx) => {
+    if (v.linkType === 'NONE') {
+      if (v.linkValue) {
+        ctx.addIssue({ code: 'custom', path: ['linkValue'], message: 'Un banner sin enlace no lleva destino' });
+      }
+      return;
+    }
+    if (!v.linkValue) {
+      ctx.addIssue({ code: 'custom', path: ['linkValue'], message: 'Falta el destino del banner' });
+      return;
+    }
+    // Solo http(s) con el protocolo escrito: un `javascript:` no puede terminar
+    // en el href de la tienda.
+    if (v.linkType === 'URL' && !/^https?:\/\//i.test(v.linkValue)) {
+      ctx.addIssue({ code: 'custom', path: ['linkValue'], message: 'El enlace tiene que empezar con http:// o https://' });
+    }
+  });
+export type StoreBannerCreateDto = z.infer<typeof StoreBannerCreateSchema>;
+
+/**
+ * El Update exige el objeto completo (no `.partial()`: ZodEffects del
+ * `superRefine` no lo soporta, y el panel manda el banner entero igual que la
+ * ficha). Si la imagen no cambió, se repite la `imageKey` vigente.
+ */
+export const StoreBannerUpdateSchema = StoreBannerCreateSchema;
+export type StoreBannerUpdateDto = z.infer<typeof StoreBannerUpdateSchema>;

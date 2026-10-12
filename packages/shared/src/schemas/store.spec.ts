@@ -1,4 +1,41 @@
-import { SlugSchema, StoreProductCreateSchema, slugify } from './store';
+import { SlugSchema, StoreBannerCreateSchema, StoreProductCreateSchema, slugify } from './store';
+
+/**
+ * El destino del banner es superficie de seguridad: un `javascript:` en el href
+ * o un destino incoherente no deben pasar el contrato.
+ */
+describe('StoreBannerCreateSchema', () => {
+  const base = { title: 'Promo', imageKey: 'org/store/banners/x.png' };
+
+  it('acepta un banner sin enlace', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'NONE' }).success).toBe(true);
+  });
+
+  it('acepta una URL http(s)', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'URL', linkValue: 'https://wa.me/58412' }).success).toBe(true);
+  });
+
+  it('rechaza una URL con protocolo javascript:', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'URL', linkValue: 'javascript:alert(1)' }).success).toBe(false);
+  });
+
+  it('rechaza una URL sin protocolo', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'URL', linkValue: 'wa.me/x' }).success).toBe(false);
+  });
+
+  it('exige destino cuando el tipo no es NONE', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'CATEGORY' }).success).toBe(false);
+  });
+
+  it('rechaza destino cuando el tipo es NONE', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, linkType: 'NONE', linkValue: 'algo' }).success).toBe(false);
+  });
+
+  it('exige título e imagen', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...base, title: '', linkType: 'NONE' }).success).toBe(false);
+    expect(StoreBannerCreateSchema.safeParse({ title: 'T', imageKey: '', linkType: 'NONE' }).success).toBe(false);
+  });
+});
 
 /**
  * El slug es la URL pública de un producto: si `slugify` y `SlugSchema` no
