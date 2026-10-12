@@ -121,6 +121,7 @@ model Organization {
   catalogOptions  CatalogOption[]
   storeProducts   StoreProduct[]
   storeCategories StoreCategory[]
+  storeBanners    StoreBanner[]
   campaigns       Campaign[]
   storeRequests   StoreRequest[]
   loans           Loan[]
@@ -915,6 +916,41 @@ model StoreOption {
   position      Int              @default(0)
 
   @@index([groupId])
+}
+
+// ----- Banners del carrusel de la home -----
+
+/// A dónde lleva el banner al hacerle clic. UN solo tipo por banner.
+enum StoreBannerLinkType {
+  NONE
+  CATEGORY
+  PRODUCT
+  URL
+}
+
+/// Banner del carrusel de la home. Imagen en R2: se guarda la CLAVE del objeto
+/// (no la URL: el dominio público es configurable), igual que StoreImage.
+model StoreBanner {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  title     String
+  subtitle  String?
+  imageKey  String
+
+  linkType  StoreBannerLinkType @default(NONE)
+  /// slug de categoría/producto, o URL http(s); null para NONE.
+  linkValue String?
+
+  position  Int      @default(0)
+  visible   Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, visible])
 }
 
 // ----- Bandeja de la tienda (lo que llega SIN sesión) -----
