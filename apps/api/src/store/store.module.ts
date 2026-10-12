@@ -10,12 +10,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  StoreBannerCreateSchema,
+  StoreBannerUpdateSchema,
   StoreCategorySchema,
   StoreImageConfirmSchema,
   StoreImageUploadUrlSchema,
   StoreProductCreateSchema,
   StoreProductUpdateSchema,
   StoreReorderSchema,
+  type StoreBannerCreateDto,
+  type StoreBannerUpdateDto,
   type StoreCategoryDto,
   type StoreImageConfirmDto,
   type StoreImageUploadUrlDto,
@@ -27,6 +31,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { RecostService } from './recost.service';
+import { StoreBannersService } from './store-banners.service';
 import { StoreService } from './store.service';
 
 /**
@@ -36,7 +41,10 @@ import { StoreService } from './store.service';
 @Controller('store')
 @UseGuards(JwtAuthGuard)
 export class StoreController {
-  constructor(private readonly service: StoreService) {}
+  constructor(
+    private readonly service: StoreService,
+    private readonly banners: StoreBannersService,
+  ) {}
 
   // Las rutas literales van ANTES de ':id' para que no las capture como un id.
 
@@ -151,11 +159,62 @@ export class StoreController {
   ) {
     return this.service.removeImage(user.organizationId, id, imageId);
   }
+
+  // ----- Banners del carrusel (rutas literales ANTES de ':id') -----
+
+  /** Paso 1 de la subida: URL firmada para la imagen del banner. */
+  @Post('banners/image/upload-url')
+  bannerImageUploadUrl(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(StoreImageUploadUrlSchema)) dto: StoreImageUploadUrlDto,
+  ) {
+    return this.banners.createImageUploadUrl(user.organizationId, dto);
+  }
+
+  @Patch('banners/reorder')
+  reorderBanners(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(StoreReorderSchema)) dto: StoreReorderDto,
+  ) {
+    return this.banners.reorder(user.organizationId, dto.ids);
+  }
+
+  @Get('banners')
+  listBanners(@CurrentUser() user: AuthUser) {
+    return this.banners.list(user.organizationId);
+  }
+
+  @Post('banners')
+  createBanner(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(StoreBannerCreateSchema)) dto: StoreBannerCreateDto,
+  ) {
+    return this.banners.create(user.organizationId, dto);
+  }
+
+  @Get('banners/:id')
+  getBanner(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.banners.get(user.organizationId, id);
+  }
+
+  @Patch('banners/:id')
+  updateBanner(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(StoreBannerUpdateSchema)) dto: StoreBannerUpdateDto,
+  ) {
+    return this.banners.update(user.organizationId, id, dto);
+  }
+
+  @Delete('banners/:id')
+  removeBanner(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.banners.remove(user.organizationId, id);
+  }
 }
 
 @Module({
   controllers: [StoreController],
-  providers: [StoreService, RecostService],
+  providers: [StoreService, RecostService, StoreBannersService],
   exports: [StoreService],
 })
 export class StoreModule {}
