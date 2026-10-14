@@ -123,4 +123,37 @@ describe('StoreProductCreateSchema', () => {
     expect(conColor('rojo')).toBe(false);
     expect(conColor('#F00')).toBe(false);
   });
+
+  it('un grupo acepta id, drivesPhoto, y opciones con id', () => {
+    const r = StoreProductCreateSchema.safeParse({
+      name: 'X',
+      priceUsd: 10,
+      minQty: 1,
+      optionGroups: [
+        {
+          id: 'grp1',
+          name: 'Color',
+          required: true,
+          drivesPhoto: true,
+          options: [{ id: 'op1', value: 'Rojo', swatchHex: '#ff0000' }],
+        },
+      ],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.optionGroups[0].drivesPhoto).toBe(true);
+      expect(r.data.optionGroups[0].id).toBe('grp1');
+      expect(r.data.optionGroups[0].options[0].id).toBe('op1');
+    }
+  });
+
+  it('drivesPhoto por defecto es false y los ids son opcionales', () => {
+    const r = StoreProductCreateSchema.safeParse({
+      name: 'X',
+      priceUsd: 10,
+      minQty: 1,
+      optionGroups: [{ name: 'Color', options: [{ value: 'Rojo' }] }],
+    });
+    expect(r.success && r.data.optionGroups[0].drivesPhoto).toBe(false);
+  });
 });

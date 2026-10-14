@@ -47,6 +47,8 @@ const price = z.number().min(0, 'El precio no puede ser negativo');
 // que no hacen falta SKU por variante. El recargo por opción alcanza.
 
 export const StoreOptionSchema = z.object({
+  /** Id estable de la opción, para que las fotos enlazadas sobrevivan a un guardado. */
+  id: z.string().optional(),
   value: z.string().min(1, 'La opción no puede estar vacía').max(60),
   /** Recargo sobre el precio base, en USD. */
   priceDeltaUsd: price.default(0),
@@ -60,8 +62,12 @@ export const StoreOptionSchema = z.object({
 export type StoreOptionDto = z.infer<typeof StoreOptionSchema>;
 
 export const StoreOptionGroupSchema = z.object({
+  /** Id estable del grupo (ver StoreOptionSchema.id). */
+  id: z.string().optional(),
   name: z.string().min(1, 'El grupo necesita un nombre').max(40),
   required: z.boolean().default(false),
+  /** Marca el grupo cuyas opciones definen la foto de la ficha. A lo sumo uno por producto. */
+  drivesPhoto: z.boolean().default(false),
   options: z.array(StoreOptionSchema).min(1, 'Agregá al menos una opción').max(40),
 });
 export type StoreOptionGroupDto = z.infer<typeof StoreOptionGroupSchema>;
