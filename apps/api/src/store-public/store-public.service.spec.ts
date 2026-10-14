@@ -69,21 +69,26 @@ function makeService(overrides: {
   findFirst?: jest.Mock;
   findMany?: jest.Mock;
   bannerFindMany?: jest.Mock;
+  settings?: Record<string, unknown>;
 } = {}) {
   const findFirst = overrides.findFirst ?? jest.fn().mockResolvedValue(PRODUCTO);
   const findMany = overrides.findMany ?? jest.fn().mockResolvedValue([PRODUCTO]);
   const bannerFindMany = overrides.bannerFindMany ?? jest.fn().mockResolvedValue([BANNER]);
+  const settingsRow = overrides.settings ?? {
+    businessPhone: '0412 0366355',
+    currency: 'USD',
+    defaultRateLabel: null,
+    saleTitle: null,
+    saleStartsAt: null,
+    saleEndsAt: null,
+  };
   const prisma = {
     storeProduct: { findFirst, findMany },
     storeBanner: { findMany: bannerFindMany },
     storeCategory: { findMany: jest.fn().mockResolvedValue([]) },
     organization: { findUnique: jest.fn().mockResolvedValue({ name: 'Banano Lab' }) },
     settings: {
-      findUnique: jest.fn().mockResolvedValue({
-        businessPhone: '0412 0366355',
-        currency: 'USD',
-        defaultRateLabel: null,
-      }),
+      findUnique: jest.fn().mockResolvedValue(settingsRow),
     },
   };
   const config = {
@@ -278,5 +283,71 @@ describe('Catálogo público', () => {
         rate: null,
       });
     });
+  });
+});
+
+describe('Flash Sale público (GET /public/store/sale)', () => {
+  const ventana = {
+    saleTitle: 'Oferta',
+    saleStartsAt: new Date('2026-10-20T22:00:00.000Z'),
+    saleEndsAt: new Date('2026-10-27T03:59:00.000Z'),
+  };
+  // Producto SIN descuento (compareAt null): no entra al Flash Sale.
+  const SIN_OFERTA = { ...PRODUCTO, slug: 'taza', priceUsd: '8.0000', compareAtUsd: null };
+
+  beforeEach(() => jest.useFakeTimers().setSystemTime(new Date('2026-10-22T10:00:00.000Z')));
+  afterEach(() => jest.useRealTimers());
+
+  it('devuelve la ventana + solo los productos con compareAt > price, con lista blanca', async () => {
+    const { service } = makeService({
+      settings: ventana,
+      findMany: jest.fn().mockResolvedValue([PRODUCTO, SIN_OFERTA]),
+    });
+    const { sale } = await service.sale();
+    expect(sale).not.toBeNull();
+    expect(sale!.title).toBe('Oferta');
+    expect(sale!.startsAt).toBe('2026-10-20T22:00:00.000Z');
+    expect(sale!.endsAt).toBe('2026-10-27T03:59:00.000Z');
+    expect(sale!.products).toHaveLength(1);
+    expect(sale!.products[0].slug).toBe('llavero-mundial');
+    expect(sale!.products[0].compareAtUsd).toBe(4);
+    // Lista blanca: nada interno (ni el número del costo).
+    const claves = clavesDe(sale!.products);
+    for (const campo of PROHIBIDOS) expect([...claves]).not.toContain(campo);
+    expect(JSON.stringify(sale!.products)).not.toContain('1.25');
+  });
+
+  it('{ sale: null } si no hay ventana activa', async () => {
+    const { service } = makeService({
+      settings: { saleTitle: 'x', saleStartsAt: null, saleEndsAt: null },
+      findMany: jest.fn().mockResolvedValue([PRODUCTO]),
+    });
+    expect(await service.sale()).toEqual({ sale: null });
+  });
+
+  it('{ sale: null } si la ventana está activa pero ningún producto tiene compareAt > price', async () => {
+    const { service } = makeService({
+      settings: ventana,
+      findMany: jest.fn().mockResolvedValue([SIN_OFERTA]),
+    });
+    expect(await service.sale()).toEqual({ sale: null });
+  });
+
+  it('la organización sale del entorno y filtra por visible', async () => {
+    const { service, findMany } = makeService({
+      settings: ventana,
+      findMany: jest.fn().mockResolvedValue([PRODUCTO]),
+    });
+    await service.sale();
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG, visible: true }),
+      }),
+    );
+  });
+
+  it('sin STORE_ORGANIZATION_ID no responde', async () => {
+    const { service } = makeService({ storeOrganizationId: null, settings: ventana });
+    await expect(service.sale()).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

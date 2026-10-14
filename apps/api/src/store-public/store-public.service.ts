@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
+import { activeSale, type SaleWindow } from './active-sale';
 
 /**
  * Cara PÚBLICA del catálogo: lo único del sistema que se sirve SIN sesión.
@@ -184,16 +185,40 @@ export class StorePublicService {
       },
     });
 
-    return {
-      products: products.map((p) => ({
-        ...this.card(p),
-        image: p.images[0] ? this.image(p.images[0]) : null,
-        colors: (p.optionGroups.find((g) => /color/i.test(g.name))?.options ?? [])
-          .filter((o) => o.swatchHex)
-          .map((o) => ({ value: o.value, swatchHex: o.swatchHex as string })),
-        requiresOptions: p.optionGroups.some((g) => g.required && g.options.length > 0),
-      })),
-    };
+    return { products: products.map((p) => this.listCard(p)) };
+  }
+
+  /** Flash Sale: la ventana vigente + los productos en oferta. Vacío ({ sale: null })
+   *  si no hay ventana activa O si ningún producto tiene compareAtUsd > priceUsd.
+   *  Solo TACHA: el pedido se sigue cobrando priceUsd; acá no viaja ningún precio. */
+  async sale(): Promise<{ sale: (SaleWindow & { products: PublicProductCard[] }) | null }> {
+    const organizationId = this.organizationId;
+    const settings = await this.prisma.settings.findUnique({
+      where: { organizationId },
+      select: { saleTitle: true, saleStartsAt: true, saleEndsAt: true },
+    });
+    const window = settings ? activeSale(settings, new Date()) : null;
+    if (!window) return { sale: null };
+
+    const rows = await this.prisma.storeProduct.findMany({
+      where: { organizationId, visible: true, compareAtUsd: { not: null } },
+      orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+      include: {
+        category: { select: { name: true, slug: true } },
+        images: { orderBy: { position: 'asc' }, take: 1 },
+        optionGroups: {
+          orderBy: { position: 'asc' },
+          include: { options: { orderBy: { position: 'asc' } } },
+        },
+      },
+    });
+    // Prisma no compara dos columnas; el "compareAt > price" se filtra acá.
+    const products = rows
+      .filter((p) => p.compareAtUsd != null && Number(p.compareAtUsd) > Number(p.priceUsd))
+      .map((p) => this.listCard(p));
+    if (!products.length) return { sale: null };
+
+    return { sale: { ...window, products } };
   }
 
   /** Ficha por enlace. `visible` se filtra TAMBIÉN acá: si no, un borrador sería
@@ -240,6 +265,34 @@ export class StorePublicService {
   }
 
   // ----- Proyecciones (la lista blanca vive acá y en ningún otro lado) -----
+
+  /** Tarjeta de vitrina CON imagen y colores. Única lista blanca para el listado
+   *  y para el Flash Sale: no pueden divergir. */
+  private listCard(p: {
+    slug: string;
+    name: string;
+    kind: 'PHYSICAL' | 'SERVICE';
+    summary: string | null;
+    priceUsd: unknown;
+    compareAtUsd: unknown;
+    leadTimeDays: number | null;
+    minQty: number;
+    material: string | null;
+    badge: string | null;
+    custom: boolean;
+    category: PublicCategory | null;
+    images: { key: string; alt: string | null; width: number | null; height: number | null }[];
+    optionGroups: { name: string; required: boolean; options: { value: string; swatchHex: string | null }[] }[];
+  }): PublicProductCard {
+    return {
+      ...this.card(p),
+      image: p.images[0] ? this.image(p.images[0]) : null,
+      colors: (p.optionGroups.find((g) => /color/i.test(g.name))?.options ?? [])
+        .filter((o) => o.swatchHex)
+        .map((o) => ({ value: o.value, swatchHex: o.swatchHex as string })),
+      requiresOptions: p.optionGroups.some((g) => g.required && g.options.length > 0),
+    };
+  }
 
   private card(p: {
     slug: string;
