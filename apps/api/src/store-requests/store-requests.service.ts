@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import {
   normalizePhone,
+  precioConTramos,
   type StoreCustomRequestDto,
   type StoreOrderRequestDto,
   type OrderLine,
@@ -170,6 +171,13 @@ export class StoreRequestsService {
         chosen[group.name] = option.value;
         unitPrice += Number(option.priceDeltaUsd);
       }
+
+      // Tramos de precio por cantidad (mayoreo): el descuento lo decide el
+      // SERVIDOR sobre el unitario ya con recargos, nunca el cliente.
+      const tiers = Array.isArray(product.priceTiers)
+        ? (product.priceTiers as { minQty: number; discountPct: number }[])
+        : [];
+      unitPrice = precioConTramos(unitPrice, item.qty, tiers);
 
       return {
         slug: product.slug,

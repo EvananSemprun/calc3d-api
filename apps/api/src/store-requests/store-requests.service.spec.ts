@@ -99,6 +99,29 @@ describe('StoreRequestsService — escritura pública', () => {
     expect(Number(guardado.totalUsd)).toBe(51);
   });
 
+  it('aplica el tramo por cantidad y NO mira ningún precio del cliente', async () => {
+    const prisma = hacerPrisma();
+    const PROD = {
+      slug: 'mayoreo',
+      name: 'Mayoreo',
+      priceUsd: 10,
+      minQty: 1,
+      priceTiers: [{ minQty: 10, discountPct: 0.2 }],
+      optionGroups: [],
+    };
+    prisma.storeProduct.findMany.mockResolvedValue([PROD]);
+    const service = hacerServicio(prisma);
+    const dto = StoreOrderRequestSchema.parse({
+      customer: { name: 'Ana', phone: '04121234567' },
+      items: [{ slug: 'mayoreo', qty: 10, options: {}, unitPrice: 999 }],
+    });
+    const res = await service.submitOrder(dto);
+    // 10 u a $8 (20 % off de $10) = $80, no $100 ni el precio del cliente.
+    expect(res.totalUsd).toBe(80);
+    const guardado = prisma.storeRequest.create.mock.calls[0][0].data;
+    expect(guardado.lines[0].unitPrice).toBe(8);
+  });
+
   it('nace siempre en NEW: el estado no sale del cuerpo', async () => {
     const prisma = hacerPrisma();
     prisma.storeProduct.findMany.mockResolvedValue([LLAVERO]);
