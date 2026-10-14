@@ -54,6 +54,13 @@ export const StoreRequestItemSchema = z.object({
   slug: z.string().trim().min(1).max(80),
   qty: z.number().int().positive().max(STORE_REQUEST_MAX_QTY, 'Cantidad demasiado alta'),
   options: z.record(z.string().max(40), z.string().max(60)).default({}),
+  /**
+   * Personalización opcional (solo en productos `custom`). La foto se sube antes
+   * a R2 y acá viaja SU CLAVE; el servidor la revalida contra el almacenamiento
+   * (prefijo + HeadObject) antes de guardarla. El cliente nunca elige la clave.
+   */
+  customNote: z.string().trim().max(500, 'La nota no puede pasar de 500 caracteres').optional(),
+  customImageKey: z.string().max(200).optional(),
 });
 export type StoreRequestItemDto = z.infer<typeof StoreRequestItemSchema>;
 
@@ -82,6 +89,13 @@ export const StoreCustomRequestSchema = z.object({
     .max(2000, 'La descripción no puede pasar de 2000 caracteres'),
 });
 export type StoreCustomRequestDto = z.infer<typeof StoreCustomRequestSchema>;
+
+/**
+ * La subida de la foto de personalización reusa el MISMO contrato que la subida
+ * de fotos del panel (tipo + tamaño): un solo esquema para no divergir. El
+ * endpoint público lo valida igual.
+ */
+export { StoreImageUploadUrlSchema, type StoreImageUploadUrlDto } from './store';
 
 // ----- Lado del panel -----
 
