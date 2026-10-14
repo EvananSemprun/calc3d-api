@@ -824,6 +824,9 @@ model StoreProduct {
   /// Ficha tecnica libre: [{ label, value }]. Un JSON en vez de una columna por
   /// dato, para no migrar cada vez que aparece una especificacion nueva.
   specs    Json    @default("[]")
+  /// Tramos de precio por cantidad: [{ minQty, discountPct }] (fracción). JSON
+  /// como specs; el descuento lo aplica el servidor en el pedido.
+  priceTiers Json  @default("[]")
   /**
    * false = borrador (no sale por la API pública).
    */

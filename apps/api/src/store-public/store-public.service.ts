@@ -63,6 +63,8 @@ interface PublicProductCard {
   summary: string | null;
   priceUsd: number;
   compareAtUsd: number | null;
+  /** Tramos de precio por cantidad (mayoreo), para mostrar y recalcular en la tienda. */
+  priceTiers: { minQty: number; discountPct: number }[];
   leadTimeDays: number | null;
   minQty: number;
   material: string | null;
@@ -300,6 +302,7 @@ export class StorePublicService {
     summary: string | null;
     priceUsd: unknown;
     compareAtUsd: unknown;
+    priceTiers: unknown;
     leadTimeDays: number | null;
     minQty: number;
     material: string | null;
@@ -326,6 +329,7 @@ export class StorePublicService {
     summary: string | null;
     priceUsd: unknown;
     compareAtUsd: unknown;
+    priceTiers: unknown;
     leadTimeDays: number | null;
     minQty: number;
     material: string | null;
@@ -340,6 +344,12 @@ export class StorePublicService {
       summary: p.summary,
       priceUsd: Number(p.priceUsd),
       compareAtUsd: p.compareAtUsd == null ? null : Number(p.compareAtUsd),
+      priceTiers: Array.isArray(p.priceTiers)
+        ? (p.priceTiers as { minQty: unknown; discountPct: unknown }[]).map((t) => ({
+            minQty: Number(t.minQty),
+            discountPct: Number(t.discountPct),
+          }))
+        : [],
       leadTimeDays: p.leadTimeDays,
       minQty: p.minQty,
       material: p.material,

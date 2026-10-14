@@ -24,6 +24,7 @@ const BASE = {
   visible: false,
   custom: false,
   specs: [],
+  priceTiers: [],
   optionGroups: [],
 };
 

@@ -22,6 +22,7 @@ const PRODUCTO = {
   description: 'Texto largo de la ficha',
   priceUsd: '3.5000',
   compareAtUsd: '4.0000',
+  priceTiers: [{ minQty: 10, discountPct: 0.1 }],
   leadTimeDays: 5,
   minQty: 1,
   visible: true,
@@ -235,6 +236,12 @@ describe('Catálogo público', () => {
       expect(products[0].requiresOptions).toBe(true);
       const ficha = await service.bySlug('llavero-mundial');
       expect(ficha.requiresOptions).toBe(true);
+    });
+
+    it('la vitrina expone los tramos de precio por cantidad', async () => {
+      const { service } = makeService();
+      const { products } = await service.list();
+      expect(products[0].priceTiers).toEqual([{ minQty: 10, discountPct: 0.1 }]);
     });
 
     it('la vitrina recibe los colores para el filtro y las muestras', async () => {
