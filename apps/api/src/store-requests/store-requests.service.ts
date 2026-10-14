@@ -10,11 +10,13 @@ import {
   normalizePhone,
   precioConTramos,
   type StoreCustomRequestDto,
+  type StoreImageUploadUrlDto,
   type StoreOrderRequestDto,
   type OrderLine,
   type StoreRequestStatus,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { ObjectStorageService } from '../storage/object-storage.service';
 
 /**
  * Bandeja de la tienda: lo que llega SIN sesión y lo que el dueño hace con eso.
@@ -50,6 +52,7 @@ export class StoreRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   /** Organización que publica la tienda. Del entorno, nunca del cliente. */
@@ -60,6 +63,25 @@ export class StoreRequestsService {
   }
 
   // ===================== Lado público (sin sesión) =====================
+
+  /**
+   * Paso 1 de la foto de personalización: URL firmada para subir DIRECTO a R2.
+   * La clave la genera el servidor bajo `custom-uploads/` (el cliente no la
+   * elige), y la firma acota tipo y tamaño. Si R2 no está configurado, 503: la
+   * landing esconde el cargador en vez de romperse.
+   */
+  async createCustomUploadUrl(dto: StoreImageUploadUrlDto) {
+    const organizationId = this.storeOrganizationId;
+    if (!this.storage.configured) {
+      throw new ServiceUnavailableException('La carga de fotos no está disponible');
+    }
+    return this.storage.createUploadUrl({
+      organizationId,
+      prefix: 'custom-uploads',
+      contentType: dto.contentType,
+      contentLength: dto.contentLength,
+    });
+  }
 
   /**
    * Pedido llegado del carrito. Devuelve lo MÍNIMO: que se recibió y el total

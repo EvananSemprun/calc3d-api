@@ -2,9 +2,11 @@ import { Body, Controller, Delete, Get, Module, Param, Post, Query, UseGuards } 
 import { Throttle } from '@nestjs/throttler';
 import {
   StoreCustomRequestSchema,
+  StoreImageUploadUrlSchema,
   StoreOrderRequestSchema,
   StoreRequestStatusSchema,
   type StoreCustomRequestDto,
+  type StoreImageUploadUrlDto,
   type StoreOrderRequestDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -37,6 +39,15 @@ export class StoreRequestsPublicController {
     @Body(new ZodValidationPipe(StoreCustomRequestSchema)) dto: StoreCustomRequestDto,
   ) {
     return this.service.submitCustom(dto);
+  }
+
+  /** Paso 1 de la foto de personalización: URL firmada para subir directo a R2.
+   *  Hereda el rate-limit estricto del controller (5/min por IP real). */
+  @Post('uploads/custom-url')
+  createCustomUploadUrl(
+    @Body(new ZodValidationPipe(StoreImageUploadUrlSchema)) dto: StoreImageUploadUrlDto,
+  ) {
+    return this.service.createCustomUploadUrl(dto);
   }
 }
 

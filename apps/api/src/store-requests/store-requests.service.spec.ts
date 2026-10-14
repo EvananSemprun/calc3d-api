@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { StoreOrderRequestSchema, StoreCustomRequestSchema } from '@calc3d/shared';
 import { StoreRequestsService } from './store-requests.service';
 
@@ -39,10 +43,24 @@ function hacerPrisma() {
   return prisma;
 }
 
-function hacerServicio(prisma: ReturnType<typeof hacerPrisma>, orgId: string | null = ORG) {
+function hacerStorage() {
+  return {
+    configured: true,
+    createUploadUrl: jest.fn(),
+    head: jest.fn(),
+    remove: jest.fn().mockResolvedValue(undefined),
+    publicUrl: (k: string) => `https://cdn.example/${k}`,
+  };
+}
+
+function hacerServicio(
+  prisma: ReturnType<typeof hacerPrisma>,
+  orgId: string | null = ORG,
+  storage: ReturnType<typeof hacerStorage> = hacerStorage(),
+) {
   // Ojo: pasar `undefined` activaría el valor por defecto. `null` = sin configurar.
   const config = { get: jest.fn().mockReturnValue(orgId ?? undefined) };
-  return new StoreRequestsService(prisma as never, config as never);
+  return new StoreRequestsService(prisma as never, config as never, storage as never);
 }
 
 /** Llavero a $24 con "Grande" (+$1.50) obligatorio y mínimo 2. */
@@ -421,5 +439,42 @@ describe('StoreRequestsService — bandeja del panel', () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
     expect(prisma.client.create).not.toHaveBeenCalled();
     expect(prisma.storeRequest.update.mock.calls[0][0].data.status).toBe('DISCARDED');
+  });
+});
+
+describe('StoreRequestsService — subida de foto del cliente', () => {
+  it('createCustomUploadUrl pide la URL bajo el prefijo custom-uploads', async () => {
+    const prisma = hacerPrisma();
+    const storage = hacerStorage();
+    storage.createUploadUrl.mockResolvedValue({
+      key: 'org-1/custom-uploads/2026-10/x.png',
+      url: 'https://firmada',
+      headers: {},
+      expiresInSeconds: 300,
+    });
+    const service = hacerServicio(prisma, ORG, storage);
+
+    const r = await service.createCustomUploadUrl({ contentType: 'image/png', contentLength: 1000 });
+
+    expect(storage.createUploadUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: ORG,
+        prefix: 'custom-uploads',
+        contentType: 'image/png',
+        contentLength: 1000,
+      }),
+    );
+    expect(r.key).toContain('custom-uploads');
+  });
+
+  it('createCustomUploadUrl falla con 503 si R2 no está configurado', async () => {
+    const prisma = hacerPrisma();
+    const storage = hacerStorage();
+    storage.configured = false;
+    const service = hacerServicio(prisma, ORG, storage);
+
+    await expect(
+      service.createCustomUploadUrl({ contentType: 'image/png', contentLength: 1000 }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
