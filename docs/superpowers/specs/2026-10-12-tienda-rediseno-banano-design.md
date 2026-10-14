@@ -197,10 +197,28 @@ Referencia de ritmo: tienda de Bambu Lab. Contenido: real, de la API; nada inven
   precio).
 
 ### Hito D — SEO + responsive
-- **SEO:** plugin de build en `vite.config.ts` que consulta la API pública y **pre-renderiza**
-  el HTML de `/tienda/` y de cada `/producto/{slug}/`. Las fichas pasan a entrar al
-  `sitemap.xml` (hoy se excluyen). El JS del cliente sigue potenciando lo interactivo.
+
+> **Decisiones del 2026-10-14 (cuestionario):**
+> 1. **Pre-render de CONTENIDO COMPLETO (SSG)**, no solo metadatos: el `<body>` de `/tienda/` y
+>    de cada `/producto/{slug}/` sale del build con los productos ya escritos en el HTML, más
+>    `<head>` con meta description, canonical, Open Graph y JSON-LD `Product`. El JS del cliente
+>    sigue potenciando lo interactivo.
+> 2. **El build FALLA si la API no responde** (con reintentos/espera para el cold start de
+>    Render): nunca se publica una tienda con el SEO roto.
+> 3. **SEO y responsive/a11y van en UN solo plan** (hito landing-only; la API ya expone todo).
+
+- **SEO:** para que el HTML del build y el render del cliente **no diverjan**, las funciones de
+  render se extraen a un módulo **puro** (`assets/render.js`: `escapeHtml`/`escapeAttr`/`adapt`/
+  `blTarjetaProducto`/`renderFichaHtml` + helpers de `<head>` `metaTagsFor`/`jsonLdProduct`),
+  importado por `app.js` (navegador) **y** por un plugin de build en `vite.config.ts` (Node). El
+  plugin consulta `${VITE_API_URL}/public/store/products` + `/products/{slug}` (con reintentos),
+  pre-renderiza `/tienda/` y cada `/producto/{slug}/`, y **esos slugs entran al `sitemap.xml`**
+  (hoy excluido a propósito). Tests de las funciones puras con `node:test` (sin deps nuevas).
 - **Responsive:** revisión y ajuste móvil de todas las páginas rediseñadas (390×844 y arriba).
+- **A11y (diferidos del Hito A):** `aria-expanded` del menú móvil; patrón ARIA del carrusel del
+  hero (tablist/tab/`aria-selected`/`aria-controls` + slides como `tabpanel`); **un solo `h1` por
+  página** (el hero tiene uno por slide); y el **año del footer** se setea aunque la API esté
+  caída (hoy sale de `blPintarNegocio()`, que no corre si `BL.load()` falla).
 
 ---
 
