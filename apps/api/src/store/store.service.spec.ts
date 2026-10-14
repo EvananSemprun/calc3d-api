@@ -58,7 +58,7 @@ const FICHA = {
     name: string;
     required: boolean;
     drivesPhoto: boolean;
-    options: { id: string; value: string }[];
+    options: { id: string; value: string; images: { key: string }[] }[];
   }[],
   category: null,
   productId: null,
@@ -286,7 +286,7 @@ describe('Catálogo de tienda (panel)', () => {
             name: 'Color',
             required: true,
             drivesPhoto: false,
-            options: [{ id: 'o1', value: 'Rojo' }],
+            options: [{ id: 'o1', value: 'Rojo', images: [] }],
           },
         ],
       };
@@ -310,7 +310,7 @@ describe('Catálogo de tienda (panel)', () => {
             name: 'Color',
             required: true,
             drivesPhoto: true,
-            options: [{ id: 'o1', value: 'Rojo' }],
+            options: [{ id: 'o1', value: 'Rojo', images: [] }],
           },
         ],
       };

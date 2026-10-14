@@ -26,7 +26,14 @@ const FULL_INCLUDE = {
   images: { orderBy: { position: 'asc' } },
   optionGroups: {
     orderBy: { position: 'asc' },
-    include: { options: { orderBy: { position: 'asc' } } },
+    include: {
+      options: {
+        orderBy: { position: 'asc' },
+        // Las fotos por color viajan dentro de su opción para que el panel
+        // muestre la miniatura; la galería base (optionId null) se filtra en el panel.
+        include: { images: { orderBy: { position: 'asc' } } },
+      },
+    },
   },
 } satisfies Prisma.StoreProductInclude;
 
@@ -330,11 +337,25 @@ export class StoreService {
 
   // ----- Auxiliares -----
 
-  /** Agrega la URL pública de cada foto (la clave sola no sirve al panel). */
-  private withImageUrls<T extends { images: { key: string }[] }>(product: T) {
+  /** Agrega la URL pública de cada foto (la clave sola no sirve al panel), tanto
+   *  en la galería base como en las fotos por opción. */
+  private withImageUrls<
+    T extends {
+      images: { key: string }[];
+      optionGroups: { options: { images: { key: string }[] }[] }[];
+    },
+  >(product: T) {
+    const conUrl = <I extends { key: string }>(img: I) => ({
+      ...img,
+      url: this.storage.publicUrl(img.key),
+    });
     return {
       ...product,
-      images: product.images.map((img) => ({ ...img, url: this.storage.publicUrl(img.key) })),
+      images: product.images.map(conUrl),
+      optionGroups: product.optionGroups.map((g) => ({
+        ...g,
+        options: g.options.map((o) => ({ ...o, images: o.images.map(conUrl) })),
+      })),
     };
   }
 
