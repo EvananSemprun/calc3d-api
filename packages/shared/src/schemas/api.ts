@@ -188,7 +188,8 @@ export const FixedCostSchema = z.object({
 });
 export type FixedCost = z.infer<typeof FixedCostSchema>;
 
-export const SettingsUpdateSchema = z.object({
+export const SettingsUpdateSchema = z
+  .object({
   currency: z.string().min(1).optional(),
   locale: z.string().min(1).optional(),
   secondaryCurrency: z
@@ -231,7 +232,26 @@ export const SettingsUpdateSchema = z.object({
   reconciliationWeekday: z.number().int().min(1).max(7).nullable().optional(),
   /** Contra qué deuda se aplica primero un pago a la contraparte. */
   debtApplicationOrder: z.enum(['OLDEST_FIRST', 'NEWEST_FIRST']).optional(),
-});
+  /** Flash Sale: título de la oferta mostrado en la home (null = sin título). */
+  saleTitle: z.string().max(80).nullable().optional(),
+  /** Inicio de la ventana de oferta (ISO datetime; null = sin ventana). */
+  saleStartsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  /** Fin de la ventana de oferta (ISO datetime; null = sin ventana). */
+  saleEndsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (
+      val.saleStartsAt != null &&
+      val.saleEndsAt != null &&
+      new Date(val.saleEndsAt) <= new Date(val.saleStartsAt)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['saleEndsAt'],
+        message: 'La oferta debe terminar después de empezar',
+      });
+    }
+  });
 export type SettingsUpdateDto = z.infer<typeof SettingsUpdateSchema>;
 
 /** Tipos de imagen aceptados para el logo: pdfkit solo dibuja PNG y JPEG, y
