@@ -207,6 +207,9 @@ export const StoreImageConfirmSchema = z.object({
   alt: z.string().max(140).nullable().optional(),
   width: z.number().int().positive().max(20000).nullable().optional(),
   height: z.number().int().positive().max(20000).nullable().optional(),
+  /** Si la foto es de un color: id de una opción de un grupo que define la foto.
+   *  El servidor valida que la opción sea del producto. Ausente = galería base. */
+  optionId: z.string().optional(),
 });
 export type StoreImageConfirmDto = z.infer<typeof StoreImageConfirmSchema>;
 

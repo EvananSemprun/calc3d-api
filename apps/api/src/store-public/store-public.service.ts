@@ -23,11 +23,16 @@ interface PublicOption {
   value: string;
   priceDeltaUsd: number;
   swatchHex: string | null;
+  /** Fotos propias de este color (solo las tienen las opciones del grupo que
+   *  define la foto). Vacío = la ficha usa la galería base. */
+  images: PublicImage[];
 }
 
 interface PublicOptionGroup {
   name: string;
   required: boolean;
+  /** true en el grupo cuyas opciones definen la galería de la ficha. */
+  drivesPhoto: boolean;
   options: PublicOption[];
 }
 
@@ -255,10 +260,17 @@ export class StorePublicService {
       where: { organizationId: this.organizationId, slug, visible: true },
       include: {
         category: { select: { name: true, slug: true } },
-        images: { orderBy: { position: 'asc' } },
+        // Galería base: solo las fotos de nivel producto. Las de una opción
+        // (color) salen por su opción, así que acá se excluyen para no duplicar.
+        images: { where: { optionId: null }, orderBy: { position: 'asc' } },
         optionGroups: {
           orderBy: { position: 'asc' },
-          include: { options: { orderBy: { position: 'asc' } } },
+          include: {
+            options: {
+              orderBy: { position: 'asc' },
+              include: { images: { orderBy: { position: 'asc' } } },
+            },
+          },
         },
       },
     });
@@ -282,10 +294,12 @@ export class StorePublicService {
       optionGroups: product.optionGroups.map((g) => ({
         name: g.name,
         required: g.required,
+        drivesPhoto: g.drivesPhoto,
         options: g.options.map((o) => ({
           value: o.value,
           priceDeltaUsd: Number(o.priceDeltaUsd),
           swatchHex: o.swatchHex,
+          images: o.images.map((img) => this.image(img)),
         })),
       })),
     };

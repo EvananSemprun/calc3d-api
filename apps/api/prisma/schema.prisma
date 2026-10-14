@@ -882,8 +882,14 @@ model StoreImage {
   height         Int?
   position       Int          @default(0)
   createdAt      DateTime     @default(now())
+  /// Si la foto pertenece a una opción (color) en vez de a la galería base.
+  /// La galería base son las imágenes con optionId null. Al borrarse la opción,
+  /// sus fotos se van con ella (la foto de un color que ya no existe no sirve).
+  option         StoreOption? @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  optionId       String?
 
   @@index([storeProductId])
+  @@index([optionId])
 }
 
 // Opciones SIN combinatoria (no hay SKU por combinación): al producirse bajo
@@ -925,6 +931,8 @@ model StoreOption {
    */
   swatchHex     String?
   position      Int              @default(0)
+
+  images StoreImage[]
 
   @@index([groupId])
 }

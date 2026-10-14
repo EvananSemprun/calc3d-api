@@ -41,10 +41,11 @@ const PRODUCTO = {
     {
       name: 'Color',
       required: true,
+      drivesPhoto: false,
       position: 0,
       options: [
-        { value: 'Rojo', priceDeltaUsd: '0', swatchHex: '#FF0000', position: 0 },
-        { value: 'Grande', priceDeltaUsd: '3.0000', swatchHex: null, position: 1 },
+        { value: 'Rojo', priceDeltaUsd: '0', swatchHex: '#FF0000', position: 0, images: [] },
+        { value: 'Grande', priceDeltaUsd: '3.0000', swatchHex: null, position: 1, images: [] },
       ],
     },
   ],
@@ -268,7 +269,46 @@ describe('Catálogo público', () => {
         value: 'Grande',
         priceDeltaUsd: 3,
         swatchHex: null,
+        images: [],
       });
+    });
+
+    it('la ficha expone las fotos por opción del grupo que define la foto, con URL (sin optionId ni key)', async () => {
+      const conFoto = {
+        ...PRODUCTO,
+        optionGroups: [
+          {
+            name: 'Color',
+            required: true,
+            drivesPhoto: true,
+            position: 0,
+            options: [
+              {
+                value: 'Rojo',
+                priceDeltaUsd: '0',
+                swatchHex: '#FF0000',
+                position: 0,
+                images: [{ key: `${ORG}/store/sp1/rojo.jpg`, alt: 'Rojo', width: 600, height: 600 }],
+              },
+              { value: 'Azul', priceDeltaUsd: '0', swatchHex: '#0000FF', position: 1, images: [] },
+            ],
+          },
+        ],
+      };
+      const { service } = makeService({ findFirst: jest.fn().mockResolvedValue(conFoto) });
+      const ficha = await service.bySlug('llavero-mundial');
+
+      const grupoFoto = ficha.optionGroups.find((g) => g.drivesPhoto);
+      expect(grupoFoto).toBeTruthy();
+      const rojo = grupoFoto!.options.find((o) => o.value === 'Rojo')!;
+      expect(rojo.images[0].url).toBe(`https://cdn.example/${ORG}/store/sp1/rojo.jpg`);
+      // Un color sin fotos propias no rompe: sale con lista vacía.
+      const azul = grupoFoto!.options.find((o) => o.value === 'Azul')!;
+      expect(azul.images).toEqual([]);
+      // Lista blanca: ni optionId ni la clave del bucket.
+      const claves = clavesDe(ficha.optionGroups);
+      expect([...claves]).not.toContain('optionId');
+      expect([...claves]).not.toContain('key');
     });
   });
 

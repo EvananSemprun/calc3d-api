@@ -53,7 +53,13 @@ const FICHA = {
   slug: 'llavero',
   name: 'Llavero',
   images: [] as { id: string; key: string }[],
-  optionGroups: [],
+  optionGroups: [] as {
+    id: string;
+    name: string;
+    required: boolean;
+    drivesPhoto: boolean;
+    options: { id: string; value: string }[];
+  }[],
   category: null,
   productId: null,
   quoteId: null,
@@ -266,6 +272,56 @@ describe('Catálogo de tienda (panel)', () => {
         expect.objectContaining({
           data: expect.objectContaining({ key: foto.key, alt: 'Llavero rojo', position: 0 }),
         }),
+      );
+    });
+
+    it('rechaza un optionId que no es de una opción del grupo que define la foto', async () => {
+      // El grupo existe pero NO define la foto: su opción no debe aceptar fotos.
+      // El mismo `some` rechaza un id inexistente o de otro producto.
+      const conGrupo = {
+        ...FICHA,
+        optionGroups: [
+          {
+            id: 'g1',
+            name: 'Color',
+            required: true,
+            drivesPhoto: false,
+            options: [{ id: 'o1', value: 'Rojo' }],
+          },
+        ],
+      };
+      const { storage, prisma, service } = makeDeps();
+      prisma.storeProduct.findFirst.mockImplementation(({ where }: { where: { slug?: string } }) =>
+        Promise.resolve(where.slug ? null : conGrupo),
+      );
+      await expect(
+        service.confirmImage(ORG, 'sp1', { ...foto, optionId: 'o1' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.head).not.toHaveBeenCalled();
+      expect(prisma.storeImage.create).not.toHaveBeenCalled();
+    });
+
+    it('registra la foto de un color con su optionId cuando la opción es del grupo que define la foto', async () => {
+      const conGrupo = {
+        ...FICHA,
+        optionGroups: [
+          {
+            id: 'g1',
+            name: 'Color',
+            required: true,
+            drivesPhoto: true,
+            options: [{ id: 'o1', value: 'Rojo' }],
+          },
+        ],
+      };
+      const { storage, prisma, service } = makeDeps();
+      prisma.storeProduct.findFirst.mockImplementation(({ where }: { where: { slug?: string } }) =>
+        Promise.resolve(where.slug ? null : conGrupo),
+      );
+      storage.head.mockResolvedValue({ contentType: 'image/jpeg', contentLength: 1024 });
+      await service.confirmImage(ORG, 'sp1', { ...foto, optionId: 'o1' });
+      expect(prisma.storeImage.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ optionId: 'o1' }) }),
       );
     });
   });

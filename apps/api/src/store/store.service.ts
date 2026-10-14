@@ -229,6 +229,20 @@ export class StoreService {
       throw new BadRequestException('La foto no pertenece a este producto');
     }
 
+    // Foto de un color: la opción tiene que existir, ser de este producto y de un
+    // grupo que define la foto. Si no, una foto quedaría colgada de una opción
+    // ajena (o de un grupo que no manda la galería y nunca se mostraría).
+    if (dto.optionId) {
+      const ok = product.optionGroups.some(
+        (g) => g.drivesPhoto && g.options.some((o) => o.id === dto.optionId),
+      );
+      if (!ok) {
+        throw new BadRequestException(
+          'La opción no existe o no pertenece al grupo que define la foto',
+        );
+      }
+    }
+
     const object = await this.storage.head(dto.key);
     if (!object) throw new BadRequestException('La foto no llegó al almacenamiento');
     if (
@@ -251,6 +265,7 @@ export class StoreService {
         width: dto.width ?? null,
         height: dto.height ?? null,
         position: product.images.length,
+        optionId: dto.optionId ?? null,
       },
     });
     return this.get(organizationId, id);
