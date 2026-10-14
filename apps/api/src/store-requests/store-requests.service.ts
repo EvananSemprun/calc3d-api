@@ -9,6 +9,8 @@ import { Prisma } from '@prisma/client';
 import {
   normalizePhone,
   precioConTramos,
+  STORE_IMAGE_MAX_BYTES,
+  STORE_IMAGE_MIME_TYPES,
   type StoreCustomRequestDto,
   type StoreImageUploadUrlDto,
   type StoreOrderRequestDto,
@@ -45,6 +47,10 @@ export interface PricedLine {
   options: Record<string, string>;
   /** Precio unitario CON los recargos de las opciones. */
   unitPrice: number;
+  /** Personalización del cliente (solo en productos `custom`). La nota y la
+   *  CLAVE de la foto en R2 (ya verificada). La bandeja publica la URL, no la clave. */
+  customNote?: string;
+  customImageKey?: string;
 }
 
 @Injectable()
@@ -147,7 +153,8 @@ export class StoreRequestsService {
     });
     const bySlug = new Map(products.map((p) => [p.slug, p]));
 
-    return items.map((item) => {
+    return Promise.all(
+      items.map(async (item) => {
       const product = bySlug.get(item.slug);
       if (!product) {
         throw new BadRequestException(`El producto "${item.slug}" ya no está disponible`);
@@ -156,6 +163,28 @@ export class StoreRequestsService {
         throw new BadRequestException(
           `"${product.name}" se pide de a ${product.minQty} como mínimo`,
         );
+      }
+
+      // Personalización: solo en productos `custom`, y la foto se verifica
+      // contra el almacenamiento antes de aceptarla (prefijo + HeadObject).
+      const quierePersonalizar = item.customNote != null || item.customImageKey != null;
+      if (quierePersonalizar && !product.custom) {
+        throw new BadRequestException(`"${product.name}" no admite personalización`);
+      }
+      let customImageKey: string | undefined;
+      if (item.customImageKey) {
+        const prefijo = `${organizationId}/custom-uploads/`;
+        const objeto = item.customImageKey.startsWith(prefijo)
+          ? await this.storage.head(item.customImageKey)
+          : null;
+        const tipoOk =
+          !!objeto?.contentType &&
+          (STORE_IMAGE_MIME_TYPES as readonly string[]).includes(objeto.contentType);
+        const tamOk = !!objeto && (objeto.contentLength ?? 0) <= STORE_IMAGE_MAX_BYTES;
+        if (!objeto || !tipoOk || !tamOk) {
+          throw new BadRequestException('La foto no es válida o no se subió correctamente');
+        }
+        customImageKey = item.customImageKey;
       }
 
       let unitPrice = Number(product.priceUsd);
@@ -207,14 +236,41 @@ export class StoreRequestsService {
         quantity: item.qty,
         options: chosen,
         unitPrice: Number(unitPrice.toFixed(4)),
+        ...(item.customNote ? { customNote: item.customNote } : {}),
+        ...(customImageKey ? { customImageKey } : {}),
       };
-    });
+      }),
+    );
   }
 
   // ===================== Lado del panel (con sesión) =====================
 
-  list(organizationId: string, status?: StoreRequestStatus) {
-    return this.prisma.storeRequest.findMany({
+  /**
+   * Pasa las líneas a la forma que ve el panel: la foto de personalización sale
+   * como URL pública, NUNCA como clave de R2 (lista blanca, igual que el resto
+   * de la API). La `customNote` sí viaja tal cual (React la escapa al mostrarla).
+   */
+  private serializeRequest<T extends { lines: unknown }>(request: T) {
+    const lines = (Array.isArray(request.lines) ? request.lines : []).map(
+      (l: Record<string, unknown>) => {
+        const { customImageKey, ...resto } = l;
+        return customImageKey
+          ? { ...resto, customImageUrl: this.storage.publicUrl(customImageKey as string) }
+          : resto;
+      },
+    );
+    return { ...request, lines };
+  }
+
+  /** Las claves de R2 de las fotos de una solicitud (para limpiarlas al descartar). */
+  private clavesDeFoto(request: { lines: unknown }): string[] {
+    return (Array.isArray(request.lines) ? request.lines : [])
+      .map((l: Record<string, unknown>) => l.customImageKey as string | undefined)
+      .filter((k): k is string => !!k);
+  }
+
+  async list(organizationId: string, status?: StoreRequestStatus) {
+    const rows = await this.prisma.storeRequest.findMany({
       where: { organizationId, ...(status ? { status } : {}) },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -222,6 +278,7 @@ export class StoreRequestsService {
         order: { select: { id: true, code: true, status: true } },
       },
     });
+    return rows.map((r) => this.serializeRequest(r));
   }
 
   /** Cuántas quedan sin revisar (para la insignia del menú). */
@@ -232,7 +289,9 @@ export class StoreRequestsService {
     return { pending };
   }
 
-  async get(organizationId: string, id: string) {
+  /** Versión CRUDA (con la clave de la foto), para uso interno (confirmar,
+   *  descartar, borrar). El panel ve la versión serializada de `get`. */
+  private async getRaw(organizationId: string, id: string) {
     const request = await this.prisma.storeRequest.findFirst({
       where: { id, organizationId },
       include: {
@@ -242,6 +301,10 @@ export class StoreRequestsService {
     });
     if (!request) throw new NotFoundException('Solicitud no encontrada');
     return request;
+  }
+
+  async get(organizationId: string, id: string) {
+    return this.serializeRequest(await this.getRaw(organizationId, id));
   }
 
   /**
@@ -257,7 +320,7 @@ export class StoreRequestsService {
    *   del `CalcInput`, y "quiero un llavero con mi logo" no lo tiene.
    */
   async confirm(organizationId: string, id: string) {
-    const request = await this.get(organizationId, id);
+    const request = await this.getRaw(organizationId, id);
     if (request.status !== 'NEW') {
       throw new BadRequestException('Esta solicitud ya fue revisada');
     }
@@ -328,9 +391,10 @@ export class StoreRequestsService {
     });
   }
 
-  /** Descartar: spam o pruebas. No crea nada; queda el registro de que se vio. */
+  /** Descartar: spam o pruebas. No crea nada; queda el registro de que se vio.
+   *  Sus fotos de personalización ya no sirven: se limpian de R2. */
   async discard(organizationId: string, id: string) {
-    const request = await this.get(organizationId, id);
+    const request = await this.getRaw(organizationId, id);
     if (request.status !== 'NEW') {
       throw new BadRequestException('Esta solicitud ya fue revisada');
     }
@@ -338,13 +402,27 @@ export class StoreRequestsService {
       where: { id: request.id },
       data: { status: 'DISCARDED', reviewedAt: new Date() },
     });
+    await this.limpiarFotos(this.clavesDeFoto(request));
     return { ok: true };
   }
 
   async remove(organizationId: string, id: string) {
-    await this.get(organizationId, id);
+    const request = await this.getRaw(organizationId, id);
     await this.prisma.storeRequest.delete({ where: { id } });
+    await this.limpiarFotos(this.clavesDeFoto(request));
     return { ok: true };
+  }
+
+  /** Borra las fotos de R2 (mejor esfuerzo): el estado de la solicitud ya cambió,
+   *  un archivo huérfano no justifica fallar la acción. */
+  private async limpiarFotos(keys: string[]) {
+    for (const key of keys) {
+      try {
+        await this.storage.remove(key);
+      } catch {
+        // Huérfano tolerable; la solicitud ya quedó descartada/borrada.
+      }
+    }
   }
 }
 
@@ -352,18 +430,24 @@ export class StoreRequestsService {
  * Pasa los renglones de la bandeja al formato de línea de PEDIDO
  * (`{description, quantity, unit, unitPrice}`, ver `shared/calc/order.ts`).
  *
- * Las opciones se meten DENTRO de la descripción a propósito: el pedido y su
- * nota de entrega solo muestran la descripción, así que dejarlas en un campo
- * aparte equivalía a producir sin saber de qué color ni de qué tamaño.
+ * Las opciones y la nota de personalización se meten DENTRO de la descripción a
+ * propósito: el pedido y su nota de entrega solo muestran la descripción, así
+ * que dejarlas aparte equivalía a producir sin saber de qué color ni qué pidió
+ * el cliente. (La FOTO no se copia al pedido: se ve en la bandeja.)
  */
 function toOrderLines(lines: unknown): OrderLine[] {
   if (!Array.isArray(lines)) return [];
   return (lines as PricedLine[]).map((l) => {
-    const opciones = Object.entries(l.options ?? {})
-      .map(([k, v]) => `${k}: ${v}`)
+    const extra = [
+      Object.entries(l.options ?? {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' · '),
+      l.customNote ? `Nota: ${l.customNote}` : '',
+    ]
+      .filter(Boolean)
       .join(' · ');
     return {
-      description: opciones ? `${l.description} (${opciones})` : l.description,
+      description: extra ? `${l.description} (${extra})` : l.description,
       quantity: l.quantity,
       unit: 'u',
       unitPrice: l.unitPrice,

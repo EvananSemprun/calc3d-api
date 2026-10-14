@@ -478,3 +478,144 @@ describe('StoreRequestsService — subida de foto del cliente', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
+
+describe('StoreRequestsService — personalización del cliente', () => {
+  const PERSONALIZABLE = {
+    slug: 'taza',
+    name: 'Taza',
+    priceUsd: 10,
+    minQty: 1,
+    custom: true,
+    optionGroups: [],
+  };
+  const pedido = (extra: Record<string, unknown>) =>
+    StoreOrderRequestSchema.parse({
+      customer: { name: 'Ana', phone: '04121234567' },
+      items: [{ slug: 'taza', qty: 1, options: {}, ...extra }],
+    });
+
+  it('rechaza una customImageKey fuera del prefijo custom-uploads (y ni consulta R2)', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([PERSONALIZABLE]);
+    const storage = hacerStorage();
+    const service = hacerServicio(prisma, ORG, storage);
+
+    await expect(
+      service.submitOrder(pedido({ customImageKey: 'org-1/store/otro/x.png' })),
+    ).rejects.toThrow(/foto/i);
+    expect(storage.head).not.toHaveBeenCalled();
+    expect(prisma.storeRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('rechaza personalizar un producto que no es custom', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([{ ...PERSONALIZABLE, custom: false }]);
+    const service = hacerServicio(prisma);
+
+    await expect(service.submitOrder(pedido({ customNote: 'hola' }))).rejects.toThrow(
+      /no admite personaliz/i,
+    );
+    expect(prisma.storeRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('verifica la foto con HeadObject y guarda nota+clave en la línea', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([PERSONALIZABLE]);
+    const storage = hacerStorage();
+    storage.head.mockResolvedValue({ contentType: 'image/png', contentLength: 1000 });
+    const service = hacerServicio(prisma, ORG, storage);
+
+    await service.submitOrder(
+      pedido({ customNote: 'con logo', customImageKey: 'org-1/custom-uploads/2026-10/x.png' }),
+    );
+    const data = prisma.storeRequest.create.mock.calls[0][0].data;
+    expect(data.lines[0].customNote).toBe('con logo');
+    expect(data.lines[0].customImageKey).toBe('org-1/custom-uploads/2026-10/x.png');
+    expect(storage.head).toHaveBeenCalledWith('org-1/custom-uploads/2026-10/x.png');
+  });
+
+  it('rechaza una foto que no llegó al bucket o no es imagen', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([PERSONALIZABLE]);
+    const storage = hacerStorage();
+    storage.head.mockResolvedValue(null);
+    const service = hacerServicio(prisma, ORG, storage);
+
+    await expect(
+      service.submitOrder(pedido({ customImageKey: 'org-1/custom-uploads/2026-10/x.png' })),
+    ).rejects.toThrow(/foto/i);
+    expect(prisma.storeRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('la bandeja expone customImageUrl y NUNCA el customImageKey', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-1',
+        organizationId: ORG,
+        kind: 'ORDER',
+        status: 'NEW',
+        customerName: 'Ana',
+        customerPhone: '0412',
+        customerPhoneKey: '58412',
+        customerNote: null,
+        description: null,
+        lines: [
+          {
+            slug: 'taza',
+            description: 'Taza',
+            quantity: 1,
+            options: {},
+            unitPrice: 10,
+            customNote: 'con logo',
+            customImageKey: 'org-1/custom-uploads/2026-10/x.png',
+          },
+        ],
+        client: null,
+        order: null,
+      },
+    ]);
+    const service = hacerServicio(prisma);
+
+    const out = (await service.list(ORG)) as unknown as {
+      lines: Array<Record<string, unknown>>;
+    }[];
+    const linea = out[0].lines[0];
+    expect(linea.customImageUrl).toBe('https://cdn.example/org-1/custom-uploads/2026-10/x.png');
+    expect(linea.customNote).toBe('con logo');
+    // La CLAVE cruda no se publica (la URL sí, que es la que el panel muestra).
+    expect(linea).not.toHaveProperty('customImageKey');
+  });
+
+  it('descartar borra las fotos de R2; una confirmada no se tocaría por acá', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeRequest.findFirst.mockResolvedValue({
+      id: 'req-1',
+      organizationId: ORG,
+      kind: 'ORDER',
+      status: 'NEW',
+      customerName: 'Ana',
+      customerPhone: '0412',
+      customerPhoneKey: '58412',
+      customerNote: null,
+      description: null,
+      lines: [
+        {
+          slug: 'taza',
+          description: 'Taza',
+          quantity: 1,
+          options: {},
+          unitPrice: 10,
+          customImageKey: 'org-1/custom-uploads/2026-10/x.png',
+        },
+      ],
+      client: null,
+      order: null,
+    });
+    const storage = hacerStorage();
+    const service = hacerServicio(prisma, ORG, storage);
+
+    await service.discard(ORG, 'req-1');
+    expect(storage.remove).toHaveBeenCalledWith('org-1/custom-uploads/2026-10/x.png');
+  });
+});
