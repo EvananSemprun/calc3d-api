@@ -245,6 +245,11 @@ model Settings {
   businessPhone   String?
   businessAddress String?
   businessSigner  String? // nombre de quien firma la entrega
+  // Flash Sale: ventana de oferta (una a la vez). Activa cuando now ∈ [inicio, fin]
+  // y ambas están definidas. Solo TACHA: el pedido se cobra priceUsd (ver spec §10).
+  saleTitle       String?
+  saleStartsAt    DateTime?
+  saleEndsAt      DateTime?
   // Logo del negocio para el encabezado de los documentos (nota de entrega y
   // cotización). Se guarda en la BD y NO en disco: el hosting de la API tiene
   // disco efímero (se pierde en cada despliegue).
