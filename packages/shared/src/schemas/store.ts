@@ -75,7 +75,40 @@ export const StoreSpecSchema = z.object({
 });
 export type StoreSpecDto = z.infer<typeof StoreSpecSchema>;
 
-export const StoreProductCreateSchema = z.object({
+/** Un tramo de precio por cantidad: desde `minQty` unidades, `discountPct` de
+ *  descuento (fracción, 0.10 = 10 %) sobre el precio unitario. */
+export const StorePriceTierSchema = z.object({
+  minQty: z.number().int().min(2, 'El tramo empieza desde 2 unidades'),
+  discountPct: z.number().min(0).lt(1, 'El descuento va entre 0 y menos de 1'),
+});
+export type StorePriceTier = z.infer<typeof StorePriceTierSchema>;
+
+/** Valida los tramos: crecientes por `minQty`, sin duplicados, y el primero por
+ *  encima del mínimo del producto (cuando `minQty` del producto viene en el DTO). */
+const validarTramos = (
+  val: { priceTiers?: StorePriceTier[]; minQty?: number },
+  ctx: z.RefinementCtx,
+) => {
+  const tiers = val.priceTiers ?? [];
+  for (let i = 1; i < tiers.length; i++) {
+    if (tiers[i].minQty <= tiers[i - 1].minQty) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['priceTiers', i, 'minQty'],
+        message: 'Los tramos tienen que ir de menor a mayor cantidad',
+      });
+    }
+  }
+  if (tiers.length > 0 && val.minQty != null && tiers[0].minQty <= val.minQty) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['priceTiers', 0, 'minQty'],
+      message: 'El primer tramo tiene que superar el mínimo del producto',
+    });
+  }
+};
+
+const StoreProductFields = z.object({
   name: z.string().min(1, 'El nombre es obligatorio').max(120),
   /** Opcional: si no viene, el backend lo deriva del nombre y resuelve choques. */
   slug: SlugSchema.optional(),
@@ -104,11 +137,15 @@ export const StoreProductCreateSchema = z.object({
    * null / ausente = ficha sin costeo (un servicio, o algo cargado a mano).
    */
   input: CalcInputSchema.nullable().optional(),
+  /** Tramos de precio por cantidad (mayoreo). El descuento lo aplica el servidor. */
+  priceTiers: z.array(StorePriceTierSchema).max(8).default([]),
   optionGroups: z.array(StoreOptionGroupSchema).max(10).default([]),
 });
+
+export const StoreProductCreateSchema = StoreProductFields.superRefine(validarTramos);
 export type StoreProductCreateDto = z.infer<typeof StoreProductCreateSchema>;
 
-export const StoreProductUpdateSchema = StoreProductCreateSchema.partial();
+export const StoreProductUpdateSchema = StoreProductFields.partial().superRefine(validarTramos);
 export type StoreProductUpdateDto = z.infer<typeof StoreProductUpdateSchema>;
 
 
