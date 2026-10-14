@@ -69,11 +69,15 @@ function makeService(overrides: {
   findFirst?: jest.Mock;
   findMany?: jest.Mock;
   bannerFindMany?: jest.Mock;
+  categoryFindMany?: jest.Mock;
   settings?: Record<string, unknown>;
 } = {}) {
   const findFirst = overrides.findFirst ?? jest.fn().mockResolvedValue(PRODUCTO);
   const findMany = overrides.findMany ?? jest.fn().mockResolvedValue([PRODUCTO]);
   const bannerFindMany = overrides.bannerFindMany ?? jest.fn().mockResolvedValue([BANNER]);
+  // Por defecto la categoría destino del BANNER ('llaveros') EXISTE, así que el
+  // banner sigue vivo. Los tests de destino colgado la vacían.
+  const categoryFindMany = overrides.categoryFindMany ?? jest.fn().mockResolvedValue([{ slug: 'llaveros', name: 'Llaveros' }]);
   const settingsRow = overrides.settings ?? {
     businessPhone: '0412 0366355',
     currency: 'USD',
@@ -85,7 +89,7 @@ function makeService(overrides: {
   const prisma = {
     storeProduct: { findFirst, findMany },
     storeBanner: { findMany: bannerFindMany },
-    storeCategory: { findMany: jest.fn().mockResolvedValue([]) },
+    storeCategory: { findMany: categoryFindMany },
     organization: { findUnique: jest.fn().mockResolvedValue({ name: 'Banano Lab' }) },
     settings: {
       findUnique: jest.fn().mockResolvedValue(settingsRow),
@@ -108,7 +112,7 @@ function makeService(overrides: {
     rates as never,
     storage as never,
   );
-  return { service, prisma, findFirst, findMany, bannerFindMany };
+  return { service, prisma, findFirst, findMany, bannerFindMany, categoryFindMany };
 }
 
 /** Campos que jamás pueden aparecer en una respuesta pública. */
@@ -159,6 +163,39 @@ describe('Banners públicos', () => {
   it('sin STORE_ORGANIZATION_ID no responde', async () => {
     const { service } = makeService({ storeOrganizationId: null });
     await expect(service.banners()).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('conserva el destino CATEGORY cuando la categoría existe', async () => {
+    const { service } = makeService(); // categoría 'llaveros' existe por defecto
+    const { banners } = await service.banners();
+    expect(banners[0].linkType).toBe('CATEGORY');
+    expect(banners[0].linkValue).toBe('llaveros');
+  });
+
+  it('degrada a NONE un destino CATEGORY que ya no existe', async () => {
+    const { service } = makeService({ categoryFindMany: jest.fn().mockResolvedValue([]) });
+    const { banners } = await service.banners();
+    expect(banners[0].linkType).toBe('NONE');
+    expect(banners[0].linkValue).toBeNull();
+  });
+
+  it('degrada a NONE un destino PRODUCT oculto o inexistente', async () => {
+    const bannerProd = { ...BANNER, linkType: 'PRODUCT' as const, linkValue: 'llavero-mundial' };
+    const { service } = makeService({
+      bannerFindMany: jest.fn().mockResolvedValue([bannerProd]),
+      findMany: jest.fn().mockResolvedValue([]), // el producto no está visible / no existe
+    });
+    const { banners } = await service.banners();
+    expect(banners[0].linkType).toBe('NONE');
+    expect(banners[0].linkValue).toBeNull();
+  });
+
+  it('un destino URL no se toca (no depende del catálogo)', async () => {
+    const bannerUrl = { ...BANNER, linkType: 'URL' as const, linkValue: 'https://wa.me/58412' };
+    const { service } = makeService({ bannerFindMany: jest.fn().mockResolvedValue([bannerUrl]) });
+    const { banners } = await service.banners();
+    expect(banners[0].linkType).toBe('URL');
+    expect(banners[0].linkValue).toBe('https://wa.me/58412');
   });
 });
 

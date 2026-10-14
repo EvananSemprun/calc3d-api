@@ -147,20 +147,45 @@ export class StorePublicService {
   }
 
   /** Banners del carrusel: solo los visibles, en el orden del panel. Lista
-   *  blanca explícita — nunca sale id, clave de R2 ni la organización. */
+   *  blanca explícita — nunca sale id, clave de R2 ni la organización.
+   *
+   *  Un destino CATEGORY/PRODUCT que se borró u ocultó DESPUÉS de crear el banner
+   *  dejaría un "Ver más" roto (el `assertLink` del admin valida solo al escribir).
+   *  Acá se degrada ese destino a NONE en vez de publicar un enlace muerto. */
   async banners(): Promise<{ banners: PublicBanner[] }> {
+    const organizationId = this.organizationId;
     const rows = await this.prisma.storeBanner.findMany({
-      where: { organizationId: this.organizationId, visible: true },
+      where: { organizationId, visible: true },
       orderBy: { position: 'asc' },
     });
+
+    const catSlugs = rows.filter((b) => b.linkType === 'CATEGORY' && b.linkValue).map((b) => b.linkValue as string);
+    const prodSlugs = rows.filter((b) => b.linkType === 'PRODUCT' && b.linkValue).map((b) => b.linkValue as string);
+    const [cats, prods] = await Promise.all([
+      catSlugs.length
+        ? this.prisma.storeCategory.findMany({ where: { organizationId, slug: { in: catSlugs } }, select: { slug: true } })
+        : Promise.resolve([] as { slug: string }[]),
+      prodSlugs.length
+        ? this.prisma.storeProduct.findMany({ where: { organizationId, slug: { in: prodSlugs }, visible: true }, select: { slug: true } })
+        : Promise.resolve([] as { slug: string }[]),
+    ]);
+    const catOk = new Set(cats.map((c) => c.slug));
+    const prodOk = new Set(prods.map((p) => p.slug));
+
     return {
-      banners: rows.map((b) => ({
-        title: b.title,
-        subtitle: b.subtitle,
-        imageUrl: this.storage.publicUrl(b.imageKey),
-        linkType: b.linkType,
-        linkValue: b.linkValue,
-      })),
+      banners: rows.map((b) => {
+        const vivo =
+          b.linkType === 'CATEGORY' ? catOk.has(b.linkValue ?? '')
+          : b.linkType === 'PRODUCT' ? prodOk.has(b.linkValue ?? '')
+          : true; // NONE y URL no dependen del catálogo
+        return {
+          title: b.title,
+          subtitle: b.subtitle,
+          imageUrl: this.storage.publicUrl(b.imageKey),
+          linkType: vivo ? b.linkType : 'NONE',
+          linkValue: vivo ? b.linkValue : null,
+        };
+      }),
     };
   }
 
