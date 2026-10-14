@@ -81,6 +81,7 @@ export class StoreService {
   }
 
   async create(organizationId: string, dto: StoreProductCreateDto) {
+    this.assertUnDrivesPhoto(dto.optionGroups);
     const slug = await this.uniqueSlug(organizationId, dto.slug ?? slugify(dto.name));
     if (!slug) throw new BadRequestException('El nombre no genera un enlace válido');
 
@@ -132,12 +133,10 @@ export class StoreService {
     // Recostear al editar: si viene un costeo nuevo, el servidor recalcula.
     const costAtPublish = dto.input ? calculateQuote(dto.input).costPerUnit : undefined;
 
+    // A lo sumo un grupo define la foto (lo valida ANTES de escribir nada).
+    if (dto.optionGroups !== undefined) this.assertUnDrivesPhoto(dto.optionGroups);
+
     await this.prisma.$transaction(async (tx) => {
-      // Los grupos de opciones se editan como bloque: reemplazarlos entero evita
-      // el baile de altas/bajas/actualizaciones por opción.
-      if (dto.optionGroups !== undefined) {
-        await tx.storeOptionGroup.deleteMany({ where: { storeProductId: id } });
-      }
       await tx.storeProduct.update({
         where: { id },
         data: {
@@ -158,11 +157,13 @@ export class StoreService {
           ...(dto.visible !== undefined && { visible: dto.visible }),
           ...(dto.categoryId !== undefined && { categoryId: dto.categoryId ?? null }),
           ...(costAtPublish !== undefined && { costAtPublish }),
-          ...(dto.optionGroups !== undefined && {
-            optionGroups: { create: this.optionGroupsData(dto.optionGroups) },
-          }),
         },
       });
+      // Los grupos/opciones se guardan con DIFF por id, no borrar-recrear: así una
+      // foto enlazada a una opción (Fase B) sobrevive a editar el producto.
+      if (dto.optionGroups !== undefined) {
+        await this.syncOptionGroups(tx, id, dto.optionGroups);
+      }
     });
 
     return this.get(organizationId, id);
@@ -326,6 +327,7 @@ export class StoreService {
     return groups.map((g, position) => ({
       name: g.name,
       required: g.required,
+      drivesPhoto: g.drivesPhoto,
       position,
       options: {
         create: g.options.map((o, i) => ({
@@ -336,6 +338,92 @@ export class StoreService {
         })),
       },
     }));
+  }
+
+  /** A lo sumo un grupo puede definir la foto de la ficha: dos sería ambiguo. */
+  private assertUnDrivesPhoto(groups: StoreProductCreateDto['optionGroups'] = []) {
+    if (groups.filter((g) => g.drivesPhoto).length > 1) {
+      throw new BadRequestException('Solo un grupo de opciones puede definir la foto');
+    }
+  }
+
+  /**
+   * Guarda los grupos/opciones con DIFF por id, no borrar-y-recrear: un grupo o
+   * una opción que ya existía conserva su id, y por lo tanto las fotos que
+   * alguien enlazó a esa opción (Fase B) sobreviven a editar el producto. Lo del
+   * DTO con id conocido se actualiza; sin id, se crea; lo que ya no está, se
+   * borra (y la cascada se lleva sus opciones e imágenes). Todo sobre `tx`.
+   */
+  private async syncOptionGroups(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    groups: NonNullable<StoreProductUpdateDto['optionGroups']>,
+  ) {
+    const actuales = await tx.storeOptionGroup.findMany({
+      where: { storeProductId: productId },
+      include: { options: true },
+    });
+
+    const idsDelDto = new Set(groups.filter((g) => g.id).map((g) => g.id as string));
+    const gruposABorrar = actuales.filter((a) => !idsDelDto.has(a.id)).map((a) => a.id);
+    if (gruposABorrar.length) {
+      await tx.storeOptionGroup.deleteMany({ where: { id: { in: gruposABorrar } } });
+    }
+
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      const actual = g.id ? actuales.find((a) => a.id === g.id) : undefined;
+
+      if (!actual) {
+        await tx.storeOptionGroup.create({
+          data: {
+            storeProductId: productId,
+            name: g.name,
+            required: g.required,
+            drivesPhoto: g.drivesPhoto,
+            position: i,
+            options: {
+              create: g.options.map((o, j) => ({
+                value: o.value,
+                priceDeltaUsd: o.priceDeltaUsd,
+                swatchHex: o.swatchHex ?? null,
+                position: j,
+              })),
+            },
+          },
+        });
+        continue;
+      }
+
+      await tx.storeOptionGroup.update({
+        where: { id: actual.id },
+        data: { name: g.name, required: g.required, drivesPhoto: g.drivesPhoto, position: i },
+      });
+
+      const idsOpcionDto = new Set(g.options.filter((o) => o.id).map((o) => o.id as string));
+      const opcionesABorrar = actual.options
+        .filter((o) => !idsOpcionDto.has(o.id))
+        .map((o) => o.id);
+      if (opcionesABorrar.length) {
+        await tx.storeOption.deleteMany({ where: { id: { in: opcionesABorrar } } });
+      }
+
+      for (let j = 0; j < g.options.length; j++) {
+        const o = g.options[j];
+        const opcionActual = o.id ? actual.options.find((a) => a.id === o.id) : undefined;
+        const datos = {
+          value: o.value,
+          priceDeltaUsd: o.priceDeltaUsd,
+          swatchHex: o.swatchHex ?? null,
+          position: j,
+        };
+        if (opcionActual) {
+          await tx.storeOption.update({ where: { id: opcionActual.id }, data: datos });
+        } else {
+          await tx.storeOption.create({ data: { groupId: actual.id, ...datos } });
+        }
+      }
+    }
   }
 
   /** Verifica que la categoría, si viene, sea de esta organización. */

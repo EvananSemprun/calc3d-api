@@ -898,6 +898,9 @@ model StoreOptionGroup {
    */
   name           String
   required       Boolean      @default(false)
+  /// Marca el grupo cuyas opciones definen la foto de la ficha (a lo sumo uno por
+  /// producto). Las opciones de este grupo pueden tener StoreImage enlazadas.
+  drivesPhoto    Boolean      @default(false)
   position       Int          @default(0)
 
   options StoreOption[]

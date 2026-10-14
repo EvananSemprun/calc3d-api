@@ -73,6 +73,19 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       delete: jest.fn().mockResolvedValue(FICHA),
     },
     storeImage: { create: jest.fn(), delete: jest.fn(), update: jest.fn() },
+    storeOptionGroup: {
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue({}),
+      create: jest.fn().mockResolvedValue({}),
+      delete: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    storeOption: {
+      update: jest.fn().mockResolvedValue({}),
+      create: jest.fn().mockResolvedValue({}),
+      delete: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     storeCategory: { findFirst: jest.fn().mockResolvedValue(null), count: jest.fn() },
     product: { findFirst: jest.fn() },
     quote: { findFirst: jest.fn() },
@@ -279,5 +292,51 @@ describe('Catálogo de tienda (panel)', () => {
         data: { position: 0 },
       });
     });
+  });
+});
+
+describe('guardado de opciones con ids estables', () => {
+  it('editar un producto actualiza las opciones por id en vez de borrar y recrear', async () => {
+    const { prisma, service } = makeDeps();
+    prisma.storeOptionGroup.findMany.mockResolvedValue([
+      {
+        id: 'g1', name: 'Color', required: true, drivesPhoto: false, position: 0,
+        options: [{ id: 'o1', value: 'Rojo', priceDeltaUsd: 0 }, { id: 'o2', value: 'Azul', priceDeltaUsd: 0 }],
+      },
+    ]);
+    await service.update(ORG, 'sp1', {
+      ...BASE,
+      name: 'Llavero editado',
+      priceUsd: 10,
+      optionGroups: [
+        {
+          id: 'g1', name: 'Color', required: true, drivesPhoto: false,
+          options: [{ id: 'o1', value: 'Rojo', priceDeltaUsd: 0 }, { id: 'o2', value: 'Azul', priceDeltaUsd: 0 }],
+        },
+      ],
+    });
+    // Se actualiza en su lugar (id preservado), NO se recrea el grupo.
+    expect(prisma.storeOptionGroup.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'g1' } }),
+    );
+    expect(prisma.storeOption.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'o1' } }),
+    );
+    expect(prisma.storeOptionGroup.create).not.toHaveBeenCalled();
+  });
+
+  it('rechaza dos grupos con drivesPhoto', async () => {
+    const { service } = makeDeps();
+    await expect(
+      service.update(ORG, 'sp1', {
+        ...BASE,
+        name: 'X',
+        priceUsd: 10,
+        optionGroups: [
+          { name: 'A', required: false, drivesPhoto: true, options: [{ value: 'x', priceDeltaUsd: 0 }] },
+          { name: 'B', required: false, drivesPhoto: true, options: [{ value: 'y', priceDeltaUsd: 0 }] },
+        ],
+      }),
+    ).rejects.toThrow();
   });
 });
