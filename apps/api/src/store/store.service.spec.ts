@@ -395,4 +395,41 @@ describe('guardado de opciones con ids estables', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('al borrar una OPCIÓN con foto, limpia su archivo de R2', async () => {
+    const { prisma, storage, service } = makeDeps();
+    prisma.storeOptionGroup.findMany.mockResolvedValue([
+      {
+        id: 'g1', name: 'Color', required: true, drivesPhoto: true, position: 0,
+        options: [
+          { id: 'o1', value: 'Rojo', priceDeltaUsd: 0, images: [{ id: 'img1', key: `${ORG}/store/sp1/rojo.jpg` }] },
+          { id: 'o2', value: 'Azul', priceDeltaUsd: 0, images: [] },
+        ],
+      },
+    ]);
+    // El DTO deja solo Azul → Rojo (y su foto) se borra: el archivo no puede
+    // quedar huérfano en el bucket.
+    await service.update(ORG, 'sp1', {
+      ...BASE,
+      name: 'Llavero',
+      priceUsd: 10,
+      optionGroups: [
+        { id: 'g1', name: 'Color', required: true, drivesPhoto: true, options: [{ id: 'o2', value: 'Azul', priceDeltaUsd: 0 }] },
+      ],
+    });
+    expect(storage.remove).toHaveBeenCalledWith(`${ORG}/store/sp1/rojo.jpg`);
+  });
+
+  it('al borrar un GRUPO con fotos, limpia los archivos de R2', async () => {
+    const { prisma, storage, service } = makeDeps();
+    prisma.storeOptionGroup.findMany.mockResolvedValue([
+      {
+        id: 'g1', name: 'Color', required: true, drivesPhoto: true, position: 0,
+        options: [{ id: 'o1', value: 'Rojo', priceDeltaUsd: 0, images: [{ id: 'img1', key: `${ORG}/store/sp1/rojo.jpg` }] }],
+      },
+    ]);
+    // El DTO ya no trae g1 → el grupo entero (con su foto) se borra.
+    await service.update(ORG, 'sp1', { ...BASE, name: 'Llavero', priceUsd: 10, optionGroups: [] });
+    expect(storage.remove).toHaveBeenCalledWith(`${ORG}/store/sp1/rojo.jpg`);
+  });
 });

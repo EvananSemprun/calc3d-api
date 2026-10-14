@@ -143,6 +143,9 @@ export class StoreService {
     // A lo sumo un grupo define la foto (lo valida ANTES de escribir nada).
     if (dto.optionGroups !== undefined) this.assertUnDrivesPhoto(dto.optionGroups);
 
+    // Claves de R2 de las fotos que el diff borra en cascada: se eliminan del
+    // bucket DESPUÉS del commit (si la transacción falla, no se tocó R2).
+    let keysABorrar: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       await tx.storeProduct.update({
         where: { id },
@@ -169,9 +172,20 @@ export class StoreService {
       // Los grupos/opciones se guardan con DIFF por id, no borrar-recrear: así una
       // foto enlazada a una opción (Fase B) sobrevive a editar el producto.
       if (dto.optionGroups !== undefined) {
-        await this.syncOptionGroups(tx, id, dto.optionGroups);
+        keysABorrar = await this.syncOptionGroups(tx, id, dto.optionGroups);
       }
     });
+
+    // Fuera de la transacción: borrar un color/grupo se lleva sus StoreImage en
+    // cascada en la base, pero el objeto de R2 hay que borrarlo a mano, como en
+    // removeImage. Es mejor esfuerzo: si R2 falla, el guardado ya quedó firme.
+    for (const key of keysABorrar) {
+      try {
+        await this.storage.remove(key);
+      } catch {
+        // El guardado ya está hecho; un archivo huérfano no justifica fallar el PATCH.
+      }
+    }
 
     return this.get(organizationId, id);
   }
@@ -394,16 +408,25 @@ export class StoreService {
     tx: Prisma.TransactionClient,
     productId: string,
     groups: NonNullable<StoreProductUpdateDto['optionGroups']>,
-  ) {
+  ): Promise<string[]> {
     const actuales = await tx.storeOptionGroup.findMany({
       where: { storeProductId: productId },
-      include: { options: true },
+      // Traemos las fotos de cada opción para juntar sus claves de R2 antes de
+      // que el borrado en cascada las lleve: el objeto del bucket hay que
+      // borrarlo a mano (la cascada solo borra la fila).
+      include: { options: { include: { images: true } } },
     });
 
+    // Claves de R2 a borrar (las de las opciones/grupos que el diff elimina).
+    const keysABorrar: string[] = [];
+
     const idsDelDto = new Set(groups.filter((g) => g.id).map((g) => g.id as string));
-    const gruposABorrar = actuales.filter((a) => !idsDelDto.has(a.id)).map((a) => a.id);
+    const gruposABorrar = actuales.filter((a) => !idsDelDto.has(a.id));
+    for (const grupo of gruposABorrar) {
+      for (const o of grupo.options) for (const img of o.images ?? []) keysABorrar.push(img.key);
+    }
     if (gruposABorrar.length) {
-      await tx.storeOptionGroup.deleteMany({ where: { id: { in: gruposABorrar } } });
+      await tx.storeOptionGroup.deleteMany({ where: { id: { in: gruposABorrar.map((a) => a.id) } } });
     }
 
     for (let i = 0; i < groups.length; i++) {
@@ -437,11 +460,10 @@ export class StoreService {
       });
 
       const idsOpcionDto = new Set(g.options.filter((o) => o.id).map((o) => o.id as string));
-      const opcionesABorrar = actual.options
-        .filter((o) => !idsOpcionDto.has(o.id))
-        .map((o) => o.id);
+      const opcionesABorrar = actual.options.filter((o) => !idsOpcionDto.has(o.id));
+      for (const o of opcionesABorrar) for (const img of o.images ?? []) keysABorrar.push(img.key);
       if (opcionesABorrar.length) {
-        await tx.storeOption.deleteMany({ where: { id: { in: opcionesABorrar } } });
+        await tx.storeOption.deleteMany({ where: { id: { in: opcionesABorrar.map((o) => o.id) } } });
       }
 
       for (let j = 0; j < g.options.length; j++) {
@@ -460,6 +482,8 @@ export class StoreService {
         }
       }
     }
+
+    return keysABorrar;
   }
 
   /** Verifica que la categoría, si viene, sea de esta organización. */
