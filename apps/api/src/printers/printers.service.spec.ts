@@ -93,3 +93,44 @@ describe('PrintersService — mantenimiento por hora derivado', () => {
     expect(lista[0].maintPerHourDerived).toBe(false);
   });
 });
+
+/**
+ * REPOSICIÓN: el ingreso es lo COBRADO (ventas + abonos), no lo facturado.
+ *
+ * Antes `recovery()` sumaba el total de TODOS los pedidos (incluso cotizados o
+ * cancelados), así que contaba plata que no entró y daba un número distinto del
+ * "Resultado de la operación" del Dashboard. Ahora usa `Σ Sale.amount +
+ * Σ Payment.amount`, la misma definición del Dashboard.
+ * Spec: docs/superpowers/specs/2026-10-14-reposicion-ingresos-cobrados-design.md
+ */
+describe('recovery(): ingresos cobrados, no facturados', () => {
+  it('suma ventas + abonos (no los totales de los pedidos)', async () => {
+    const prisma = {
+      sale: { findMany: jest.fn().mockResolvedValue([{ amount: '100' }]) },
+      // Hay pedidos facturados por más de lo abonado y uno COTIZADO sin abonos:
+      // si se contaran los totales de pedidos el ingreso daría 170, no 135.
+      payment: { findMany: jest.fn().mockResolvedValue([{ amount: '35' }]) },
+      expense: { findMany: jest.fn().mockResolvedValue([{ amount: '40' }]) },
+      printer: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'p1', name: 'A1', price: '200', createdAt: new Date('2026-01-01T00:00:00Z'), expenses: [] },
+        ]),
+      },
+    };
+    const res = await new PrintersService(prisma as never).recovery(ORG);
+
+    // 100 de ventas + 35 de abonos = 135 (NO 170 = 100 + pedidos de 50 y 20).
+    expect(res.income).toBe(135);
+    expect(res.operatingExpenses).toBe(40);
+    // 135 − 40 = 95 (la forma vieja habría dado 130).
+    expect(res.accumulatedProfit).toBe(95);
+    // Los gastos de reposición filtran inversión: isInvestment false.
+    expect(prisma.expense.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isInvestment: false }) }),
+    );
+    // El ingreso sale de abonos, por organización.
+    expect(prisma.payment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+    );
+  });
+});

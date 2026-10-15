@@ -117,9 +117,13 @@ export class PrintersService {
    * devolver capital no lo es.
    */
   async recovery(organizationId: string) {
-    const [ventas, pedidos, gastos, printers] = await Promise.all([
+    const [ventas, abonos, gastos, printers] = await Promise.all([
       this.prisma.sale.findMany({ where: { organizationId }, select: { amount: true } }),
-      this.prisma.order.findMany({ where: { organizationId }, select: { lines: true } }),
+      // El ingreso es lo COBRADO, no lo facturado: ventas + ABONOS, la misma
+      // definición que el "Resultado de la operación" del Dashboard. Sumar el
+      // total de los pedidos contaba plata no cobrada —y cotizaciones/cancelados—
+      // y hacía que las dos tarjetas de la misma pantalla no coincidieran.
+      this.prisma.payment.findMany({ where: { organizationId }, select: { amount: true } }),
       this.prisma.expense.findMany({
         where: { organizationId, isInvestment: false },
         select: { amount: true },
@@ -142,11 +146,9 @@ export class PrintersService {
       }),
     ]);
 
-    const total = (lines: unknown) =>
-      ((lines ?? []) as OrderLine[]).reduce((s, l) => s + l.quantity * l.unitPrice, 0);
-
     const income = round2(
-      ventas.reduce((s, v) => s + Number(v.amount), 0) + pedidos.reduce((s, p) => s + total(p.lines), 0),
+      ventas.reduce((s, v) => s + Number(v.amount), 0) +
+        abonos.reduce((s, p) => s + Number(p.amount), 0),
     );
     const operatingExpenses = round2(gastos.reduce((s, g) => s + Number(g.amount), 0));
     const accumulatedProfit = round2(income - operatingExpenses);
