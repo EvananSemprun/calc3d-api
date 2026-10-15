@@ -107,7 +107,7 @@ function makeService(overrides: {
     ),
   };
   const rates = { latest: jest.fn().mockResolvedValue([]) };
-  const storage = { publicUrl: (key: string) => `https://cdn.example/${key}` };
+  const storage = { configured: true, publicUrl: (key: string) => `https://cdn.example/${key}` };
   const service = new StorePublicService(
     prisma as never,
     config as never,
@@ -365,6 +365,7 @@ describe('Catálogo público', () => {
         whatsappPhone: '0412 0366355',
         currency: 'USD',
         rate: null,
+        storageReady: true,
       });
     });
   });

@@ -141,6 +141,10 @@ export class StorePublicService {
       // Tasa VIGENTE para mostrar bolívares. El motor no convierte: esto es
       // presentación, y la tienda multiplica el precio USD por acá.
       rate: await this.currentRate(organizationId, settings?.defaultRateLabel ?? null),
+      // Si el servidor puede recibir fotos: la tienda esconde el cargador de
+      // personalización cuando R2 no está configurado, en vez de ofrecer una
+      // subida que va a fallar.
+      storageReady: this.storage.configured,
     };
   }
 
