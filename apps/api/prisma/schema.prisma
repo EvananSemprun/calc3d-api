@@ -717,6 +717,13 @@ model Campaign {
   budget         Decimal?           @db.Decimal(12, 4) // presupuesto estimado (USD)
   notes          String?
 
+  /// El gasto de Publicidad que ESTA campaña gestiona desde su campo "lo pagué"
+  /// (`paidUsd` del contrato). Apunta al Expense auto-creado para NO duplicarlo al
+  /// editar: se crea, se actualiza o se borra según el monto. El gastado real sigue
+  /// derivándose de TODOS los Expense enlazados (este + los cargados a mano), nunca
+  /// de este campo. null = la campaña no gestiona ningún gasto.
+  managedExpenseId String?
+
   /// Lo que reporta la plataforma. Son la ÚNICA medida de una campaña que
   /// todavía no generó una venta atribuida: sin ellas solo se la puede juzgar
   /// por ROAS, que en ese caso es cero y no dice nada.

@@ -410,6 +410,15 @@ export const CampaignCreateSchema = z.object({
   startDate: FECHA,
   endDate: FECHA_OPCIONAL,
   budget: z.number().min(0).optional().nullable(),
+  /**
+   * Lo que REALMENTE se pagó por la campaña (USD). A diferencia de `budget`
+   * (estimado), esto SÍ cuenta como invertido: el servidor sincroniza UN gasto de
+   * Publicidad enlazado con este monto (lo crea, lo actualiza o lo borra), así que
+   * aparece en "Invertido", en Gastos y en la Caja. El gastado real sigue
+   * DERIVÁNDOSE de los Expense (categoría ADVERTISING + campaignId), nunca se
+   * almacena en la campaña. `0`/`null` = sin pago (borra el gasto gestionado).
+   */
+  paidUsd: z.number().min(0).optional().nullable(),
   notes: z.string().optional().nullable(),
   /** Lo que reporta la plataforma; con esto sale el costo por conversación. */
   reach: z.number().int().min(0).optional().nullable(),

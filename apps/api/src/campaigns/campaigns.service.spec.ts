@@ -192,3 +192,195 @@ describe('CampaignsService — venta atribuida declarada', () => {
     expect(s.revenue).toBe(90.02);
   });
 });
+
+/**
+ * EL GASTO QUE GESTIONA LA CAMPAÑA — "Lo que pagué" (2026-10-16). El campo
+ * `paidUsd` crea/actualiza/borra UN solo `Expense` de Publicidad enlazado
+ * (`managedExpenseId`), para que cuente como invertido sin duplicarse al editar.
+ * El gastado real SIGUE derivándose de TODOS los Expense enlazados; esto es solo
+ * el atajo que la ficha de la campaña usa para su propio gasto.
+ *
+ * El mock de Prisma guarda campañas y gastos EN MEMORIA y resuelve la
+ * transacción aplicando las escrituras en el acto: así el test mide el efecto
+ * real (cuántos gastos quedan, con qué monto), no la forma de las llamadas.
+ */
+describe('CampaignsService — el gasto que gestiona la campaña (paidUsd)', () => {
+  const ORG = 'org-pago';
+
+  type Fila = Record<string, unknown>;
+
+  function makeStore() {
+    let seq = 0;
+    const id = (p: string) => `${p}-${++seq}`;
+    const campaigns: Fila[] = [];
+    const expenses: Fila[] = [];
+
+    // Reproduce los `where` que usan el servicio y sus helpers: por organización,
+    // por `campaignId: { not: null }` (statsByCampaign) y por `id: { in }` (paidByCampaign).
+    const matchExpense = (e: Fila, where: Fila): boolean => {
+      const w = where as {
+        organizationId?: string;
+        campaignId?: { not?: null };
+        id?: string | { in?: string[] };
+      };
+      if (w.organizationId != null && e.organizationId !== w.organizationId) return false;
+      if (w.campaignId?.not === null && e.campaignId == null) return false;
+      if (typeof w.id === 'object' && w.id?.in && !w.id.in.includes(e.id as string)) return false;
+      if (typeof w.id === 'string' && e.id !== w.id) return false;
+      return true;
+    };
+
+    const tx = {
+      campaign: {
+        create: jest.fn(async ({ data }: { data: Fila }) => {
+          // Prisma pone `createdAt` solo; el mock lo imita (serialize lo lee).
+          const row: Fila = { id: id('c'), managedExpenseId: null, createdAt: new Date('2026-10-01T00:00:00Z'), ...data };
+          campaigns.push(row);
+          return row;
+        }),
+        update: jest.fn(async ({ where, data }: { where: { id: string }; data: Fila }) => {
+          const row = campaigns.find((c) => c.id === where.id)!;
+          Object.assign(row, data);
+          return row;
+        }),
+      },
+      expense: {
+        findFirst: jest.fn(async ({ where }: { where: Fila }) =>
+          expenses.find((e) => matchExpense(e, where)) ?? null,
+        ),
+        create: jest.fn(async ({ data }: { data: Fila }) => {
+          const row: Fila = { id: id('e'), ...data };
+          expenses.push(row);
+          return row;
+        }),
+        update: jest.fn(async ({ where, data }: { where: { id: string }; data: Fila }) => {
+          const row = expenses.find((e) => e.id === where.id)!;
+          Object.assign(row, data);
+          return row;
+        }),
+        delete: jest.fn(async ({ where }: { where: { id: string } }) => {
+          const i = expenses.findIndex((e) => e.id === where.id);
+          return expenses.splice(i, 1)[0];
+        }),
+      },
+    };
+
+    const prisma = {
+      $transaction: jest.fn(async (fn: (c: typeof tx) => unknown) => fn(tx)),
+      campaign: {
+        findFirst: jest.fn(async ({ where }: { where: { id: string; organizationId: string } }) =>
+          campaigns.find((c) => c.id === where.id && c.organizationId === where.organizationId) ?? null,
+        ),
+        findMany: jest.fn(async ({ where }: { where: { organizationId: string } }) =>
+          campaigns.filter((c) => c.organizationId === where.organizationId),
+        ),
+        update: tx.campaign.update,
+      },
+      expense: {
+        findMany: jest.fn(async ({ where }: { where: Fila }) =>
+          expenses.filter((e) => matchExpense(e, where)),
+        ),
+      },
+      sale: { findMany: jest.fn().mockResolvedValue([]) },
+      order: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+
+    return { prisma, expenses };
+  }
+
+  const nueva = (paidUsd?: number | null) =>
+    ({
+      name: 'Promo llaveros',
+      platform: 'INSTAGRAM',
+      objective: null,
+      status: 'ACTIVE',
+      startDate: '2026-10-01',
+      ...(paidUsd !== undefined && { paidUsd }),
+    }) as never;
+
+  const ads = (expenses: Fila[]) => expenses.filter((e) => e.category === 'ADVERTISING');
+
+  it('crear con lo pagado > 0 deja UN gasto de Publicidad y lo cuenta como invertido', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    const creada = await svc.create(ORG, nueva(30));
+    const gastos = ads(expenses);
+    expect(gastos).toHaveLength(1);
+    expect(gastos[0].amount).toBe(30);
+    expect(gastos[0].category).toBe('ADVERTISING');
+    expect(gastos[0].isInvestment).toBe(false);
+    expect(gastos[0].campaignId).toBe(creada.id);
+    expect(gastos[0].description).toBe('Campaña: Promo llaveros');
+
+    const [vista] = await svc.list(ORG);
+    expect(vista.paidUsd).toBe(30);
+    expect(vista.stats.invested).toBe(30);
+  });
+
+  it('crear sin pagar nada no crea ningún gasto', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    await svc.create(ORG, nueva(0));
+    const [a] = await svc.list(ORG);
+    expect(ads(expenses)).toHaveLength(0);
+    expect(a.paidUsd).toBe(0);
+    expect(a.stats.invested).toBe(0);
+  });
+
+  it('editar lo pagado ACTUALIZA el mismo gasto, no crea otro', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    const creada = await svc.create(ORG, nueva(30));
+    await svc.update(ORG, creada.id, { paidUsd: 50 } as never);
+
+    const gastos = ads(expenses);
+    expect(gastos).toHaveLength(1);
+    expect(gastos[0].amount).toBe(50);
+
+    const [vista] = await svc.list(ORG);
+    expect(vista.paidUsd).toBe(50);
+    expect(vista.stats.invested).toBe(50);
+  });
+
+  it('poner lo pagado en 0 BORRA el gasto gestionado', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    const creada = await svc.create(ORG, nueva(30));
+    await svc.update(ORG, creada.id, { paidUsd: 0 } as never);
+
+    expect(ads(expenses)).toHaveLength(0);
+    const [vista] = await svc.list(ORG);
+    expect(vista.paidUsd).toBe(0);
+    expect(vista.stats.invested).toBe(0);
+  });
+
+  it('poner lo pagado en null BORRA el gasto gestionado', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    const creada = await svc.create(ORG, nueva(30));
+    await svc.update(ORG, creada.id, { paidUsd: null } as never);
+
+    expect(ads(expenses)).toHaveLength(0);
+    const [vista] = await svc.list(ORG);
+    expect(vista.paidUsd).toBe(0);
+  });
+
+  it('editar SIN mandar lo pagado deja el gasto como estaba', async () => {
+    const { prisma, expenses } = makeStore();
+    const svc = new CampaignsService(prisma as never);
+
+    const creada = await svc.create(ORG, nueva(30));
+    await svc.update(ORG, creada.id, { name: 'Otro nombre' } as never);
+
+    const gastos = ads(expenses);
+    expect(gastos).toHaveLength(1);
+    expect(gastos[0].amount).toBe(30);
+    const [vista] = await svc.list(ORG);
+    expect(vista.paidUsd).toBe(30);
+  });
+});

@@ -205,8 +205,9 @@ export class CampaignsService {
       orderBy: { createdAt: 'desc' },
     });
     const stats = await this.statsByCampaign(organizationId);
+    const pagado = await this.paidByCampaign(organizationId, campaigns);
     return campaigns.map((c) => ({
-      ...serialize(c),
+      ...serialize(c, pagado.get(c.id) ?? 0),
       stats: this.withDeclared(c, stats.get(c.id) ?? emptyStats()),
     }));
   }
@@ -216,8 +217,9 @@ export class CampaignsService {
     if (!campaign) throw new NotFoundException('Campaña no encontrada');
     const stats = await this.statsByCampaign(organizationId);
     const period = await this.periodStats(organizationId, campaign.startDate, campaign.endDate);
+    const pagado = await this.paidByCampaign(organizationId, [campaign]);
     return {
-      ...serialize(campaign),
+      ...serialize(campaign, pagado.get(id) ?? 0),
       stats: this.withDeclared(campaign, stats.get(id) ?? emptyStats()),
       period,
     };
@@ -368,46 +370,150 @@ export class CampaignsService {
     doc.moveDown(0.2);
   }
 
-  create(organizationId: string, dto: CampaignCreateDto) {
-    return this.prisma.campaign.create({
-      data: {
-        organizationId,
-        name: dto.name,
-        platform: dto.platform,
-        objective: dto.objective ?? null,
-        status: dto.status,
-        startDate: new Date(dto.startDate),
-        endDate: dto.endDate ? new Date(dto.endDate) : null,
-        budget: dto.budget ?? null,
-        notes: dto.notes ?? null,
-        reach: dto.reach ?? null,
-        conversations: dto.conversations ?? null,
-        profileVisits: dto.profileVisits ?? null,
-        followers: dto.followers ?? null,
-        attributedSales: dto.attributedSales ?? 0,
-      },
+  /**
+   * Monto PAGADO por campaña (el `amount` del gasto que gestiona, vía
+   * `managedExpenseId`), para que `serialize` lo devuelva. 0 si la campaña no
+   * gestiona ninguno, o si el gasto fue borrado por fuera (id colgado).
+   */
+  private async paidByCampaign(
+    organizationId: string,
+    campaigns: { id: string; managedExpenseId: string | null }[],
+  ): Promise<Map<string, number>> {
+    const ids = campaigns.map((c) => c.managedExpenseId).filter((x): x is string => !!x);
+    if (ids.length === 0) return new Map();
+    const expenses = await this.prisma.expense.findMany({
+      where: { id: { in: ids }, organizationId },
+      select: { id: true, amount: true },
+    });
+    const porId = new Map(expenses.map((e) => [e.id, Number(e.amount)]));
+    const map = new Map<string, number>();
+    for (const c of campaigns) {
+      const amt = c.managedExpenseId ? porId.get(c.managedExpenseId) : undefined;
+      if (amt != null) map.set(c.id, amt);
+    }
+    return map;
+  }
+
+  /**
+   * Sincroniza el gasto de Publicidad que la campaña gestiona con lo PAGADO. Crea,
+   * actualiza o borra UNO solo (por `managedExpenseId`) para no duplicar al editar;
+   * el gastado real sigue derivándose de TODOS los Expense enlazados. Devuelve el
+   * `managedExpenseId` resultante (null si no hay pago). Corre dentro de la transacción.
+   */
+  private async syncManagedExpense(
+    tx: Prisma.TransactionClient,
+    a: {
+      organizationId: string;
+      campaignId: string;
+      name: string;
+      startDate: Date;
+      managedExpenseId: string | null;
+      paidUsd: number;
+    },
+  ): Promise<string | null> {
+    const monto = round(a.paidUsd);
+    const actual = a.managedExpenseId
+      ? await tx.expense.findFirst({ where: { id: a.managedExpenseId, organizationId: a.organizationId } })
+      : null;
+
+    if (monto > 0) {
+      if (actual) {
+        await tx.expense.update({ where: { id: actual.id }, data: { amount: monto, date: a.startDate } });
+        return actual.id;
+      }
+      const creado = await tx.expense.create({
+        data: {
+          organizationId: a.organizationId,
+          date: a.startDate,
+          category: 'ADVERTISING',
+          description: `Campaña: ${a.name}`,
+          amount: monto,
+          isInvestment: false,
+          campaignId: a.campaignId,
+        },
+      });
+      return creado.id;
+    }
+
+    // Sin pago (0/null): se borra el gestionado; esa plata ya no se gastó por acá.
+    if (actual) await tx.expense.delete({ where: { id: actual.id } });
+    return null;
+  }
+
+  async create(organizationId: string, dto: CampaignCreateDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const c = await tx.campaign.create({
+        data: {
+          organizationId,
+          name: dto.name,
+          platform: dto.platform,
+          objective: dto.objective ?? null,
+          status: dto.status,
+          startDate: new Date(dto.startDate),
+          endDate: dto.endDate ? new Date(dto.endDate) : null,
+          budget: dto.budget ?? null,
+          notes: dto.notes ?? null,
+          reach: dto.reach ?? null,
+          conversations: dto.conversations ?? null,
+          profileVisits: dto.profileVisits ?? null,
+          followers: dto.followers ?? null,
+          attributedSales: dto.attributedSales ?? 0,
+        },
+      });
+      if (dto.paidUsd != null && dto.paidUsd > 0) {
+        const managedId = await this.syncManagedExpense(tx, {
+          organizationId,
+          campaignId: c.id,
+          name: c.name,
+          startDate: c.startDate,
+          managedExpenseId: null,
+          paidUsd: dto.paidUsd,
+        });
+        if (managedId) {
+          return tx.campaign.update({ where: { id: c.id }, data: { managedExpenseId: managedId } });
+        }
+      }
+      return c;
     });
   }
 
   async update(organizationId: string, id: string, dto: CampaignUpdateDto) {
     await this.ensureOwned(organizationId, id);
-    return this.prisma.campaign.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.platform !== undefined && { platform: dto.platform }),
-        ...(dto.objective !== undefined && { objective: dto.objective ?? null }),
-        ...(dto.status !== undefined && { status: dto.status }),
-        ...(dto.startDate !== undefined && { startDate: new Date(dto.startDate) }),
-        ...(dto.endDate !== undefined && { endDate: dto.endDate ? new Date(dto.endDate) : null }),
-        ...(dto.budget !== undefined && { budget: dto.budget ?? null }),
-        ...(dto.notes !== undefined && { notes: dto.notes ?? null }),
-        ...(dto.reach !== undefined && { reach: dto.reach ?? null }),
-        ...(dto.conversations !== undefined && { conversations: dto.conversations ?? null }),
-        ...(dto.profileVisits !== undefined && { profileVisits: dto.profileVisits ?? null }),
-        ...(dto.followers !== undefined && { followers: dto.followers ?? null }),
-        ...(dto.attributedSales !== undefined && { attributedSales: dto.attributedSales ?? 0 }),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const c = await tx.campaign.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.platform !== undefined && { platform: dto.platform }),
+          ...(dto.objective !== undefined && { objective: dto.objective ?? null }),
+          ...(dto.status !== undefined && { status: dto.status }),
+          ...(dto.startDate !== undefined && { startDate: new Date(dto.startDate) }),
+          ...(dto.endDate !== undefined && { endDate: dto.endDate ? new Date(dto.endDate) : null }),
+          ...(dto.budget !== undefined && { budget: dto.budget ?? null }),
+          ...(dto.notes !== undefined && { notes: dto.notes ?? null }),
+          ...(dto.reach !== undefined && { reach: dto.reach ?? null }),
+          ...(dto.conversations !== undefined && { conversations: dto.conversations ?? null }),
+          ...(dto.profileVisits !== undefined && { profileVisits: dto.profileVisits ?? null }),
+          ...(dto.followers !== undefined && { followers: dto.followers ?? null }),
+          ...(dto.attributedSales !== undefined && { attributedSales: dto.attributedSales ?? 0 }),
+        },
+      });
+      // Si vino `paidUsd` (incluido 0/null para borrar), se sincroniza el gasto
+      // gestionado. Ausente = no se toca lo que la campaña ya tuviera.
+      if (dto.paidUsd !== undefined) {
+        const managedId = await this.syncManagedExpense(tx, {
+          organizationId,
+          campaignId: c.id,
+          name: c.name,
+          startDate: c.startDate,
+          managedExpenseId: c.managedExpenseId,
+          paidUsd: dto.paidUsd ?? 0,
+        });
+        if (managedId !== c.managedExpenseId) {
+          return tx.campaign.update({ where: { id }, data: { managedExpenseId: managedId } });
+        }
+      }
+      return c;
     });
   }
 
@@ -443,7 +549,7 @@ function serialize(c: {
   followers: number | null;
   attributedSales?: Prisma.Decimal | number | null;
   createdAt: Date;
-}) {
+}, paidUsd = 0) {
   return {
     id: c.id,
     name: c.name,
@@ -453,6 +559,10 @@ function serialize(c: {
     startDate: c.startDate.toISOString(),
     endDate: c.endDate ? c.endDate.toISOString() : null,
     budget: c.budget != null ? Number(c.budget) : null,
+    // Lo que se PAGÓ (USD), derivado del gasto de Publicidad que gestiona la
+    // campaña (0 si no hay). A diferencia de `budget` (estimado), esto cuenta
+    // como invertido. El form lo usa para prellenar "lo que pagué" al editar.
+    paidUsd,
     notes: c.notes,
     // Lo que reporta la plataforma de anuncios: sin esto, una campaña que
     // todavía no vendió solo se puede juzgar por ROAS, que da cero.
