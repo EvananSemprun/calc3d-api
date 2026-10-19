@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# GUARDA RÁPIDA DE SECRETOS. Corre en CADA commit, así que tiene que ser
+# instantánea: lo que tarda va en `pre-push`. Un hook lento no se arregla, se
+# saltea con `--no-verify`, y ahí deja de proteger nada.
+#
+# Bloquea dos cosas:
+#   1. Un `.env` real entrando al índice.
+#   2. Credenciales pegadas dentro de un archivo versionado.
+#
+# ⚠️ `--diff-filter=ACM` es a propósito: deja pasar los BORRADOS (`D`). Sacar un
+# `.env` del índice con `git rm --cached` produce una `D`, y es justamente la
+# operación que uno quiere hacer cuando descubre uno trackeado — si el hook la
+# bloqueara, habría que usar `--no-verify` para limpiar un secreto.
+#
+# ⚠️ `.env.example` / `.sample` / `.template` SÍ se versionan: son el contrato
+# de qué variables existen, sin valores.
+
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+malo=0
+
+# ---- 1. Archivos .env de verdad ----------------------------------------
+for f in $staged; do
+  base=$(basename "$f")
+  case "$base" in
+    *.example|*.sample|*.template) continue ;;
+  esac
+  case "$base" in
+    .env|.env.*)
+      echo "✖ $f es un archivo de entorno y NO se versiona, nunca, en ningún repo."
+      echo "  Sacalo del índice:  git rm --cached \"$f\""
+      echo "  (no borra el archivo del disco: tu app local sigue andando)"
+      malo=1
+      ;;
+  esac
+done
+
+# ---- 2. Credenciales pegadas en el contenido ---------------------------
+# Solo patrones que casi nunca aparecen por casualidad. Un hook con falsos
+# positivos entrena el bypass, que es peor que no tenerlo.
+patrones='postgres(ql)?://[^[:space:]:]+:[^[:space:]@]+@|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+for f in $staged; do
+  case "$(basename "$f")" in
+    *.example|*.sample|*.template) continue ;;
+  esac
+  # Solo las líneas AGREGADAS: lo que ya estaba es harina de otro costal
+  # (y si hay un secreto viejo, hay que ROTARLO, no bloquear este commit).
+  # ⚠️ `grep -Ev` y NO `grep -v`: en expresiones BÁSICAS `\+` significa "uno o
+  # más", así que `'^\+\+\+'` filtraba TODAS las líneas agregadas y no solo la
+  # cabecera del diff. El guard miraba un conjunto vacío y dejaba pasar todo.
+  # Lo destapó probarlo con una credencial de mentira, no leerlo.
+  if git diff --cached -U0 -- "$f" | grep -E '^\+' | grep -Ev '^\+\+\+' |
+     grep -Eq "$patrones"; then
+    echo "✖ $f agrega algo que parece una credencial real."
+    echo "  Si es un ejemplo, usá un valor obviamente falso."
+    echo "  Si es real y ya se pusheó alguna vez: hay que ROTARLA — sacarla"
+    echo "  del código no la borra del historial."
+    malo=1
+  fi
+done
+
+if [ "$malo" -ne 0 ]; then
+  echo ""
+  echo "Commit detenido. No uses --no-verify para esto."
+  exit 1
+fi
+
+exit 0

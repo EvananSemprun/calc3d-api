@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# LOS TESTS, ANTES DE DESPLEGAR.
+#
+# ⚠️ **En este repo un `git push` a `main` ES un despliegue**: Render redespliega
+# solo y el contenedor corre `prisma migrate deploy` al arrancar. Entre el push y
+# producción no hay ningún paso humano. Por eso los tests van acá y no "después".
+#
+# El reparto es por VELOCIDAD, y es deliberado: el `pre-commit` es instantáneo
+# (solo mira secretos) y lo que tarda vive acá. Un push tolera 30-60 s; un commit
+# no. Correr la suite en cada commit es lo que entrena el `--no-verify`.
+#
+# Medido el 2026-10-19: shared 7 s + api 16 s = **~23 s**.
+#
+# ⚠️ Se corre la suite COMPLETA y no solo la de seguridad. La regla general del
+# proyecto dice "solo la de seguridad" porque una suite completa suele tener
+# specs de andamiaje rojos que bloquearían todo; acá **está verde** (shared 831,
+# api 779) y entra en el presupuesto, así que no hay motivo para proteger menos.
+# Si algún día la completa se pone crónicamente roja, lo que hay que arreglar es
+# la suite — recortar el hook es tratar el síntoma.
+
+set -e
+
+# Borrar una rama remota (`git push origin :rama`) no publica código.
+leer_refs() {
+  while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+    return 0
+  done
+  return 1
+}
+leer_refs || exit 0
+
+echo "→ pre-push: corriendo los tests antes de desplegar…"
+
+if ! pnpm --filter @calc3d/shared exec jest --silent; then
+  echo ""
+  echo "✖ El motor de cálculo (packages/shared) está en rojo."
+  echo "  Un push a main despliega: arreglalo antes, no lo saltees."
+  exit 1
+fi
+
+if ! pnpm --filter @calc3d/api exec jest --passWithNoTests --silent; then
+  echo ""
+  echo "✖ La API está en roja."
+  echo "  Un push a main despliega y aplica migraciones: arreglalo antes."
+  exit 1
+fi
+
+echo "✓ Tests en verde. Publicando."
+exit 0
