@@ -2177,6 +2177,42 @@ inestable enseña a volver a correrla hasta que pase, y el día que el rojo sea 
 verdad nadie le va a creer. Al arreglar una, no alcanza con una corrida verde:
 **correr la suite entera 5 veces seguidas**.
 
+### Los hooks de git (desde el 2026-10-19)
+
+Están **versionados** en `.githooks/` de cada repo activo, así que viajan con el
+código. ⚠️ **Hay que activarlos UNA vez por clon** (git no lo hace solo):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+| Hook | Qué hace | Cuánto tarda |
+|---|---|---|
+| `pre-commit` | bloquea un `.env` entrando al índice y credenciales pegadas | instantáneo |
+| `pre-push` | corre la suite completa del repo | api ~23 s · panel ~37 s · tienda ~2 s |
+
+El reparto es **por velocidad**, y es lo que decide si un hook se usa o se
+saltea: un push tolera 30-60 s, un commit no. Correr los tests en cada commit es
+exactamente lo que entrena el `--no-verify`.
+
+⚠️ **Corre la suite COMPLETA y no solo la de seguridad.** La regla general dice
+"solo la de seguridad" porque una suite completa suele tener specs de andamiaje
+rojos que bloquearían todo; acá está verde y entra en el presupuesto. Si algún
+día se pone crónicamente roja, lo que hay que arreglar es **la suite**.
+
+⚠️ **El `pre-commit` deja pasar los BORRADOS a propósito** (`--diff-filter=ACM`).
+Sacar un `.env` del índice con `git rm --cached` produce una `D`, y es justo la
+operación que hay que poder hacer para limpiar un secreto: si el hook la
+bloqueara, habría que usar `--no-verify` para arreglarlo.
+
+> ⚠️ **El guard de secretos nació ROTO, y lo destapó PROBARLO, no leerlo.** Usaba
+> `grep -v '^\+\+\+'` para saltear la cabecera del diff; en expresiones
+> **básicas** `\+` significa "uno o más", así que filtraba **todas** las líneas
+> agregadas. El guard miraba un conjunto vacío y dejó pasar una URL de Postgres
+> con usuario y contraseña. **Un hook que nunca se vio fallar no protege nada**:
+> al montar uno, probá las cuatro rutas (lo que debe bloquear, lo que debe dejar
+> pasar, y las dos de cada clase).
+
 ### Antes de dar algo por terminado
 
 ```
