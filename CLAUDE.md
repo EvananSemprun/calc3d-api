@@ -274,6 +274,135 @@ en el repo web: se sobrescribe al sincronizar.
     - `AttributionChannel` ganó el valor **`STORE`**: sin él los pedidos del
       catálogo caían como "Sin atribuir" y quedaban fuera del ROI por campaña.
     - Regresión (18 tests): `store-requests/store-requests.service.spec.ts`.
+  - **LA SEMANA DE LA TIENDA (2026-10-12 → 2026-10-16, shared 0.53.0 → 0.58.0)**
+    — banners, Flash Sale, precios por cantidad, foto por color y
+    personalización del cliente, más dos arreglos de dinero. Documentado el
+    2026-10-19 **leyendo los commits**: se construyó sin tocar este archivo, así
+    que lo de abajo se reconstruyó del código y de sus mensajes. Specs:
+    `2026-10-12-tienda-rediseno-banano-design.md`,
+    `2026-10-14-tienda-precios-por-cantidad-y-foto-por-color-design.md`,
+    `2026-10-14-tienda-personalizacion-cliente-design.md` y
+    `2026-10-14-reposicion-ingresos-cobrados-design.md`.
+    - **Banners (shared 0.53.0, migración `store_banners`)** — `StoreBanner`,
+      CRUD en el panel + `GET /public/store/banners` con la lista blanca de
+      campos armada a mano, como el resto de `store-public/`.
+      - ⚠️ **Un destino colgado DEGRADA a `NONE`, no publica un enlace muerto.**
+        El banner apunta a una categoría o a una ficha; si después se borra o se
+        oculta, el "Ver más" llevaba a un 404. Ahora el endpoint público lo
+        degrada. Es la misma familia que "una opción que la ficha no tiene se
+        RECHAZA, no se ignora": el dato roto se resuelve en el borde, no se
+        publica.
+      - ⚠️ **El destino se valida ANTES de subir la imagen** (`17ec7bd`, en el
+        panel): al revés, un destino inválido dejaba el objeto huérfano en R2.
+    - **Flash Sale (shared 0.54.0)** — tres columnas en `Settings`
+      (`saleTitle`, `saleStartsAt`, `saleEndsAt`) + `GET /public/store/sale`.
+      - ⚠️ **`activeSale(settings, now)` es la ÚNICA definición de "oferta
+        vigente"** (`store-public/active-sale.ts`), con **bordes inclusivos** y
+        `now` **como parámetro**, no leído del reloj adentro — la misma
+        convención que `cashChainCuts`, `facturasAtrasadas` y
+        `lecturaDeHorasPendiente`.
+      - Sin las DOS fechas no hay oferta: una ventana a medias es `null`, no una
+        oferta que empieza y no termina. El título sí puede faltar.
+      - ⚠️ **LA OFERTA NO COBRA MENOS: solo tacha** (decisión del 2026-10-12,
+        §10 del spec del rediseño). `priceItems()` **no la mira** — verificado
+        leyendo el servicio, no suponiéndolo—, así que lo que se cobra no
+        cambia. Si algún día descontara de verdad, hay que decidir cómo convive
+        con los tramos de cantidad y con `compareAtUsd`.
+      - ⚠️ **Y la ventana manda SOLO la sección de la home.** El precio tachado
+        del catálogo y de la ficha sale de **`compareAtUsd`** y es
+        independiente: existe con la ventana cerrada. Son dos cosas que se ven
+        parecidas y se encienden por caminos distintos — confundirlas lleva a
+        "apagué la oferta y los precios siguen tachados", que no es un bug.
+    - **Precios por cantidad (shared 0.55.0, migración `store_price_tiers`)** —
+      `StoreProduct.priceTiers` (`[{minQty, discountPct}]`), expuesto en la
+      ficha pública y aplicado por **`precioConTramos(baseUnit, qty, tiers)`**
+      (`shared/calc/store-pricing.ts`).
+      - ⚠️ **El descuento lo aplica el SERVIDOR**, en `priceItems()`. Es la misma
+        regla que sostiene toda la bandeja: el cuerpo trae `{slug, qty,
+        options}` y nada más. Un tramo aplicado en el navegador sería un precio
+        del cliente.
+      - Gana el **mayor tramo cuyo `minQty <= qty`**; sin ninguno aplicable,
+        el unitario entra sin tocar. El descuento va **sobre el unitario YA con
+        los recargos de opción**, y **no toca** `compareAtUsd` ni la Flash Sale.
+      - ⚠️ **Es otra cosa que el mayoreo del motor de cálculo**
+        (`calc/wholesale.ts`): aquel sugiere tramos respetando el piso de margen
+        y vive en la calculadora; este es lo que la TIENDA cobra. Comparten la
+        idea y no el código, a propósito.
+    - **Foto por color (shared 0.56.0, migraciones `option_group_drives_photo`
+      y `store_image_option`)** — `StoreOptionGroup.drivesPhoto` + 
+      `StoreImage.optionId`: elegir un color cambia la foto de la ficha.
+      - ⚠️ **El `update` del producto pasó a hacer DIFF POR ID** (crear /
+        actualizar / borrar) en vez de borrar y recrear los grupos. Con el
+        borrado y recreado, **editar cualquier cosa del producto borraba las
+        fotos enlazadas a sus opciones** (caen en cascada): el usuario tocaba el
+        nombre y perdía las fotos por color sin que nada fallara. Por eso las
+        opciones necesitaron **ids estables**.
+      - ⚠️ **Un solo grupo puede tener `drivesPhoto`**, y lo rechazan `create` y
+        `update`: con dos, elegir color y elegir tamaño pelearían por la misma
+        foto y el resultado dependería del orden.
+      - ⚠️ **La galería base son las imágenes con `optionId` null.** Sin esa
+        distinción, las fotos de opción se duplicaban en la galería.
+      - ⚠️ **Al borrar una opción o un grupo, se borra su foto de R2**
+        (`syncOptionGroups` junta las claves que caen en cascada y `update()`
+        las borra **después del commit**, mejor esfuerzo, como `removeImage`).
+        El borrado por diff dejaba el objeto huérfano en el bucket.
+      - `confirmImage` acepta `optionId` y **valida que esa opción sea de un
+        grupo `drivesPhoto` de ESTE producto**: si no, se podría colgar una foto
+        de la opción de otra ficha.
+    - **Personalización del cliente: foto + nota (shared 0.57.0)** — un ítem del
+      pedido público puede llevar `customNote` y `customImageKey`.
+      - ⚠️ **Es la SEGUNDA escritura sin sesión del sistema**, y encima acepta un
+        archivo. `POST /public/store/uploads/custom-url` devuelve una URL
+        firmada **acotada en tipo y tamaño**, con la clave generada por el
+        servidor bajo `custom-uploads/`, y hereda el rate-limit **estricto**
+        (5/min) del controller público. Sin R2 configurado responde **503** en
+        vez de ofrecer una subida que va a fallar.
+      - ⚠️ **La foto se VERIFICA al confirmar el pedido**, no se cree: la clave
+        tiene que tener el prefijo y el objeto tiene que existir con el tipo y
+        el tamaño declarados (`HeadObject`). Es el mismo doble paso que las
+        fotos del panel.
+      - ⚠️ **Personalizar un producto que NO es `custom` se RECHAZA.** Sin eso,
+        cualquiera adjuntaba una imagen a cualquier ficha.
+      - ⚠️ **La bandeja expone `customImageUrl`, NUNCA la clave**: la clave es
+        interna del bucket y con ella se podría construir una ruta a objetos de
+        otra organización.
+      - ⚠️ **La nota se suma a la DESCRIPCIÓN al confirmar** (`toOrderLines`),
+        igual que las opciones: el pedido y la nota de entrega solo muestran ese
+        campo, así que dejarla aparte era producir sin saber qué pidió.
+      - Descartar o borrar una solicitud **limpia las fotos de R2** (mejor
+        esfuerzo). `GET /public/store/info` expone **`storageReady`** para que la
+        tienda esconda el cargador cuando R2 no está configurado.
+    - ⚠️ **REPOSICIÓN DE EQUIPOS: el ingreso es lo COBRADO, no lo facturado**
+      (`9437878`, arreglo de dinero). `recovery()` sumaba ventas + el total de
+      **TODOS** los pedidos, incluidos los **cotizados y los cancelados**: eso es
+      plata que no entró. Ahora es **ventas + abonos (`Payment`)**, la misma
+      definición que el "Resultado de la operación" del Dashboard, así las dos
+      tarjetas de la misma pantalla coinciden. Test con número clavado y su
+      contrafáctico (**135** contra los 170 de antes).
+      - Es la **cuarta vez** que el mismo error aparece con otra cara: dos
+        pantallas contando el mismo dinero por caminos distintos. Ver "Vendido
+        de una campaña", "la dona Mostrador vs encargo" y "Caja y Deuda cuentan
+        lo mismo".
+    - **Campañas: "Lo que pagué" (shared 0.58.0, migración
+      `campana_gasto_gestionado`)** — `Campaign.paidUsd` crea, actualiza o borra
+      **UN** `Expense` de Publicidad enlazado (`Campaign.managedExpenseId`).
+      - ⚠️ **El gastado real se sigue DERIVANDO de TODOS los `Expense`
+        enlazados**, como desde el día uno. Lo nuevo es solo una puerta cómoda
+        para cargar el pago desde la campaña; no es una segunda fuente.
+      - ⚠️ **`managedExpenseId` existe para que editar NO duplique.** Sin él,
+        cada guardado de la campaña habría creado otro gasto de Publicidad y la
+        inversión se habría inflado sola. Poner el pago en 0 o en null **borra**
+        ese gasto; editar la campaña sin tocar el pago lo deja como estaba.
+      - Todo corre **dentro de la transacción** de crear/editar la campaña: un
+        gasto creado con la campaña a medias quedaría huérfano.
+      - Regresión: `campaigns.service.spec.ts` (crear / editar / borrar, que no
+        se duplique al editar, y que editar sin tocar el pagado no lo mueva).
+    - **En el panel**, de la misma tanda: pantalla de banners, control de Flash
+      Sale, editor de tramos en la ficha, subida de foto por color, la bandeja
+      mostrando nota y foto, atribuir un encargo a una campaña desde su detalle,
+      y dos arreglos de UI — el **`Select` que en móvil se cerraba solo al abrir
+      el teclado** (no autofoco en táctil + ignora el cierre por `resize`) y el
+      botón **Editar** del detalle de campaña, que no existía en móvil.
   - **Autenticación y seguridad de cuentas** — `auth/` + `mail/mail.module.ts`:
     - **Login del dueño** (`POST /auth/login`): **no hay registro público**; la cuenta
       se crea con el `seed` (ver Comandos). Roles OWNER/COLLABORATOR se conservan en el
