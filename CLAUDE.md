@@ -2070,6 +2070,223 @@ en el repo web: se sobrescribe al sincronizar.
   scripts `sincronizar-*.mjs` leen `DATABASE_URL` del `.env` (la LOCAL): correrlos
   contra prod es tocar producción (backup + OK explícito antes).
 
+## Cómo se prueba acá (método, no lista de deseos)
+
+Escrito el 2026-10-19 a partir de lo que de verdad encontró y de verdad falló en
+este proyecto. **Cada regla de abajo tiene un caso real detrás**; no están por
+prolijidad.
+
+### Las tres capas, y por qué ninguna sobra
+
+| Capa | Dónde | Qué protege |
+|---|---|---|
+| **Función pura** | `packages/shared/src/calc/*.spec.ts` | la regla: los bordes, los ceros, las fechas imposibles |
+| **Cableado** | `apps/web/src/**/*.spec.tsx` (jsdom) | que la pantalla la LLAME y DIBUJE lo que devuelve |
+| **Servicio** | `apps/api/src/**/*.spec.ts` | que el endpoint traiga los datos y aplique las guardas |
+
+⚠️ **La capa pura NO alcanza, y está medido.** Borrar del JSX la línea que
+dibuja el pie del KPI de Gastos tumba **8 tests de pantalla y CERO de función
+pura**; borrar la nota de la fila de Compras tumba **9 y cero**. Con las nueve
+ramas de la función cubiertas, nadie se enteraba. Si un cambio se ve en una
+pantalla, tiene un `.spec.tsx` o no está probado.
+
+### La prueba de que un test sirve: romperlo a propósito
+
+Un test que no falla cuando rompés lo que dice probar **no prueba nada**, y en
+este repo eso pasó muchas veces. Después de escribir un test:
+
+1. Rompé la lógica a propósito (invertí una condición, borrá una guarda, sacá
+   la línea del JSX).
+2. Mirá **cuántos** tests caen.
+3. Restaurá **desde una copia hecha con `cp`**. ⚠️ **Nunca con
+   `git checkout --`**: borra todo el trabajo sin commitear.
+
+⚠️ **La mutación tiene que COMPILAR.** Si al romper algo el resultado es
+«0 tests» o «NO COMPILA», no mediste nada: eso es un verde falso. Pasó el
+2026-10-11 al mutar `QUEDA_PLATA` —la constante quedaba sin usar, TypeScript se
+quejaba y la suite ni arrancaba—. La forma segura es `(false as boolean) && …`
+o `X - X`, que compilan y sí cambian el comportamiento.
+
+⚠️ **Si una mutación tumba MENOS de lo que esperabas, sospechá del código antes
+que del test.** Así se encontraron ~8 guardas muertas y un `Map` de agrupación
+que no hacía nada (`Σ monto × (saldo ÷ total)` da lo mismo agrupado que suelto).
+**Código muerto donde se decide plata es peor que no tenerlo: parece una
+guarda.**
+
+⚠️ **Y la mutación en sí puede estar mal hecha.** El 2026-10-12, una mutación
+insertó `if (false) continue;` *antes* del `continue` de verdad: no mutaba nada
+y el resultado («nadie la caza») era mentira. Si una mutación da 0, revisá
+primero que de verdad cambie el comportamiento.
+
+### Medir, no suponer — y creerle a la foto
+
+Tres veces en dos días la medición por código dijo lo contrario de la realidad:
+
+- **`getComputedStyle` durante una transición devuelve el valor viejo.** Decía
+  que la casilla seguía en colores claros estando en tema oscuro; la captura
+  mostraba el anillo dorado perfecto. **Le creímos a la captura.**
+- **`.focus()` entra igual en un elemento con `tabIndex={-1}`**, al que nadie
+  llega con Tab. Un test que solo hace `.focus()` no prueba "se llega por
+  teclado": hay que comprobar `tabIndex >= 0`.
+- **`NumberTicker` sin compositar congela la animación** y los cuatro KPIs se
+  leen bajos en la misma proporción (mostró $43.93 donde había $217.00). Al
+  medir números renderizados, **traer la pestaña al frente**.
+
+Y al revés: antes de "mejorar" algo, medilo. El anillo de foco del Checkbox
+parecía flojo; medido contra su color adyacente real daba **7.78** sobre un
+mínimo de 3.0, y las dos alternativas lo **empeoraban** a 4.72 y 4.20. **No se
+tocó, y los números quedaron escritos** para que nadie repita la medición.
+
+Lo mismo con los umbrales: `DIAS_ENTREGA_PROXIMA = 3` salió de medir el plazo
+real entre cargar y entregar un encargo (4-5 días). **Un número en un `if` sin
+de dónde salió es una opinión disfrazada de regla.**
+
+### Que una AUSENCIA signifique algo
+
+Un `queryByText(...)` corrido antes de que llegue la respuesta no encuentra el
+aviso **porque todavía no hay datos**, no porque la regla lo apague: el test
+pasa sin probar nada. Lo destapó una mutación (borrar la guarda de "ningún mes
+cerrado todavía" no tumbaba un solo test de pantalla).
+
+El patrón que lo arregla es la **"puerta"** de `Dashboard.avisos.spec.tsx`: las
+respuestas quedan bloqueadas hasta que el test las suelta, y recién entonces se
+mide. Si tu test afirma que algo **no** está, necesita la puerta.
+
+### Los dos topes anidados de los tests de pantalla (2026-10-19)
+
+⚠️ **Hay DOS límites de tiempo y hay que mover los dos, con interior < exterior:**
+
+| | Dónde | Hoy |
+|---|---|---|
+| interior: cuánto espera un `findBy*` | `asyncUtilTimeout` en `apps/web/src/test/setup-dom.ts` | 5 s |
+| exterior: cuánto dura el test | `testTimeout` del proyecto `dom` en `vitest.config.ts` | 20 s |
+
+Romper la regla deja la suite rota de dos maneras distintas, y **las dos se
+vieron**: con el interior en 1 s (el default) los tests fallaban **al azar** con
+"no encuentro el elemento"; subiendo solo el interior a 5 s —con el exterior
+también en 5— pasaron a fallar **siempre tres** con "Test timed out". El primer
+arreglo que se intentó fue subir solo el exterior y **no movió la aguja**.
+
+> **La lección general: cuando un arreglo "obvio" no cambia nada, el problema es
+> el diagnóstico.** El mensaje lo decía desde el principio — no era "se agotó el
+> tiempo del test" sino *"Unable to find an element with the display value"*, o
+> sea que la página había dibujado el cascarón y los datos no habían llegado.
+
+⚠️ **Una suite inestable es PEOR que una roja.** Una roja se arregla; una
+inestable enseña a volver a correrla hasta que pase, y el día que el rojo sea de
+verdad nadie le va a creer. Al arreglar una, no alcanza con una corrida verde:
+**correr la suite entera 5 veces seguidas**.
+
+### Antes de dar algo por terminado
+
+```
+pnpm -r test          # LEYENDO la salida: si el total BAJA sin que falle nada,
+pnpm -r lint          # una suite no compiló. Es un verde falso.
+pnpm exec tsc --noEmit
+pnpm -r build
+```
+
+Más la pasada manual: API en **3001** y panel en **5180** (único origen que la
+API acepta por CORS), levantados con `preview_start`, **nunca** con Bash.
+
+⚠️ Si el cambio tocó **dinero, auth, DTOs de entrada o endpoints públicos**, la
+suite de seguridad tiene que quedar verde antes de terminar.
+
+⚠️ **Si el caso no existe en los datos reales, decilo.** Tres de las cuatro
+procedencias de un abono y las cuatro categorías de avisos de encargos tienen
+**cero casos en producción**: no hay pantalla donde ir a mirarlos, así que los
+tests son la única evidencia de que funcionan. Eso va escrito en el spec, para
+que quien los toque sepa que no tiene red.
+
+---
+
+## Respaldar, migrar y revisar producción
+
+⚠️ **Un `git push` a `main` ES un despliegue.** El `Dockerfile` corre
+`prisma migrate deploy` al arrancar el contenedor: el push aplica solo todas las
+migraciones pendientes contra Railway. **Por eso el respaldo va antes del push**,
+no antes de un `migrate deploy` manual — para cuando alguien fuera a correrlo a
+mano, el deploy ya lo disparó.
+
+### 1. Respaldo, antes del push
+
+`pg_dump` está en `C:\Program Files\PostgreSQL\18\bin\` (fuera del PATH). La URL
+de producción vive como `DATABASE_URL_PROD` en `apps/api/.env.production.local`,
+que **no se versiona y no se carga solo**.
+
+```bash
+"/c/Program Files/PostgreSQL/18/bin/pg_dump.exe" -Fc --no-owner --no-privileges \
+  "$DATABASE_URL_PROD" -f "respaldo-$(date +%Y%m%d-%H%M).dump"
+```
+
+Se restaura con `pg_restore --single-transaction --exit-on-error`. Así se cargó
+Railway el 01/10 desde la local (18 → 17, compatible).
+
+### 2. Migrar
+
+- **Siempre contra la local primero.** Nada de apuntar a producción "para probar
+  rápido".
+- No-interactivo: `prisma migrate diff ... --script` + `prisma migrate deploy`.
+  Usar `pnpm exec prisma`, nunca `npx`.
+- ⚠️ **Prohibido contra producción**: `migrate dev`, `migrate reset`,
+  `db push --accept-data-loss` y `SEED_DEMO=1 pnpm seed`.
+- ⚠️ **Una migración no puede depender de que alguien corra un script entre
+  medias.** `migrate deploy` aplica TODAS las pendientes seguidas: una que
+  agrega una columna nullable y otra posterior que la endurece con `SET NOT NULL`
+  corren juntas, la segunda falla con *"la columna contiene valores null"*, el
+  contenedor no arranca y la API queda caída.
+- **Avisar al dueño y esperar OK explícito** antes de tocar la base de
+  producción, aunque parezca trivial.
+
+### 3. Orden del despliegue
+
+⚠️ **Si cambia la FORMA de la respuesta de la API, se despliega la API PRIMERO**
+y se espera a que Render la levante antes de pushear el panel. Cloudflare
+publica en ~1 minuto y Render tarda varios: soltando los dos a la vez, el panel
+nuevo le pregunta a la API vieja por un campo que todavía no existe. Al revés es
+inofensivo.
+
+Si el cambio no toca el contrato (un refactor interno, algo solo del panel), el
+orden da igual — pero decilo, no lo asumas.
+
+### 4. Revisar producción al final
+
+**Verificar por CONTENIDO, no por nombre de archivo.** Dos veces se dio por no
+desplegado algo que sí estaba:
+
+```bash
+# API: ¿sirve el commit que acabo de pushear?
+curl -s https://calc3d-api.onrender.com/api/health
+# → {"ok":true,"version":"0.58.0","commit":"4f83ff1"}
+
+# Panel: el bundle se compila en Cloudflare, así que su HASH NO tiene por qué
+# coincidir con el del build local. Comparar hashes da falsos negativos.
+IDX=$(curl -s https://calc3d-web.pages.dev/ | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1)
+# ⚠️ Y el Dashboard va en su PROPIO chunk: buscar el texto nuevo en el index
+# principal no lo encuentra aunque esté desplegado.
+DASH=$(curl -s "https://calc3d-web.pages.dev/$IDX" | grep -oE 'Dashboard-[A-Za-z0-9_-]+\.js' | head -1)
+curl -s "https://calc3d-web.pages.dev/assets/$DASH" | grep -c "un texto nuevo del cambio"
+```
+
+**Y las migraciones aplicadas**, que es lo que el `/health` no dice:
+
+```sql
+SELECT migration_name, finished_at, rolled_back_at
+  FROM "_prisma_migrations" ORDER BY started_at DESC LIMIT 10;
+```
+
+`finished_at` nulo = **migración a medias**: el contenedor no arrancó.
+Verificado el 2026-10-19: 60 aplicadas, 0 con problema.
+
+⚠️ **Render puede tardar o no tomar el commit.** El 2026-10-12 quedó 30 minutos
+sirviendo el anterior con el commit ya en GitHub; el servicio respondía bien, no
+se había perdido nada. Si pasa: mirar el log en el panel de Render (build
+encolado o fallido) y, si solo estaba encolado, «Manual Deploy → Deploy latest
+commit». **Eso no lo puede resolver nadie desde la consola: necesita al dueño.**
+
+⚠️ **Los datos de prueba que se crearon para verificar se borran al terminar**,
+contando antes y después para dejarlo demostrado.
+
 ## Base de datos: local para desarrollar, Railway en producción
 
 **1. Desarrollar y probar SIEMPRE contra la base local.**
