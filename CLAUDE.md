@@ -665,6 +665,50 @@ en el repo web: se sobrescribe al sincronizar.
         que no hay más gemelas de esta clase. Los abonos de compra ya se
         excluían (en el `where`, con su factura) y las conciliaciones por
         `status`.
+  - ⚠️ **QUIÉN PAGÓ LOS GASTOS VIEJOS ES UN DEFAULT, NO UN DATO (auditoría del
+    2026-10-19).** Repasados los 95 gastos de producción uno por uno. De los 77
+    sin contraparte:
+    - **1 ($25) nació de una FACTURA**: ahí `null` es **correcto** — el pagador
+      es el de los abonos, no el del gasto. No se toca.
+    - **5 ($110) se cargaron a mano** y están bien: los cuatro rollos del 09/10
+      son de **la misma tanda** en la que el dueño SÍ marcó otros dos como
+      suyos. Marcar dos de siete es una distinción deliberada, no un olvido.
+    - **71 ($1.817,32) vienen del Excel, y nadie decidió nada sobre ellos.** La
+      columna `paidBy` se creó el 2026-09-26 con
+      `ADD COLUMN "paidBy" "PaidBy" NOT NULL DEFAULT 'BUSINESS'`: **todo gasto
+      que ya existía quedó marcado como "lo pagó el negocio" automáticamente**.
+      La migración a contrapartes tradujo `BUSINESS → null` fielmente, así que
+      hoy ese `null` **parece** una decisión y es un valor por defecto.
+    - El grueso es la **carga inicial de filamento del 31/08: 55 compras,
+      $1.554**. Si fuera del bolsillo del dueño, el saldo pasaría de $286,53 a
+      $1.840,53 y la deuda con él de $1.233,50 a $2.787,50 — más del quíntuple
+      del saldo que la app muestra hoy.
+    - ⚠️ **DECISIÓN DEL DUEÑO (2026-10-19): se queda como está.** No se acuerda,
+      y el dato no existe en ningún lado: ni en la base, ni en el Excel, ni en
+      el script que lo cargó (`sincronizar-hojas.mjs`, **nunca versionado** —
+      lleva nombres de clientes— y borrado el 2026-10-04 con su lista
+      `PAGADO_POR_VANAN`). **Mejor un desfase conocido que un número
+      inventado.** Lo mismo para los $122 de mantenimiento y los $103 de
+      publicidad del mismo período y el mismo default.
+    - **Si algún día aparece un comprobante**, lo que hay que cambiar es
+      `Expense.counterpartyId` (+ `refundable`): el gasto pasa a emitir dos
+      asientos que se anulan en el saldo y dejan la deuda. Respaldo con
+      `pg_dump` y ensayo antes, como se hizo con el de diseño.
+    - ✅ **Lo que SÍ se corrigió ese día**: el pago al diseñador del 07/10 ($32)
+      era el único gasto de diseño sin contraparte **contra diez hermanos que
+      sí la tenían** — ese contraste es lo que lo delató, y el dueño confirmó
+      que lo puso él. Saldo $254,53 → **$286,53**; deuda $1.201,50 →
+      **$1.233,50**. El script eligió la contraparte **de los hermanos**, no por
+      nombre, y se habría detenido si hubieran estado repartidos entre dos.
+    - ⚠️ **Y una afirmación que llegó de afuera y era FALSA**: que
+      `/printers/recovery` (0 %) y la fila "Equipos" de Caja ($504,33 recuperado)
+      sean "dos endpoints leyendo lo mismo". **No lo son.** Reposición pregunta
+      *cuánto de la máquina devolvió el negocio con su GANANCIA*
+      (ingresos $2.793,18 − gastos operativos $2.775,15 = **$18,03**); la fila
+      de Caja pregunta *cuánto de lo que puso el dueño YA SE LE DEVOLVIÓ*
+      (2 `DebtApplication` = **$504,33**, la línea "Devoluciones a Evanan").
+      Las dos son ciertas a la vez: **devolverle plata no es ganarla**.
+      "Unificarlas" rompería uno de dos números correctos.
   - **El saldo HASTA una fecha (2026-10-10, shared 0.35.0)** —
     `GET /cash/balance?at=AAAA-MM-DD` devuelve `{ at, balance: BusinessCash }`
     con el mismo corte que ya usaba el esperado de una conciliación
