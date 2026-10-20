@@ -977,3 +977,138 @@ describe('ExpensesService — la factura de la que nació cada gasto', () => {
     expect(prisma.expense.findMany.mock.calls[0][0].include.purchaseInvoiceLine).toBeDefined();
   });
 });
+
+/**
+ * RECARGA (sin carrete) o rollo CON CARRETE, por COMPRA.
+ *
+ * ⚠️ Lo que estos tests protegen son los **TRES valores**: `true` recarga,
+ * `false` con carrete y `null` *no se registró*. La lección es del 2026-10-19,
+ * cuando se descubrió que `paidBy` había nacido con `DEFAULT 'BUSINESS'` y 71
+ * gastos quedaron afirmando que los pagó el negocio sin que nadie lo decidiera.
+ * **Un default no es un dato**, y por eso la columna es nullable sin default.
+ */
+describe('ExpensesService — recarga o con carrete', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+  let service: ExpensesService;
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    service = new ExpensesService(prisma as any);
+  });
+
+  const compra = {
+    date: '2026-10-20',
+    category: 'CONSUMABLE',
+    description: 'PLA Basic Blanco',
+    amount: 17,
+    isInvestment: false,
+  };
+
+  it('create guarda `true` cuando es una recarga', async () => {
+    prisma.expense.create.mockResolvedValue({ id: 'e-r' });
+
+    await service.create(ORG, { ...compra, isRefill: true } as any);
+
+    expect(prisma.expense.create.mock.calls[0][0].data.isRefill).toBe(true);
+  });
+
+  it('create guarda `false` cuando vino CON carrete: es un dato, no la ausencia de uno', async () => {
+    prisma.expense.create.mockResolvedValue({ id: 'e-c' });
+
+    await service.create(ORG, { ...compra, isRefill: false } as any);
+
+    // ⚠️ Con `dto.isRefill || null` acá saldría `null` y la compra diría
+    // "no se registró" habiendo sido registrada.
+    expect(prisma.expense.create.mock.calls[0][0].data.isRefill).toBe(false);
+  });
+
+  it('create sin el campo guarda `null`, NUNCA `false`', async () => {
+    prisma.expense.create.mockResolvedValue({ id: 'e-s' });
+
+    await service.create(ORG, compra as any);
+
+    expect(prisma.expense.create.mock.calls[0][0].data.isRefill).toBeNull();
+  });
+
+  it('update lo corrige a `false` (me equivoqué, traía carrete)', async () => {
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.update.mockResolvedValue({ id: 'e-1' });
+
+    await service.update(ORG, 'e-1', { isRefill: false } as any);
+
+    expect(prisma.expense.update.mock.calls[0][0].data).toEqual({ isRefill: false });
+  });
+
+  it('update lo BORRA con `null` explícito: volver a "no se registró" es posible', async () => {
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.update.mockResolvedValue({ id: 'e-1' });
+
+    await service.update(ORG, 'e-1', { isRefill: null } as any);
+
+    expect(prisma.expense.update.mock.calls[0][0].data).toEqual({ isRefill: null });
+  });
+
+  it('update sin el campo NO lo toca: corregir el monto no borra la recarga', async () => {
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.update.mockResolvedValue({ id: 'e-1' });
+
+    await service.update(ORG, 'e-1', { amount: 18 } as any);
+
+    expect(prisma.expense.update.mock.calls[0][0].data).not.toHaveProperty('isRefill');
+  });
+});
+
+describe('ExpensesService.createWithDefinition — recarga o con carrete', () => {
+  let tx: ReturnType<typeof makeTx>;
+  let prisma: ReturnType<typeof makePrismaTx>;
+  let service: ExpensesService;
+
+  beforeEach(() => {
+    tx = makeTx();
+    prisma = makePrismaTx(tx);
+    service = new ExpensesService(prisma as any);
+  });
+
+  /**
+   * El alta de una ficha NUEVA es justo donde el dato se pierde más fácil: es
+   * la puerta por la que entra la primera compra de un color.
+   */
+  it('la primera compra de una ficha nueva también lleva su recarga', async () => {
+    tx.material.create.mockResolvedValue({ id: 'mat-r' });
+    tx.expense.create.mockResolvedValue({ id: 'e-new-r' });
+
+    await service.createWithDefinition(ORG, {
+      expense: {
+        date: '2026-10-20',
+        amount: 17,
+        category: 'CONSUMABLE',
+        description: 'PLA Basic Blanco',
+        isInvestment: false,
+        quantity: 1,
+        isRefill: true,
+      },
+      link: { kind: 'material', mode: 'new', data: { name: 'PLA Basic Blanco', rollPrice: 17, rollGrams: 1000 } },
+    } as any);
+
+    expect(tx.expense.create.mock.calls[0][0].data.isRefill).toBe(true);
+  });
+
+  it('sin el campo la ficha nueva nace con `null`, no con `false`', async () => {
+    tx.material.create.mockResolvedValue({ id: 'mat-s' });
+    tx.expense.create.mockResolvedValue({ id: 'e-new-s' });
+
+    await service.createWithDefinition(ORG, {
+      expense: {
+        date: '2026-10-20',
+        amount: 17,
+        category: 'CONSUMABLE',
+        description: 'PLA Basic Blanco',
+        isInvestment: false,
+        quantity: 1,
+      },
+      link: { kind: 'material', mode: 'new', data: { name: 'PLA Basic Blanco', rollPrice: 17, rollGrams: 1000 } },
+    } as any);
+
+    expect(tx.expense.create.mock.calls[0][0].data.isRefill).toBeNull();
+  });
+});

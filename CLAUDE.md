@@ -1877,6 +1877,61 @@ en el repo web: se sobrescribe al sincronizar.
       invertir la precedencia tumba 2, contar al prestamista como bolsillo
       tumba 1, contar los anulados tumba 1, y del lado de shared las seis
       mutaciones probadas tumban entre 1 y 6 cada una.
+  - **RECARGA O CON CARRETE, por COMPRA (2026-10-20, shared 0.59.0, migración
+    `20261020120000_recarga_o_con_carrete`, aditiva)** — `Expense.isRefill`,
+    que viaja en `ExpenseCreateSchema`/`ExpenseWithDefinitionSchema` y sale en
+    `GET /filament/purchases` y en `GET /expenses`.
+    - **Por qué.** Al normalizar las fichas de Bambu apareció que el mismo color
+      puede costar distinto según venga con carrete o sin él, y el dato solo
+      existía escrito a mano en la nota de algunas compras ("PLA Basico AZUL -
+      RECARGA SIN CARRETE"). Un texto libre no agrupa ni compara.
+    - ⚠️ **NULLABLE Y SIN DEFAULT, a propósito, y `null` NO es "con carrete":
+      es *no se registró*.** Las 95 compras anteriores valen `null` y así se
+      quedan. Es la lección del 2026-10-19: `paidBy` nació con
+      `ADD COLUMN ... NOT NULL DEFAULT 'BUSINESS'` y **71 gastos quedaron
+      afirmando que los pagó el negocio sin que nadie lo decidiera**. Un default
+      se lee después como un dato.
+    - ⚠️ **VA EN LA COMPRA Y NO EN LA FICHA, y está MEDIDO**: la ficha
+      `PLA Basic Bambu Lab Blanco` tiene dos compras, una normal (31/08) y una
+      recarga (09/10). En la ficha, el campo tendría que mentir sobre una de las
+      dos. El primer diseño lo ponía en `Material`; los datos lo tumbaron.
+    - ⚠️ **`?? null` y no `|| null` en los tres lugares que lo escriben**
+      (`create`, `update`, `createWithDefinition`) y en el que lo lee
+      (`FilamentService.purchases`): **`false` es un dato tan verdadero como
+      `true`**. Con `||`, marcar "con carrete" se guardaba como "no se
+      registró". Su mutación tumba 1 test en cada punta.
+    - ⚠️ **En `update` es `!== undefined`, no un truthy check**: mandar `false`
+      es DECIR "con carrete" y mandar `null` es **borrar** el dato. Las dos
+      correcciones tienen que poder hacerse — una marca equivocada que no se
+      puede desandar obliga al dueño a sostener algo que ya sabe falso. La
+      mutación a `dto.isRefill &&` tumba 2.
+    - **El texto lo escribe `shared/calc/recarga.ts`** (`etiquetaDeRecarga`,
+      `valorDeRecarga`, `recargaDesdeValor`, `OPCIONES_DE_RECARGA`), no las
+      pantallas: lo leen TRES lugares (la tabla de Compras, su tarjeta de móvil
+      y los dos formularios). Con el texto repetido, el día que uno cambie van a
+      decir cosas distintas del mismo rollo.
+    - **Sin dato, la fila NO dice nada**: `etiquetaDeRecarga(null)` es `null`.
+      Etiquetar las compras viejas sería ponerles una afirmación que nadie hizo.
+    - **En el panel**: el desplegable está en el modal de registrar
+      (`ExpenseModal`, en sus DOS ramas — ficha nueva y del catálogo) y en el de
+      corregir (`EditarCompra`), y arranca SIEMPRE en **"No lo anoté"**.
+      ⚠️ Los tres llevan **`aria-label` explícito**: `Field` no asocia su
+      `<label>` con el control (no hay `htmlFor`/`id`), así que sin él el lector
+      de pantalla lee solo el valor. Es una carencia del primitivo, anterior a
+      este cambio y compartida con los demás desplegables del formulario.
+    - Regresión: `calc/recarga.spec.ts` (shared, 8), `schemas/recarga.spec.ts`
+      (shared, 7), `expenses.service.spec.ts` (8), `filament.service.spec.ts`
+      (1) y, en el panel, `PurchasesTab.recarga.spec.tsx` (4) +
+      `recarga-formularios.spec.tsx` (9). Mutaciones y cuántos tumba cada una:
+      `|| null` en `create` **1**, truthy check en `update` **2**,
+      `createWithDefinition` sin el campo **2**, `|| null` al leerlo **1**,
+      borrar la etiqueta de la tabla **3**, borrarla de la tarjeta **1**, el
+      formulario de corregir sin mandarlo **4**, el de alta sin mandarlo **3**,
+      y preseleccionar "con carrete" **2 y 2**.
+    - ⚠️ **Cero casos en producción al escribirlo** (las 95 compras valen
+      `null`): los tests son la única evidencia de que funciona. Lo que SÍ hay
+      son compras cuya **nota** ya lo dice a mano — ésas se pueden marcar sin
+      adivinar; el resto no.
   - **QUIÉN PUSO LA PLATA de cada compra (2026-10-11, shared 0.49.0)** —
     `GET /filament/purchases` devuelve además `counterpartyName` y, en lugar del
     booleano `fromInvoice`, un objeto **`invoice: { id, saldo, lineas } | null`**.

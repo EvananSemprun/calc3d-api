@@ -161,6 +161,9 @@ export class ExpensesService {
         amount: dto.amount,
         isInvestment: dto.isInvestment,
         quantity: dto.quantity ?? null,
+        // ⚠️ `?? null` y no `|| null`: los TRES valores dicen cosas distintas y
+        // `false` ("con carrete") es un dato tan verdadero como `true`.
+        isRefill: dto.isRefill ?? null,
         endDate: dto.endDate ? new Date(dto.endDate) : null,
         ...(proveedor ?? { providerId: null }),
         materialId: dto.materialId || null,
@@ -286,6 +289,7 @@ export class ExpensesService {
           amount: expense.amount,
           isInvestment: expense.isInvestment,
           quantity: expense.quantity ?? null,
+          isRefill: expense.isRefill ?? null,
           ...(proveedor ?? { providerId: null }),
           ...quien,
           [linkField]: linkId,
@@ -309,6 +313,10 @@ export class ExpensesService {
         ...(dto.amount != null && { amount: dto.amount }),
         ...(dto.isInvestment != null && { isInvestment: dto.isInvestment }),
         ...(dto.quantity !== undefined && { quantity: dto.quantity ?? null }),
+        // ⚠️ `!== undefined` y no un truthy check: mandar `false` es DECIR "con
+        // carrete", y mandar `null` es borrar el dato. Con `dto.isRefill &&` las
+        // dos correcciones serían imposibles.
+        ...(dto.isRefill !== undefined && { isRefill: dto.isRefill ?? null }),
         ...(dto.endDate !== undefined && { endDate: dto.endDate ? new Date(dto.endDate) : null }),
         ...proveedor,
         ...(dto.materialId !== undefined && { materialId: dto.materialId || null }),

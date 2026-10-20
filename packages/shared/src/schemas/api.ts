@@ -638,6 +638,20 @@ export const ExpenseCreateSchema = z.object({
   currencyCode: z.string().length(3).optional().nullable(),
   /** QUIÉN lo pagó. `null` = la caja del negocio, y entonces no se le debe a nadie. */
   counterpartyId: z.string().min(1).optional().nullable(),
+  /**
+   * RECARGA (sin carrete) o rollo CON CARRETE. Solo tiene sentido comprando
+   * filamento; en un gasto de otra cosa se ignora.
+   *
+   * ⚠️ **Los TRES valores significan cosas distintas y `null` NO es "con
+   * carrete"**: `null` es *no se registró*. Es la lección del 2026-10-19, donde
+   * `paidBy` nació con `DEFAULT 'BUSINESS'` y 71 gastos quedaron diciendo que
+   * los pagó el negocio sin que nadie lo decidiera. Un default no es un dato.
+   *
+   * ⚠️ **Va en la COMPRA y no en la ficha**, y está medido: la ficha
+   * `PLA Basic Bambu Lab Blanco` tiene dos compras, una normal y una recarga.
+   * En la ficha, el campo tendría que mentir sobre una de las dos.
+   */
+  isRefill: z.boolean().optional().nullable(),
 });
 export type ExpenseCreateDto = z.infer<typeof ExpenseCreateSchema>;
 
@@ -661,6 +675,8 @@ export const ExpenseWithDefinitionSchema = z.object({
     providerId: z.string().nullable().optional(),
     providerName: z.string().trim().min(1).optional().nullable(),
     counterpartyId: z.string().min(1).optional().nullable(),
+    /** Recarga o con carrete. Ver `ExpenseCreateSchema.isRefill`. */
+    isRefill: z.boolean().optional().nullable(),
   }),
   link: z.object({
     kind: ExpenseLinkKindSchema,

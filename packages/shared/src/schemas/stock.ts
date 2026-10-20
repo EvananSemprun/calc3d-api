@@ -308,6 +308,18 @@ export interface FilamentPurchase {
   rate: number | null;
   currencyCode: string | null;
   /**
+   * RECARGA (sin carrete) o rollo CON CARRETE.
+   *
+   * ⚠️ **`null` NO es "con carrete": es "no se registró".** Toda compra
+   * anterior al 2026-10-20 vale `null`, y teñirlas de `false` sería afirmar
+   * algo que nadie decidió — la misma trampa del `DEFAULT 'BUSINESS'` de
+   * `paidBy`, que dejó 71 gastos diciendo que los pagó el negocio.
+   *
+   * Explica diferencias de precio que si no parecen inexplicables: el mismo
+   * color puede costar distinto según venga con carrete o sin él.
+   */
+  isRefill: boolean | null;
+  /**
    * La FACTURA de la que nació, o `null` si se cargó a mano.
    *
    * ⚠️ Con esto distinto de `null` la compra **no se corrige ni se borra desde

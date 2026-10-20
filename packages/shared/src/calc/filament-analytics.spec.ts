@@ -23,6 +23,9 @@ function compra(p: Partial<FilamentPurchase>): FilamentPurchase {
     counterpartyKind: null,
     rate: null,
     currencyCode: null,
+    // `null` = no se registro si era recarga o venia con carrete, que es lo
+    // que vale toda compra anterior al 2026-10-20.
+    isRefill: null,
     invoice: null,
     ...p,
   };

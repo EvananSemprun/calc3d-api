@@ -457,6 +457,15 @@ model Expense {
   amount         Decimal         @db.Decimal(12, 4)
   isInvestment   Boolean         @default(false)
   quantity       Int? // unidades/rollos comprados (consumibles)
+
+  /// RECARGA (sin carrete) o rollo CON CARRETE. Solo aplica comprando filamento.
+  ///
+  /// ⚠️ **NULLABLE Y SIN DEFAULT, a propósito.** `null` = no se registró, y NO
+  /// "con carrete". El 2026-10-19 se descubrió que `paidBy` había nacido con
+  /// `DEFAULT 'BUSINESS'` y 71 gastos quedaron afirmando que los pagó el
+  /// negocio sin que nadie lo decidiera: un default se lee después como un
+  /// dato. Toda compra anterior a este campo vale `null` y así se queda.
+  isRefill       Boolean?
   endDate        DateTime? // fin del período (p. ej. publicidad: de `date` a `endDate`)
 
   // Enlace polimórfico opcional al catálogo (solo uno por fila).

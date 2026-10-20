@@ -135,6 +135,10 @@ export class FilamentService {
         counterpartyKind: tipoDeContraparte(g.counterparty?.kind),
         rate: g.rate == null ? null : Number(g.rate),
         currencyCode: g.currencyCode ?? null,
+        // ⚠️ `null` es "no se registró", NO "con carrete": toda compra anterior
+        // al 2026-10-20 vale `null` y teñirlas de `false` afirmaría algo que
+        // nadie decidió. Explica diferencias de precio del mismo color.
+        isRefill: g.isRefill ?? null,
         // Entró por una factura de Compras: la pantalla no la deja corregir ni
         // borrar, porque la API rechaza las dos cosas (ver `ExpensesService`).
         invoice: facturaDeLaCompra(g.purchaseInvoiceLine?.invoice ?? null),

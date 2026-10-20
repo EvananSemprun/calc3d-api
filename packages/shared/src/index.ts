@@ -12,6 +12,7 @@ export * from './calc/stock';
 export * from './calc/restock-order';
 export * from './calc/filament-analytics';
 export * from './calc/pagador';
+export * from './calc/recarga';
 export * from './calc/filament-type-price';
 export * from './calc/store-pricing';
 export * from './calc/breakeven';

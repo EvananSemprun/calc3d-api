@@ -695,6 +695,33 @@ describe('Compras de filamento', () => {
   });
 
   /**
+   * RECARGA O CON CARRETE (2026-10-20).
+   *
+   * ⚠️ Son TRES valores y `null` NO es "con carrete": es *no se registró*. Las
+   * 95 compras anteriores a este campo valen `null`, y teñirlas de `false`
+   * seria afirmar algo que nadie decidio — la trampa del `DEFAULT 'BUSINESS'`
+   * de `paidBy`, que dejo 71 gastos diciendo que los pago el negocio.
+   *
+   * ⚠️ Y el campo va en la COMPRA, no en la ficha: la ficha
+   * `PLA Basic Bambu Lab Blanco` tiene dos compras, una normal y una recarga.
+   */
+  it('dice si la compra fue recarga, con carrete, o si no se registro', async () => {
+    const prisma = makePrisma();
+    prisma.expense.findMany.mockResolvedValue([
+      gasto({ id: 'e-recarga', isRefill: true }),
+      gasto({ id: 'e-carrete', isRefill: false }),
+      gasto({ id: 'e-vieja' }),
+    ]);
+
+    const [recarga, carrete, vieja] = await service(prisma).purchases(ORG);
+    expect(recarga.isRefill).toBe(true);
+    // ⚠️ Con `g.isRefill || null` este seria `null` y la compra diria "no se
+    // registro" habiendo sido registrada.
+    expect(carrete.isRefill).toBe(false);
+    expect(vieja.isRefill).toBeNull();
+  });
+
+  /**
    * Un tipo que el motor no conoce cae en null, o sea "lo puso la caja". Es lo
    * correcto y no lo inventado: sin saber que es esa contraparte no hay a
    * quien deberle, y suponer un tipo moveria plata en el desglose.
