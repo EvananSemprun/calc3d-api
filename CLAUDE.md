@@ -1877,6 +1877,50 @@ en el repo web: se sobrescribe al sincronizar.
       invertir la precedencia tumba 2, contar al prestamista como bolsillo
       tumba 1, contar los anulados tumba 1, y del lado de shared las seis
       mutaciones probadas tumban entre 1 y 6 cada una.
+  - **LA FICHA QUE NACE DE UNA FACTURA, CON SU TIPO (2026-10-20, shared
+    0.61.0, migración `20261020190000_ficha_nueva_con_su_tipo`, aditiva)** —
+    `PurchaseInvoiceLine` gana `nuevaMarca`, `nuevoTipoFilamento` y
+    `nuevoColor`, y `receive()` se los pone a la ficha.
+    - ⚠️ **LA FICHA NACÍA MUDA, y eso la dejaba FUERA del precio de
+      cotización.** `receive()` la creaba solo con `name` y `rollPrice`;
+      `preciosPorTipo` hace **`if (!type) continue`**, así que la calculadora
+      cotizaba sin contar lo que costó ese rollo — **sin avisar**. Además salía
+      como "Sin especificar" en Análisis y no agrupaba en la reposición por
+      color: el mismo desorden que se había limpiado a mano en las 23 fichas de
+      Bambu dos días antes, entrando por la puerta de atrás.
+    - ⚠️ **`nuevoTipoFilamento` NO es `nuevoTipo`.** Aquel dice qué CLASE de
+      ficha nace (filamento / impresora / insumo); este es el tipo del material
+      ("PLA Basic", "PETG"). Los nombres se parecen y significan cosas
+      distintas; confundirlos deja la ficha otra vez sin tipo.
+    - ⚠️ **El tipo es OBLIGATORIO para un filamento nuevo** (`refine` del
+      schema **y** botón apagado en el panel), la marca y el color no. Dejarlo
+      opcional lo habría dejado vacío por omisión, que es exactamente el bug
+      que esto cierra; la marca y el color vacíos no rompen ninguna cuenta. El
+      panel lo apaga antes de mandar porque un 400 después de llenar nueve
+      líneas es la peor forma de enterarse de una regla.
+    - ⚠️ **Y la otra mitad: en una línea del CATÁLOGO los tres se PROHÍBEN.**
+      Ahí contradecirían a la ficha que ya existe y nadie sabría cuál manda.
+    - En el panel son tres `Combobox` (la misma lista administrada que usa
+      Gastos), **cada uno con su propio `placeholder`**: es su nombre accesible,
+      y con el default los tres se llamarían "Elegir o escribir…".
+    - ⚠️ **Al medir, ojo con el `Combobox`**: guarda cada opción nueva con su
+      propio `POST /catalog-options` apenas la creás (es optimista), así que en
+      un test `mocks.post.mock.calls[0]` **no es la factura**. Hay que buscar la
+      llamada por su ruta.
+    - ⚠️ **UNA MUTACIÓN NO TUMBÓ NADA, y ahí estaba el hueco**: borrar
+      `nuevoTipoFilamento` de **`datosDeLinea`** —lo que se guarda al CARGAR la
+      factura— dejaba los 125 tests en verde. Todos arrancaban de una factura
+      ya guardada en el mock, así que probaban `receive()` y `serializar()` y
+      **nadie miraba el camino de guardado**. Un campo que se pierde ahí llega a
+      la base en `null` y el sistema se comporta como si el dueño nunca lo
+      hubiera puesto. Lo cubre ahora el bloque "lo que se guarda al cargar la
+      factura" (5 tests), y la mutación tumba 1.
+    - Regresión: 8 en `purchase-invoices.service.spec.ts`, 8 en
+      `schemas/purchase-invoice.spec.ts` y 5 en `Purchases.factura-nueva.spec.tsx`.
+      Mutaciones: ficha sin tipo **2**, sin marca ni color **1**, no llega al
+      panel **1**, no se guarda al cargar **1**, el formulario sin mandarlo
+      **1**, dejar guardar sin tipo **1**, pedirlos siempre **2**.
+
   - **LA RECARGA EN LA LÍNEA + UNA LÍNEA PUEDE SER UN INSUMO (2026-10-20,
     shared 0.60.0, migraciones `20261020170000_linea_puede_ser_insumo` y
     `20261020170100_linea_insumo_y_recarga`, aditivas)** — las dos salieron de

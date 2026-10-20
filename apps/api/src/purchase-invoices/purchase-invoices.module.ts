@@ -121,6 +121,9 @@ export class PurchaseInvoicesService {
       nombreNuevo: l.nombreNuevo,
       /** Qué ficha va a nacer al recibir: la pantalla lo necesita para decirlo. */
       nuevoTipo: l.nuevoTipo,
+      nuevaMarca: l.nuevaMarca,
+      nuevoTipoFilamento: l.nuevoTipoFilamento,
+      nuevoColor: l.nuevoColor,
       quantity: l.quantity,
       unitPrice: n(l.unitPrice),
       /** Recarga o con carrete, como lo dijo el proveedor. */
@@ -297,6 +300,11 @@ export class PurchaseInvoicesService {
       nombreNuevo: l.nombreNuevo || null,
       /** El schema ya garantiza que viene con `nombreNuevo` y solo con él. */
       nuevoTipo: l.nuevoTipo || null,
+      // Lo que va a SER la ficha. El schema exige el tipo para un filamento
+      // nuevo y prohíbe los tres en una línea del catálogo.
+      nuevaMarca: l.nuevaMarca || null,
+      nuevoTipoFilamento: l.nuevoTipoFilamento || null,
+      nuevoColor: l.nuevoColor || null,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
       // ⚠️ `?? null` y no `|| null`: `false` ("con carrete") es un dato tan
@@ -615,6 +623,19 @@ export class PurchaseInvoicesService {
               name: linea.nombreNuevo,
               rollPrice: precio,
               ...(dto.rollGrams ? { rollGrams: dto.rollGrams } : {}),
+              /**
+               * ⚠️ **La ficha nace CON SU TIPO, y eso no es cosmético.**
+               * `preciosPorTipo` hace `if (!type) continue`: una ficha muda
+               * queda fuera del precio de cotización, así que la calculadora
+               * cotizaría sin contar lo que costó ese rollo — sin avisar. Hasta
+               * el 2026-10-20 nacían solo con nombre y precio.
+               *
+               * El tipo lo EXIGE el contrato para un filamento nuevo; la marca
+               * y el color pueden faltar y por eso van con `?? null`.
+               */
+              type: linea.nuevoTipoFilamento ?? null,
+              brand: linea.nuevaMarca ?? null,
+              color: linea.nuevoColor ?? null,
             },
           });
           matId = nueva.id;

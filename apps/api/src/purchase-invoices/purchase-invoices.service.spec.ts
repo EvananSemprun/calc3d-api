@@ -268,7 +268,7 @@ describe('PurchaseInvoiceLineSchema', () => {
     ['una impresora', { printerId: 'p', quantity: 1, unitPrice: 1 }],
     [
       'un filamento nuevo con su nombre',
-      { nombreNuevo: 'PLA Turquesa', nuevoTipo: 'MATERIAL', quantity: 1, unitPrice: 1 },
+      { nombreNuevo: 'PLA Turquesa', nuevoTipo: 'MATERIAL', nuevoTipoFilamento: 'PLA', quantity: 1, unitPrice: 1 },
     ],
     [
       'una impresora nueva con su nombre',
@@ -1812,5 +1812,117 @@ describe('PurchaseInvoicesService — recibir: un insumo', () => {
     } as never);
 
     expect(f.lines[0].componentId).toBe('ins-mio');
+  });
+});
+
+/**
+ * LA FICHA DE FILAMENTO NACE CON SU TIPO (2026-10-20).
+ *
+ * ⚠️ Hasta ese día `receive()` la creaba solo con nombre y precio, y una ficha
+ * sin tipo queda **FUERA del precio de cotización** (`preciosPorTipo` hace
+ * `if (!type) continue`): la calculadora cotizaba sin contar lo que costó ese
+ * rollo, sin avisar.
+ */
+describe('PurchaseInvoicesService — la ficha nueva nace con su tipo', () => {
+  const conLinea = (over: Record<string, unknown> = {}) =>
+    makePrisma({
+      ...FACTURA_VACIA,
+      supplierId: 'prov-mio',
+      lines: [linea({ quantity: 1, unitPrice: 20, materialId: null, material: null, nombreNuevo: 'PLA Basic Bambu Lab Magenta', nuevoTipo: 'MATERIAL', ...over })],
+    });
+
+  it('marca, tipo y color llegan a la ficha', async () => {
+    const p = conLinea({ nuevoTipoFilamento: 'PLA Basic', nuevaMarca: 'Bambu Lab', nuevoColor: 'Magenta' });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    const ficha = p.material.create.mock.calls[0][0].data;
+    expect(ficha.type).toBe('PLA Basic');
+    expect(ficha.brand).toBe('Bambu Lab');
+    expect(ficha.color).toBe('Magenta');
+    // Y lo que ya hacía antes sigue igual.
+    expect(ficha.name).toBe('PLA Basic Bambu Lab Magenta');
+    expect(ficha.rollPrice).toBe(20);
+  });
+
+  /**
+   * El contrato exige el tipo, pero una fila vieja o un script pueden no
+   * traerlo: ahí la ficha nace sin él en vez de romper. `null` y no `''`, que
+   * `preciosPorTipo` trataría igual pero ensuciaría los desplegables.
+   */
+  it('sin marca ni color la ficha nace igual, con esos campos en null', async () => {
+    const p = conLinea({ nuevoTipoFilamento: 'PLA Basic' });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    const ficha = p.material.create.mock.calls[0][0].data;
+    expect(ficha.type).toBe('PLA Basic');
+    expect(ficha.brand).toBeNull();
+    expect(ficha.color).toBeNull();
+  });
+
+  it('viaja al panel: `serializar` arma la línea campo por campo', async () => {
+    const p = conLinea({ nuevoTipoFilamento: 'PLA Basic', nuevaMarca: 'Bambu Lab', nuevoColor: 'Magenta' });
+
+    const f = await servicio(p).get(ORG, 'f1');
+
+    expect(f.lines[0].nuevoTipoFilamento).toBe('PLA Basic');
+    expect(f.lines[0].nuevaMarca).toBe('Bambu Lab');
+    expect(f.lines[0].nuevoColor).toBe('Magenta');
+  });
+});
+
+/**
+ * LO QUE SE GUARDA AL CARGAR LA FACTURA (`datosDeLinea`).
+ *
+ * ⚠️ **Este bloque existe porque una mutación no tumbó nada.** Borrar
+ * `nuevoTipoFilamento` de `datosDeLinea` dejaba los 125 tests en verde: todos
+ * los demás arrancan de una factura ya guardada en el mock, así que probaban
+ * `receive()` y `serializar()` y **nadie miraba el camino de guardado**. Un
+ * campo que se pierde ahí llega a la base en `null` y el resto del sistema se
+ * comporta como si el dueño nunca lo hubiera puesto.
+ */
+describe('PurchaseInvoicesService — lo que se guarda al cargar la factura', () => {
+  const cargar = (linea: Record<string, unknown>) => {
+    const p = makePrisma();
+    return servicio(p)
+      .create(ORG, { date: '2026-10-20', lines: [linea] } as never)
+      .then((f) => f.lines[0]);
+  };
+
+  it('la recarga de la línea se guarda', async () => {
+    const l = await cargar({ materialId: 'mat-mio', quantity: 1, unitPrice: 20, isRefill: true });
+    expect(l.isRefill).toBe(true);
+  });
+
+  it('«con carrete» se guarda como `false`, no como `null`', async () => {
+    const l = await cargar({ materialId: 'mat-mio', quantity: 1, unitPrice: 20, isRefill: false });
+    expect(l.isRefill).toBe(false);
+  });
+
+  it('sin decirlo queda en `null`', async () => {
+    const l = await cargar({ materialId: 'mat-mio', quantity: 1, unitPrice: 20 });
+    expect(l.isRefill).toBeNull();
+  });
+
+  it('marca, tipo y color de la ficha nueva se guardan', async () => {
+    const l = await cargar({
+      nombreNuevo: 'PLA Basic Bambu Lab Magenta',
+      nuevoTipo: 'MATERIAL',
+      nuevoTipoFilamento: 'PLA Basic',
+      nuevaMarca: 'Bambu Lab',
+      nuevoColor: 'Magenta',
+      quantity: 1,
+      unitPrice: 20,
+    });
+    expect(l.nuevoTipoFilamento).toBe('PLA Basic');
+    expect(l.nuevaMarca).toBe('Bambu Lab');
+    expect(l.nuevoColor).toBe('Magenta');
+  });
+
+  it('el insumo nuevo se guarda con su clase', async () => {
+    const l = await cargar({ nombreNuevo: 'Placa', nuevoTipo: 'COMPONENT', quantity: 1, unitPrice: 40 });
+    expect(l.nuevoTipo).toBe('COMPONENT');
+    expect(l.nombreNuevo).toBe('Placa');
   });
 });

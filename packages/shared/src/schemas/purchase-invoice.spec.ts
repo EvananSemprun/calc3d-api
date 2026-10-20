@@ -27,6 +27,9 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
       PurchaseInvoiceLineSchema.safeParse({
         nombreNuevo: 'Impresora A2',
         nuevoTipo,
+        // Un filamento nuevo EXIGE su tipo desde el 2026-10-20; a la impresora
+        // y al insumo el campo no les aplica y se ignora.
+        ...(nuevoTipo === 'MATERIAL' ? { nuevoTipoFilamento: 'PLA Basic' } : {}),
         quantity: 1,
         unitPrice: 300,
       }).success,
@@ -260,5 +263,81 @@ describe('PurchaseInvoiceLineSchema: recarga o con carrete', () => {
 
   it('un texto no entra: "refill" no es un booleano', () => {
     expect(PurchaseInvoiceLineSchema.safeParse({ ...base, isRefill: 'refill' }).success).toBe(false);
+  });
+});
+
+/**
+ * LA FICHA QUE NACE, CON SU TIPO (2026-10-20).
+ *
+ * ⚠️ Hasta ese día `receive()` creaba la ficha solo con nombre y precio. Una
+ * ficha sin tipo queda **FUERA del precio de cotización** —`preciosPorTipo`
+ * hace `if (!type) continue`—, así que la calculadora cotizaba sin contar lo
+ * que costó ese rollo, **sin avisar**. Además salía como "Sin especificar" en
+ * Análisis y no agrupaba en la reposición por color: el mismo desorden que se
+ * había limpiado a mano en las 23 fichas de Bambu dos días antes.
+ */
+describe('PurchaseInvoiceLineSchema: la ficha nueva trae su tipo', () => {
+  const nuevo = { nombreNuevo: 'PLA Basic Bambu Lab Magenta', nuevoTipo: 'MATERIAL', quantity: 1, unitPrice: 20 };
+
+  it('un filamento nuevo SIN tipo se RECHAZA: nacería mudo', () => {
+    expect(PurchaseInvoiceLineSchema.safeParse(nuevo).success).toBe(false);
+  });
+
+  it('el mensaje dice por qué: sin tipo la calculadora no puede cotizarlo', () => {
+    const r = PurchaseInvoiceLineSchema.safeParse(nuevo);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.issues.map((i) => i.message).join(' | ')).toMatch(/tipo.*cotizar|cotizar.*tipo/i);
+  });
+
+  it('con su tipo entra, y la marca y el color viajan con él', () => {
+    const r = PurchaseInvoiceLineSchema.parse({
+      ...nuevo,
+      nuevoTipoFilamento: 'PLA Basic',
+      nuevaMarca: 'Bambu Lab',
+      nuevoColor: 'Magenta',
+    });
+    expect(r.nuevoTipoFilamento).toBe('PLA Basic');
+    expect(r.nuevaMarca).toBe('Bambu Lab');
+    expect(r.nuevoColor).toBe('Magenta');
+  });
+
+  /**
+   * ⚠️ La marca y el color SÍ son opcionales: vacíos molestan menos y no rompen
+   * ninguna cuenta. Es el tipo el único cuya ausencia miente en silencio.
+   */
+  it('sin marca ni color entra igual: solo el tipo es obligatorio', () => {
+    expect(
+      PurchaseInvoiceLineSchema.safeParse({ ...nuevo, nuevoTipoFilamento: 'PLA Basic' }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['una impresora nueva', { nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER' }],
+    ['un insumo nuevo', { nombreNuevo: 'Placa', nuevoTipo: 'COMPONENT' }],
+  ])('%s no necesita tipo de filamento', (_, linea) => {
+    expect(PurchaseInvoiceLineSchema.safeParse({ ...linea, quantity: 1, unitPrice: 40 }).success).toBe(true);
+  });
+
+  /**
+   * La otra mitad. En una línea del catálogo estos campos contradecirían a la
+   * ficha que ya existe, y nadie sabría cuál manda.
+   */
+  it('una línea del catálogo con marca/tipo/color se RECHAZA', () => {
+    expect(
+      PurchaseInvoiceLineSchema.safeParse({
+        materialId: 'mat-1',
+        nuevoTipoFilamento: 'PETG',
+        quantity: 1,
+        unitPrice: 10,
+      }).success,
+    ).toBe(false);
+  });
+
+  /** Su hermano alcanzable: sin él, un schema que rechazara TODA línea del catálogo pasaría. */
+  it('…y sin ellos entra', () => {
+    expect(
+      PurchaseInvoiceLineSchema.safeParse({ materialId: 'mat-1', quantity: 1, unitPrice: 10 }).success,
+    ).toBe(true);
   });
 });

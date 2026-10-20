@@ -1029,6 +1029,23 @@ export const PurchaseInvoiceLineSchema = z
     nombreNuevo: z.string().trim().min(1).optional().nullable(),
     /** Qué nace al recibir: obligatorio con `nombreNuevo`, prohibido sin él. */
     nuevoTipo: NuevoTipoSchema.optional().nullable(),
+    /**
+     * MARCA, TIPO Y COLOR de la ficha de filamento que va a nacer.
+     *
+     * ⚠️ **`nuevoTipoFilamento` NO es `nuevoTipo`**: aquel dice qué CLASE de
+     * ficha nace (filamento / impresora / insumo), este es el tipo del material
+     * ("PLA Basic", "PETG"). Se parecen y significan cosas distintas.
+     *
+     * ⚠️ **El tipo es OBLIGATORIO para un filamento nuevo** (ver el `refine` de
+     * abajo). Dejarlo opcional lo habría dejado vacío por omisión, y una ficha
+     * sin tipo queda FUERA del precio de cotización —`preciosPorTipo` hace
+     * `if (!type) continue`—: la calculadora cotizaría sin contar lo que te
+     * costó ese rollo, sin avisar. La marca y el color sí son opcionales:
+     * molestan menos vacíos y no rompen ninguna cuenta.
+     */
+    nuevaMarca: z.string().trim().min(1).optional().nullable(),
+    nuevoTipoFilamento: z.string().trim().min(1).optional().nullable(),
+    nuevoColor: z.string().trim().min(1).optional().nullable(),
     quantity: z.number().int().positive('Pedí al menos uno'),
     unitPrice: z.number().min(0, 'El precio no puede ser negativo'),
     /**
@@ -1051,6 +1068,28 @@ export const PurchaseInvoiceLineSchema = z
   .refine(
     (l) => !!l.nombreNuevo === !!l.nuevoTipo,
     'Si pedís algo que todavía no tenés, decí si es filamento, impresora o insumo: la ficha nace al recibirlo',
+  )
+  /**
+   * ⚠️ **Un filamento nuevo SIN tipo no entra.** Es la guarda que impide que la
+   * ficha nazca muda: sin tipo queda fuera de `preciosPorTipo` y la calculadora
+   * cotiza sin contar lo que costó ese rollo — un desfase que no se ve. Cuando
+   * cargás la factura ya sabés qué pediste, así que no es una molestia: es el
+   * único momento en que el dato está a mano.
+   *
+   * Solo para `MATERIAL`: una impresora o un insumo no tienen tipo de filamento.
+   */
+  .refine(
+    (l) => !(l.nombreNuevo && l.nuevoTipo === 'MATERIAL') || !!l.nuevoTipoFilamento,
+    'Decí de qué tipo es el filamento nuevo (PLA Basic, PETG…): sin eso la calculadora no puede usarlo para cotizar',
+  )
+  /**
+   * La otra mitad: marca, tipo y color describen una FICHA QUE NACE. En una
+   * línea del catálogo contradecirían a la ficha que ya existe, y nadie sabría
+   * cuál manda.
+   */
+  .refine(
+    (l) => !!l.nombreNuevo || (!l.nuevaMarca && !l.nuevoTipoFilamento && !l.nuevoColor),
+    'La marca, el tipo y el color describen la ficha que nace: en una línea del catálogo no van',
   );
 export type PurchaseInvoiceLineDto = z.infer<typeof PurchaseInvoiceLineSchema>;
 
