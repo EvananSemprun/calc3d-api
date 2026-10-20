@@ -371,6 +371,7 @@ model Component {
   createdAt       DateTime     @default(now())
 
   expenses Expense[]
+  purchaseLines PurchaseInvoiceLine[]
 
   @@index([organizationId])
 }
@@ -1427,6 +1428,12 @@ model PurchaseInvoice {
 enum PurchaseLineNuevoTipo {
   MATERIAL
   PRINTER
+  /// Un insumo (placa, boquilla, empaque). Entró el 2026-10-20: una factura
+  /// real traía una placa de impresión y la línea solo sabía nacer como
+  /// filamento o como impresora. Dejarla fuera habría dejado la deuda con el
+  /// proveedor $40 corta; cargarla como filamento habría metido un "rollo" de
+  /// $40 en el precio por tipo.
+  COMPONENT
 }
 
 /// Una línea de la factura: qué se pidió, cuánto y a qué precio.
@@ -1440,6 +1447,8 @@ model PurchaseInvoiceLine {
   materialId String?
   printer    Printer?  @relation(fields: [printerId], references: [id], onDelete: Restrict)
   printerId  String?
+  component   Component? @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  componentId String?
   /// …salvo que la ficha todavía NO EXISTA: un color que nunca compraste no
   /// tiene ficha hasta que llega. Entonces la línea lleva su nombre y la ficha
   /// nace al recibirla.
@@ -1453,6 +1462,19 @@ model PurchaseInvoiceLine {
 
   quantity  Int
   unitPrice Decimal @db.Decimal(12, 4)
+
+  /// RECARGA (sin carrete) o rollo CON CARRETE, **dicho por el proveedor**.
+  ///
+  /// ⚠️ **Vive acá y no solo en el gasto**: la factura lo dice por LÍNEA
+  /// ("PLA Basic Magenta · refill", "PLA Silk+ Candy Red · con spool") y el
+  /// gasto recién existe al recibir. Sin esto, un rollo que entra por factura
+  /// **no se podía marcar nunca**: el gasto que nace al recibir no se puede
+  /// corregir desde Gastos (`noSeTocaDesdeGastos`) ni desde Compras de
+  /// filamento. `receive()` lo copia al gasto.
+  ///
+  /// ⚠️ `null` = no se registró, NO "con carrete". Misma regla que
+  /// `Expense.isRefill`: un default se lee después como un dato.
+  isRefill Boolean?
 
   /// Cuántos de esos ya llegaron. Nunca mayor que `quantity`: la guarda vive
   /// en el servicio, porque un CHECK no puede comparar contra otra columna

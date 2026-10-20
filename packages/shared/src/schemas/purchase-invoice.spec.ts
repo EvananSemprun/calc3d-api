@@ -21,6 +21,7 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
   it.each([
     ['filamento nuevo', 'MATERIAL'],
     ['impresora nueva', 'PRINTER'],
+    ['insumo nuevo', 'COMPONENT'],
   ])('%s → se acepta', (_, nuevoTipo) => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({
@@ -42,7 +43,7 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
     expect(r.success).toBe(false);
   });
 
-  it('el mensaje dice que hay que elegir filamento o impresora', () => {
+  it('el mensaje dice que hay que elegir filamento, impresora o insumo', () => {
     const r = PurchaseInvoiceLineSchema.safeParse({
       nombreNuevo: 'Impresora A2',
       quantity: 1,
@@ -52,14 +53,18 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
     expect(r.success).toBe(false);
     if (r.success) return;
     const texto = r.error.issues.map((i) => i.message).join(' | ');
-    expect(texto).toMatch(/filamento o .*impresora/i);
+    expect(texto).toMatch(/filamento,? .*impresora.*insumo/i);
   });
 
+  // ⚠️ Este test usaba 'COMPONENT' como ejemplo de tipo inventado hasta el
+  // 2026-10-20, cuando pasó a ser válido (una factura real traía una placa de
+  // impresión). El ejemplo cambió; la regla —un tipo que el enum no conoce no
+  // entra— es la misma.
   it('un tipo inventado → se rechaza', () => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({
         nombreNuevo: 'Algo',
-        nuevoTipo: 'COMPONENT',
+        nuevoTipo: 'MARCIANO',
         quantity: 1,
         unitPrice: 1,
       }).success,
@@ -73,6 +78,7 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
   it.each([
     ['un filamento del catálogo', { materialId: 'mat-1' }],
     ['una impresora del catálogo', { printerId: 'imp-1' }],
+    ['un insumo del catálogo', { componentId: 'ins-1' }],
   ])('%s con nuevoTipo → se rechaza', (_, ficha) => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({
@@ -89,6 +95,7 @@ describe('PurchaseInvoiceLineSchema: qué nace cuando es algo nuevo', () => {
   it.each([
     ['un filamento del catálogo', { materialId: 'mat-1' }],
     ['una impresora del catálogo', { printerId: 'imp-1' }],
+    ['un insumo del catálogo', { componentId: 'ins-1' }],
   ])('%s sin nuevoTipo → se acepta', (_, ficha) => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({ ...ficha, quantity: 1, unitPrice: 10 }).success,
@@ -204,5 +211,54 @@ describe('PurchaseInvoicePaymentSchema: el abono tomado del saldo a favor', () =
       PurchaseInvoicePaymentSchema.safeParse({ ...base, amount: 0, tomadoDeFacturaId: 'f-vieja' })
         .success,
     ).toBe(false);
+  });
+});
+
+/**
+ * UNA LÍNEA ES UNA SOLA COSA (ampliado el 2026-10-20 con el insumo).
+ *
+ * ⚠️ Sin esto, una línea podría apuntar a un filamento Y a un insumo a la vez,
+ * y `receive()` tendría que elegir: el gasto saldría enlazado a uno de los dos
+ * según el orden del código, que es la peor forma de decidir.
+ */
+describe('PurchaseInvoiceLineSchema: una línea es UNA sola cosa', () => {
+  it.each([
+    ['filamento + insumo', { materialId: 'mat-1', componentId: 'ins-1' }],
+    ['impresora + insumo', { printerId: 'imp-1', componentId: 'ins-1' }],
+    ['insumo + algo nuevo', { componentId: 'ins-1', nombreNuevo: 'Placa', nuevoTipo: 'COMPONENT' }],
+  ])('%s → se rechaza', (_, linea) => {
+    expect(PurchaseInvoiceLineSchema.safeParse({ ...linea, quantity: 1, unitPrice: 10 }).success).toBe(false);
+  });
+
+  it('una línea sin NADA tampoco entra: algo hay que comprar', () => {
+    expect(PurchaseInvoiceLineSchema.safeParse({ quantity: 1, unitPrice: 10 }).success).toBe(false);
+  });
+});
+
+/**
+ * RECARGA O CON CARRETE EN LA LÍNEA (2026-10-20).
+ *
+ * ⚠️ Son TRES valores. `null` es "el proveedor no lo dijo", NO "con carrete":
+ * la misma regla que `Expense.isRefill`, y la razón por la que la columna es
+ * nullable sin default.
+ */
+describe('PurchaseInvoiceLineSchema: recarga o con carrete', () => {
+  const base = { materialId: 'mat-1', quantity: 1, unitPrice: 20 };
+
+  it.each([
+    ['recarga', true],
+    ['con carrete', false],
+    ['no lo dijo', null],
+  ])('%s → se acepta y se conserva', (_, isRefill) => {
+    const r = PurchaseInvoiceLineSchema.parse({ ...base, isRefill });
+    expect(r.isRefill).toBe(isRefill);
+  });
+
+  it('ausente queda ausente: no se rellena con un default', () => {
+    expect(PurchaseInvoiceLineSchema.parse(base).isRefill).toBeUndefined();
+  });
+
+  it('un texto no entra: "refill" no es un booleano', () => {
+    expect(PurchaseInvoiceLineSchema.safeParse({ ...base, isRefill: 'refill' }).success).toBe(false);
   });
 });

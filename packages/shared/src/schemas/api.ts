@@ -989,7 +989,15 @@ export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>
 // ----- Facturas de compra (filamento e impresoras) -----
 
 /** Qué ficha nace cuando la línea pide algo que todavía no está en el catálogo. */
-export const NuevoTipoSchema = z.enum(['MATERIAL', 'PRINTER']);
+/**
+ * QUÉ nace al recibir una línea que pide algo que todavía no tenés.
+ *
+ * ⚠️ `COMPONENT` entró el 2026-10-20 con una factura real que traía una placa
+ * de impresión. Sin él, las únicas salidas eran dejar la línea fuera —y la
+ * deuda con el proveedor quedaba $40 corta— o cargarla como filamento, que
+ * mete un "rollo" de $40 en el precio por tipo de la calculadora.
+ */
+export const NuevoTipoSchema = z.enum(['MATERIAL', 'PRINTER', 'COMPONENT']);
 export type NuevoTipo = z.infer<typeof NuevoTipoSchema>;
 
 /**
@@ -1011,20 +1019,38 @@ export const PurchaseInvoiceLineSchema = z
   .object({
     materialId: z.string().min(1).optional().nullable(),
     printerId: z.string().min(1).optional().nullable(),
+    /**
+     * Un insumo que YA existe. Sin esto, volver a comprar la misma placa
+     * obligaba a cargarla como "nueva" otra vez y nacía una ficha duplicada:
+     * la misma asimetría que el filamento y la impresora no tienen.
+     */
+    componentId: z.string().min(1).optional().nullable(),
     /** Para una ficha que todavía no existe: nace al recibir la compra. */
     nombreNuevo: z.string().trim().min(1).optional().nullable(),
     /** Qué nace al recibir: obligatorio con `nombreNuevo`, prohibido sin él. */
     nuevoTipo: NuevoTipoSchema.optional().nullable(),
     quantity: z.number().int().positive('Pedí al menos uno'),
     unitPrice: z.number().min(0, 'El precio no puede ser negativo'),
+    /**
+     * RECARGA (sin carrete) o rollo CON CARRETE, dicho por el proveedor.
+     *
+     * ⚠️ **Va en la LÍNEA porque es donde la factura lo dice** ("PLA Basic
+     * Magenta · refill", "PLA Silk+ Candy Red · con spool") y porque el gasto
+     * recién existe al recibir. Sin esto, un rollo que entra por factura no se
+     * podía marcar NUNCA: el gasto nacido de una factura no se corrige ni desde
+     * Gastos ni desde Compras de filamento. `receive()` lo copia al gasto.
+     *
+     * ⚠️ `null` = no se registró, NO "con carrete". Ver `ExpenseCreateSchema`.
+     */
+    isRefill: z.boolean().optional().nullable(),
   })
   .refine(
-    (l) => [l.materialId, l.printerId, l.nombreNuevo].filter(Boolean).length === 1,
-    'Cada línea es un filamento, una impresora o algo nuevo con su nombre: una sola cosa',
+    (l) => [l.materialId, l.printerId, l.componentId, l.nombreNuevo].filter(Boolean).length === 1,
+    'Cada línea es un filamento, una impresora, un insumo o algo nuevo con su nombre: una sola cosa',
   )
   .refine(
     (l) => !!l.nombreNuevo === !!l.nuevoTipo,
-    'Si pedís algo que todavía no tenés, decí si es filamento o si es impresora: la ficha nace al recibirlo',
+    'Si pedís algo que todavía no tenés, decí si es filamento, impresora o insumo: la ficha nace al recibirlo',
   );
 export type PurchaseInvoiceLineDto = z.infer<typeof PurchaseInvoiceLineSchema>;
 

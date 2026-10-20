@@ -1877,6 +1877,64 @@ en el repo web: se sobrescribe al sincronizar.
       invertir la precedencia tumba 2, contar al prestamista como bolsillo
       tumba 1, contar los anulados tumba 1, y del lado de shared las seis
       mutaciones probadas tumban entre 1 y 6 cada una.
+  - **LA RECARGA EN LA LÍNEA + UNA LÍNEA PUEDE SER UN INSUMO (2026-10-20,
+    shared 0.60.0, migraciones `20261020170000_linea_puede_ser_insumo` y
+    `20261020170100_linea_insumo_y_recarga`, aditivas)** — las dos salieron de
+    **una factura real** (STRATO A-001, 9 líneas): ocho decían `refill` o
+    `con spool`, y una era una placa de impresión de $40.
+    - ⚠️ **ERA UN CALLEJÓN SIN SALIDA, y lo destapó la factura, no un test.**
+      `Expense.isRefill` (shared 0.59.0) vive en el gasto, y el gasto de una
+      línea de factura lo crea `receive()`. Como ese gasto **no se puede
+      corregir después** —`noSeTocaDesdeGastos` lo rechaza con 400 y
+      `EditarCompra` muestra su cartel—, un rollo que entraba por factura
+      **no se podía marcar NUNCA**. El campo servía solo para las compras
+      cargadas a mano, que es media app.
+    - **El arreglo: `PurchaseInvoiceLine.isRefill`**, que es donde la factura lo
+      dice, y `receive()` lo copia al gasto. Mismas reglas: `?? null` y no
+      `|| null` (`false` es "con carrete", un dato tan verdadero como `true`) y
+      `null` = "el proveedor no lo dijo".
+    - ⚠️ **`nuevoTipo` ganó `COMPONENT`.** Una línea solo sabía nacer como
+      filamento o como impresora, y las dos salidas para la placa eran malas:
+      dejarla fuera dejaba **la deuda con el proveedor $40 corta** (Deuda
+      mentiría), y cargarla como filamento metía un "rollo" de $40 en
+      `preciosPorTipo`, con el que la calculadora cotizaría.
+    - ⚠️ **El insumo nace con `scope: 'PER_ORDER'`, no con el default
+      `PER_PIECE`.** Lo que entra por acá suele ser una herramienta —una placa
+      no se gasta en cada pieza— y con `PER_PIECE` la calculadora le sumaría
+      **los $40 enteros a cada unidad** del pedido si alguien la eligiera.
+      Ninguno de los dos es exacto para algo durable; este es el menos dañino y
+      se cambia con un click desde su catálogo. Su mutación tumba 1 test.
+    - ⚠️ **La línea también gana `componentId`** (un insumo que YA existe). Sin
+      él, volver a comprar la misma placa obligaba a cargarla como "nueva" y
+      nacía una ficha duplicada — una asimetría que el filamento y la impresora
+      no tienen. Se filtra por organización, como las otras dos: con el id de
+      otro negocio, el nombre de SU insumo saldría en la pantalla de Compras.
+    - ⚠️ **DOS migraciones separadas a propósito**: Postgres no deja **usar** un
+      valor de enum en la misma transacción en que se agrega, y Prisma envuelve
+      cada archivo en una. `migrate deploy` las aplica seguidas, así que no hay
+      ningún paso manual entre medias (la regla de "una migración no puede
+      depender de que alguien corra un script" sigue intacta).
+    - ⚠️ **`serializar()` arma la línea CAMPO POR CAMPO**, igual que
+      `serialize()` en campañas: un campo nuevo que no se agregue ahí existe en
+      la base, pasa los tipos y **nunca llega al cliente**. Hay un test que lo
+      fija.
+    - **En el panel**: el selector "Qué es" gana *Insumo del catálogo*, el de
+      ficha nueva pasa a *"¿Filamento, impresora o insumo?"* (se llamaba
+      "¿Qué es?" y chocaba con el de al lado) y cada línea de filamento lleva su
+      desplegable de recarga, en **"No lo dice"** y diciendo que es la única
+      oportunidad. ⚠️ Los cuatro desplegables llevan `aria-label`: `Field` no
+      asocia su `<label>` con el control.
+    - ⚠️ **El control NO se ofrece para una impresora**: un dato sin sentido
+      guardado porque el formulario lo ofrecía es ruido que después alguien lee
+      como información. Su mutación tumba 1 test.
+    - Regresión: 11 en `purchase-invoices.service.spec.ts`, 12 en
+      `schemas/purchase-invoice.spec.ts` (shared) y 7 en
+      `Purchases.factura-nueva.spec.tsx` (panel). Doce mutaciones probadas, cada
+      una tumba entre 1 y 3 tests. ⚠️ Una de ellas **no compiló** (122 → 15
+      tests, el verde falso): borrar `isRefill` de `serializar` rompe el tipo
+      del test. Se rehizo con `(false as boolean) ? … : null`, que compila y sí
+      cambia el comportamiento.
+
   - **RECARGA O CON CARRETE, por COMPRA (2026-10-20, shared 0.59.0, migración
     `20261020120000_recarga_o_con_carrete`, aditiva)** — `Expense.isRefill`,
     que viaja en `ExpenseCreateSchema`/`ExpenseWithDefinitionSchema` y sale en

@@ -23,6 +23,10 @@ const FILAS = {
     { id: 'mat-ajeno', organizationId: OTRA },
   ],
   printer: [{ id: 'imp-mia', organizationId: ORG }],
+  component: [
+    { id: 'ins-mio', organizationId: ORG },
+    { id: 'ins-ajeno', organizationId: OTRA },
+  ],
   counterparty: [
     { id: 'cp-mia', organizationId: ORG },
     { id: 'cp-ajena', organizationId: OTRA },
@@ -82,6 +86,12 @@ function makePrisma(
     printer: {
       ...tabla(FILAS.printer),
       create: jest.fn(() => Promise.resolve({ id: 'imp-nueva' })) as jest.Mock,
+      // Para poder AFIRMAR que deshacer una recepción no borra la ficha.
+      delete: jest.fn() as jest.Mock,
+    },
+    component: {
+      ...tabla(FILAS.component),
+      create: jest.fn(() => Promise.resolve({ id: 'ins-nuevo' })) as jest.Mock,
       // Para poder AFIRMAR que deshacer una recepción no borra la ficha.
       delete: jest.fn() as jest.Mock,
     },
@@ -199,13 +209,17 @@ const linea = (over: Record<string, unknown> = {}) => ({
   id: 'l1',
   materialId: 'mat-mio',
   printerId: null,
+  componentId: null,
   nombreNuevo: null,
   nuevoTipo: null,
   quantity: 2,
   unitPrice: 25,
   received: 0,
+  /** `null` = el proveedor no dijo si era recarga o si venía con carrete. */
+  isRefill: null,
   material: { id: 'mat-mio', name: 'PLA Negro' },
   printer: null,
+  component: null,
   /**
    * ⚠️ **Las recepciones de la línea SON sus gastos.** Cada recepción creó uno,
    * con su cantidad y su monto: ahí está guardado lo que COSTÓ. El `include`
@@ -1643,5 +1657,160 @@ describe('PurchaseInvoicesService — el saldo a favor', () => {
     expect(p.purchaseInvoicePayment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
     );
+  });
+});
+
+/**
+ * RECARGA O CON CARRETE, DICHO POR LA FACTURA (2026-10-20).
+ *
+ * ⚠️ **Este es el test que tapa un callejón sin salida.** `isRefill` vive en el
+ * gasto, y el gasto de una línea de factura lo crea `receive()`. Como después
+ * ese gasto no se puede corregir —`noSeTocaDesdeGastos` lo rechaza y
+ * `EditarCompra` tampoco lo abre—, si la recarga no se copia en ese instante el
+ * rollo **no se puede marcar nunca**. El caso real: una factura con nueve
+ * líneas donde ocho dicen `refill` o `con spool`.
+ */
+describe('PurchaseInvoicesService — recibir: recarga o con carrete', () => {
+  const conLinea = (over: Record<string, unknown> = {}) =>
+    makePrisma({ ...FACTURA_VACIA, supplierId: 'prov-mio', lines: [linea({ quantity: 2, unitPrice: 20, ...over })] });
+
+  it('la línea dice que es recarga y el gasto nace marcado', async () => {
+    const p = conLinea({ isRefill: true });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    expect(p.expense.create.mock.calls[0][0].data.isRefill).toBe(true);
+  });
+
+  it('la línea dice que viene CON carrete y eso también se guarda', async () => {
+    const p = conLinea({ isRefill: false });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    // ⚠️ Con `linea.isRefill || null` acá saldría `null`: la compra diría "no se
+    // registró" cuando el proveedor SÍ lo dijo.
+    expect(p.expense.create.mock.calls[0][0].data.isRefill).toBe(false);
+  });
+
+  it('una línea que no lo dice deja el gasto en `null`, nunca en `false`', async () => {
+    const p = conLinea();
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    expect(p.expense.create.mock.calls[0][0].data.isRefill).toBeNull();
+  });
+
+  it('viaja al panel: `serializar` arma la línea campo por campo', async () => {
+    const p = conLinea({ isRefill: true });
+
+    const f = await servicio(p).get(ORG, 'f1');
+
+    // Un campo que no se agregue a `serializar` existe en la base, pasa los
+    // tipos y NUNCA llega al cliente. Es la trampa de `serialize()` en campañas.
+    expect(f.lines[0].isRefill).toBe(true);
+  });
+});
+
+/**
+ * UNA LÍNEA PUEDE SER UN INSUMO (2026-10-20).
+ *
+ * Una factura real traía una placa de impresión de $40 y la línea solo sabía
+ * nacer como filamento o como impresora. Las dos salidas que había eran malas:
+ * dejarla fuera dejaba la deuda con el proveedor $40 corta, y cargarla como
+ * filamento metía un "rollo" de $40 en el precio por tipo de la calculadora.
+ */
+describe('PurchaseInvoicesService — recibir: un insumo', () => {
+  const conLinea = (over: Record<string, unknown> = {}) =>
+    makePrisma({ ...FACTURA_VACIA, supplierId: 'prov-mio', lines: [linea({ quantity: 1, unitPrice: 40, materialId: null, material: null, ...over })] });
+
+  it('nace la ficha de insumo y el gasto queda enlazado a ELLA', async () => {
+    const p = conLinea({ nombreNuevo: 'Bambu 3D Effect Plate', nuevoTipo: 'COMPONENT' });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    const nueva = p.component.create.mock.calls[0][0].data;
+    expect(nueva.name).toBe('Bambu 3D Effect Plate');
+    expect(nueva.organizationId).toBe(ORG);
+    // Nace con lo que COSTÓ, y por unidad: la línea cuenta unidades, no paquetes.
+    expect(nueva.packagePrice).toBe(40);
+    expect(nueva.unitsPerPackage).toBe(1);
+    // ⚠️ `PER_ORDER` y no el default `PER_PIECE`: con `PER_PIECE`, elegir la
+    // placa en la calculadora le sumaría $40 a CADA pieza del pedido.
+    expect(nueva.scope).toBe('PER_ORDER');
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.componentId).toBe('ins-nuevo');
+    expect(gasto.amount).toBe(40);
+  });
+
+  /**
+   * ⚠️ **Las OTRAS dos tablas no se tocan**, y es justo lo que faltaba el día
+   * que una impresora nueva nacía como rollo: afirmar sobre la que SÍ nace no
+   * alcanza, porque una recepción que creara las tres también lo pasaría.
+   */
+  it('un insumo NO crea una ficha de filamento ni una impresora', async () => {
+    const p = conLinea({ nombreNuevo: 'Bambu 3D Effect Plate', nuevoTipo: 'COMPONENT' });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    expect(p.material.create).not.toHaveBeenCalled();
+    expect(p.printer.create).not.toHaveBeenCalled();
+  });
+
+  it('no es inversión y entra como consumible: una placa no es un equipo', async () => {
+    const p = conLinea({ nombreNuevo: 'Bambu 3D Effect Plate', nuevoTipo: 'COMPONENT' });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.isInvestment).toBe(false);
+    expect(gasto.category).toBe('CONSUMABLE');
+  });
+
+  /**
+   * ⚠️ Repuntar la línea no es cosmético: sin esto una segunda recepción
+   * parcial crearía OTRA ficha con el mismo nombre.
+   */
+  it('la línea queda apuntando a la ficha que acaba de nacer', async () => {
+    const p = conLinea({ nombreNuevo: 'Bambu 3D Effect Plate', nuevoTipo: 'COMPONENT', quantity: 2 });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    expect(p.purchaseInvoiceLine.update).toHaveBeenCalledWith({
+      where: { id: 'l1' },
+      data: { componentId: 'ins-nuevo' },
+    });
+  });
+
+  it('un insumo que YA existe se reusa: no nace una ficha duplicada', async () => {
+    const p = conLinea({ componentId: 'ins-mio', component: { id: 'ins-mio', name: 'Placa lisa' } });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-10-20' } as never);
+
+    expect(p.component.create).not.toHaveBeenCalled();
+    expect(p.expense.create.mock.calls[0][0].data.componentId).toBe('ins-mio');
+  });
+
+  it('el insumo de OTRA organización no se puede pedir', async () => {
+    const p = makePrisma();
+
+    await expect(
+      servicio(p).create(ORG, {
+        date: '2026-10-20',
+        lines: [{ componentId: 'ins-ajeno', quantity: 1, unitPrice: 40 }],
+      } as never),
+    ).rejects.toThrow('No existe ese insumo');
+  });
+
+  /** El hermano alcanzable: sin esto, un `create` que fallara siempre pasaría. */
+  it('…y el insumo propio SÍ', async () => {
+    const p = makePrisma();
+
+    const f = await servicio(p).create(ORG, {
+      date: '2026-10-20',
+      lines: [{ componentId: 'ins-mio', quantity: 1, unitPrice: 40 }],
+    } as never);
+
+    expect(f.lines[0].componentId).toBe('ins-mio');
   });
 });

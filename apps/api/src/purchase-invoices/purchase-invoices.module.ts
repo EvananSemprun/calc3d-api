@@ -45,6 +45,7 @@ const incluir = {
     include: {
       material: { select: { id: true, name: true } },
       printer: { select: { id: true, name: true } },
+      component: { select: { id: true, name: true } },
       /**
        * LAS RECEPCIONES DE LA LÍNEA.
        *
@@ -115,11 +116,15 @@ export class PurchaseInvoicesService {
       materialName: l.material?.name ?? null,
       printerId: l.printerId,
       printerName: l.printer?.name ?? null,
+      componentId: l.componentId,
+      componentName: l.component?.name ?? null,
       nombreNuevo: l.nombreNuevo,
       /** Qué ficha va a nacer al recibir: la pantalla lo necesita para decirlo. */
       nuevoTipo: l.nuevoTipo,
       quantity: l.quantity,
       unitPrice: n(l.unitPrice),
+      /** Recarga o con carrete, como lo dijo el proveedor. */
+      isRefill: l.isRefill,
       received: l.received,
       /** Lo que falta llegar de ESTA línea. */
       porRecibir: Math.max(l.quantity - l.received, 0),
@@ -274,6 +279,13 @@ export class PurchaseInvoicesService {
         const p = await this.prisma.printer.findFirst({ where: { id: l.printerId, organizationId } });
         if (!p) throw new NotFoundException('No existe esa impresora');
       }
+      // ⚠️ Por ORGANIZACIÓN, igual que las otras dos: con el id de otro negocio
+      // la factura quedaría pidiendo el insumo de un tercero, y su nombre
+      // saldría impreso en la pantalla de Compras.
+      if (l.componentId) {
+        const c = await this.prisma.component.findFirst({ where: { id: l.componentId, organizationId } });
+        if (!c) throw new NotFoundException('No existe ese insumo');
+      }
     }
   }
 
@@ -281,11 +293,15 @@ export class PurchaseInvoicesService {
     return dto.lines.map((l) => ({
       materialId: l.materialId || null,
       printerId: l.printerId || null,
+      componentId: l.componentId || null,
       nombreNuevo: l.nombreNuevo || null,
       /** El schema ya garantiza que viene con `nombreNuevo` y solo con él. */
       nuevoTipo: l.nuevoTipo || null,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
+      // ⚠️ `?? null` y no `|| null`: `false` ("con carrete") es un dato tan
+      // verdadero como `true`, y con `||` se guardaría como "no se registró".
+      isRefill: l.isRefill ?? null,
     }));
   }
 
@@ -539,9 +555,9 @@ export class PurchaseInvoicesService {
     // "filamento" es justo lo que dejaba un rollo llamado "Impresora A2". El
     // schema Zod ya lo frena al cargar la factura; esto cubre una fila vieja o
     // un script. Antes de la transacción: el 400 sale sin haber escrito nada.
-    if (!linea.materialId && !linea.printerId && !linea.nuevoTipo) {
+    if (!linea.materialId && !linea.printerId && !linea.componentId && !linea.nuevoTipo) {
       throw new BadRequestException(
-        'Esa línea pide algo que todavía no tenés pero no dice si es filamento o impresora. Elegilo en la factura antes de recibir.',
+        'Esa línea pide algo que todavía no tenés pero no dice si es filamento, impresora o insumo. Elegilo en la factura antes de recibir.',
       );
     }
 
@@ -550,8 +566,36 @@ export class PurchaseInvoicesService {
       // llegó. El resto de sus datos se corrige después desde su catálogo.
       let matId = linea.materialId;
       let impId = linea.printerId;
-      if (!matId && !impId && linea.nombreNuevo) {
-        if (linea.nuevoTipo === 'PRINTER') {
+      let insId = linea.componentId;
+      if (!matId && !impId && !insId && linea.nombreNuevo) {
+        if (linea.nuevoTipo === 'COMPONENT') {
+          /**
+           * UN INSUMO QUE NACE AL RECIBIR (placa, boquilla, empaque).
+           *
+           * ⚠️ **`scope: 'PER_ORDER'` y no el default `PER_PIECE`.** Lo que
+           * entra por acá suele ser una herramienta —una placa de impresión no
+           * se gasta en cada pieza—, y con `PER_PIECE` la calculadora le
+           * sumaría su precio ENTERO a cada unidad del pedido si alguien la
+           * eligiera. Ninguno de los dos es exacto para algo durable; este es
+           * el menos dañino, y se cambia con un click desde su catálogo.
+           *
+           * `unitsPerPackage: 1` porque la línea cuenta unidades, no paquetes:
+           * el costo por unidad es el precio que te cobraron.
+           */
+          const nuevo = await tx.component.create({
+            data: {
+              organizationId,
+              name: linea.nombreNuevo,
+              packagePrice: precio,
+              unitsPerPackage: 1,
+              scope: 'PER_ORDER',
+            },
+          });
+          insId = nuevo.id;
+          // Repuntar la línea: así una segunda recepción parcial reusa la ficha
+          // en vez de crear otra, igual que con el filamento y la impresora.
+          await tx.purchaseInvoiceLine.update({ where: { id: lineId }, data: { componentId: insId } });
+        } else if (linea.nuevoTipo === 'PRINTER') {
           // Nace con el precio de la compra; horas de vida y consumo quedan en
           // el default y se corrigen desde el catálogo de impresoras.
           // Nace con lo que COSTÓ, no con lo que pediste.
@@ -583,13 +627,25 @@ export class PurchaseInvoicesService {
           organizationId,
           date: fecha,
           category: impId ? 'EQUIPMENT' : 'CONSUMABLE',
-          description: `Compra ${linea.nombreNuevo ?? linea.material?.name ?? linea.printer?.name ?? ''}`.trim(),
+          description: `Compra ${linea.nombreNuevo ?? linea.material?.name ?? linea.printer?.name ?? linea.component?.name ?? ''}`.trim(),
           amount: monto,
           quantity: dto.quantity,
           isInvestment: impId != null,
           materialId: matId,
           printerId: impId,
+          componentId: insId,
           providerId: f.supplierId,
+          /**
+           * ⚠️ **ACÁ SE TAPA EL CALLEJÓN.** El gasto que nace de una factura no
+           * se puede corregir después —`noSeTocaDesdeGastos` lo rechaza y
+           * `EditarCompra` tampoco lo abre—, así que si la recarga no se copia
+           * en este instante, ese rollo **no se puede marcar nunca**. El dato
+           * lo trae la línea porque es la factura la que lo dice.
+           *
+           * `?? null`: `false` es "con carrete", un dato tan verdadero como
+           * `true`; `null` es "no se registró".
+           */
+          isRefill: linea.isRefill ?? null,
           // ⚠️ Esto es lo que le dice a Caja que su plata ya se contó.
           purchaseInvoiceLineId: lineId,
         },
