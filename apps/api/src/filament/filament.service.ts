@@ -12,6 +12,8 @@ import {
   preciosPorTipo,
   rollosRecibidosPorFicha,
   stockTotal,
+  valorDelInventario,
+  type ValorDelInventario,
   type FilamentPurchase,
   type PrecioPorTipo,
   type MaterialStatus,
@@ -59,6 +61,12 @@ export interface FilamentSummary {
   totalColors: number;
   /** rollos comprados por color, en promedio: el umbral de "los que más se compran" */
   averagePurchased: number;
+  /**
+   * Cuánto vale en dinero el filamento que queda. Es una ESTIMACIÓN
+   * (el conteo no sabe gramos): trae el desglose y el rango para que la
+   * pantalla pueda mostrar de dónde sale. Todo en 0 si el mes está abierto.
+   */
+  valor: ValorDelInventario;
   /** true si el mes está CERRADO: solo entonces el total, el consumo y la reposición son datos finales */
   complete: boolean;
 }
@@ -352,7 +360,7 @@ export class FilamentService {
   /** Totales del mes, consumo contra el mes anterior y qué reponer. */
   async summary(organizationId: string, month: string): Promise<FilamentSummary> {
     const anterior = previousMonth(month);
-    const [materiales, actualGuardado, previoGuardado, comprados, historico, cerrado, previoCerrado] =
+    const [materiales, actualGuardado, previoGuardado, comprados, historico, cerrado, previoCerrado, algunaVezCompradas] =
       await Promise.all([
         this.prisma.material.findMany({ where: { organizationId } }),
         this.countsOf(organizationId, month),
@@ -361,6 +369,7 @@ export class FilamentService {
         this.purchasedUpTo(organizationId, month),
         this.isClosed(organizationId, month),
         this.isClosed(organizationId, anterior),
+        this.materialsEverBought(organizationId),
       ]);
 
     // Un mes abierto (nunca cerrado, o reabierto a medio corregir) no da números.
@@ -386,6 +395,24 @@ export class FilamentService {
       historico,
     );
 
+    // Cuánto vale lo que queda. `actual` ya viene vacío si el mes está
+    // abierto, así que un mes sin cerrar da 0 sin ningún caso aparte.
+    const fichaPorId = new Map(materiales.map((m) => [m.id, m]));
+    const valor = valorDelInventario(
+      actual.map((c) => {
+        const m = fichaPorId.get(c.materialId);
+        return {
+          sealed: c.sealed,
+          inUse: c.inUse,
+          running: c.running,
+          // El precio de la ÚLTIMA compra, y SOLO si alguna vez se compró:
+          // `rollPrice` existe aunque la ficha se haya dado de alta a mano,
+          // y valorar con un precio que nadie pagó es inventar plata.
+          lastRollPrice: m && algunaVezCompradas.has(m.id) ? Number(m.rollPrice) : null,
+        };
+      }),
+    );
+
     return {
       month,
       totalRolls,
@@ -397,6 +424,7 @@ export class FilamentService {
       countedColors: reposicion.countedColors,
       totalColors: reposicion.totalColors,
       averagePurchased: reposicion.averagePurchased,
+      valor,
       complete: cerrado,
     };
   }

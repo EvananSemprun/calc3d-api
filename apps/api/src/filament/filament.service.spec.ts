@@ -1283,3 +1283,88 @@ describe('Precio por tipo de filamento', () => {
   });
 });
 
+
+/**
+ * CUÁNTO VALE EN DINERO EL FILAMENTO QUE QUEDA. La cuenta vive en
+ * `valorDelInventario` (shared); acá se fija el CABLEADO: de dónde sale el
+ * precio de cada ficha y, sobre todo, cuándo el resumen NO debe dar plata.
+ */
+describe('Valor del inventario', () => {
+  const AGO = new Date('2026-08-01T00:00:00Z');
+
+  /** El mock de gastos que sirve a las tres consultas que hace el resumen. */
+  const conCompras = (materialIds: string[]) =>
+    makePrisma({
+      expense: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue(materialIds.map((materialId) => ({ materialId, quantity: 1 }))),
+      },
+    });
+
+  it('valora los rollos del mes cerrado con el precio de cada ficha', async () => {
+    const prisma = conCompras(['m1', 'm2']);
+    prisma.stockCount.findMany.mockImplementation(({ where }: { where: { month: Date } }) =>
+      Promise.resolve(
+        where.month.getTime() === AGO.getTime()
+          ? [
+              // m1 a $20: 1 sellado (20) + 2 en uso (20) = 40
+              { materialId: 'm1', sealed: 1, inUse: 2, running: 0, needsBrandCheck: false },
+              // m2 a $22: 4 por acabarse = 11
+              { materialId: 'm2', sealed: 0, inUse: 0, running: 4, needsBrandCheck: false },
+            ]
+          : [],
+      ),
+    );
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+
+    expect(r.valor).toEqual({
+      sellados: 20,
+      enUso: 20,
+      porAcabarse: 11,
+      total: 51,
+      piso: 20,
+      techo: 20 + 40 + 88,
+      sinPrecio: 0,
+    });
+  });
+
+  // ⚠️ La regla del cierre mensual: un mes ABIERTO no da números. Si diera
+  // plata, el dueño leería un valor de inventario armado con un conteo a medio
+  // hacer — justo lo que el cierre existe para evitar.
+  it('un mes abierto no da valor', async () => {
+    const prisma = conCompras(['m1']);
+    prisma.stockMonth.findUnique.mockResolvedValue(null); // nunca se cerró
+    prisma.stockCount.findMany.mockResolvedValue([
+      { materialId: 'm1', sealed: 5, inUse: 0, running: 0, needsBrandCheck: false },
+    ]);
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+
+    expect(r.valor.total).toBe(0);
+    expect(r.valor.techo).toBe(0);
+  });
+
+  // ⚠️ "Un default no es un dato": `rollPrice` existe en la ficha aunque nunca
+  // se haya comprado (lo pone el alta a mano), así que usarlo diría "esto vale
+  // X" sobre un precio que nadie pagó. Esos rollos se cuentan aparte.
+  it('no valora una ficha que nunca se compró: sus rollos van a sinPrecio', async () => {
+    const prisma = conCompras(['m1']); // m2 nunca se compró
+    prisma.stockCount.findMany.mockImplementation(({ where }: { where: { month: Date } }) =>
+      Promise.resolve(
+        where.month.getTime() === AGO.getTime()
+          ? [
+              { materialId: 'm1', sealed: 1, inUse: 0, running: 0, needsBrandCheck: false },
+              { materialId: 'm2', sealed: 2, inUse: 1, running: 0, needsBrandCheck: false },
+            ]
+          : [],
+      ),
+    );
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+
+    expect(r.valor.total).toBe(20);
+    expect(r.valor.sinPrecio).toBe(3);
+  });
+});
