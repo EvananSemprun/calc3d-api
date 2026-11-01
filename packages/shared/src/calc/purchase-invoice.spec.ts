@@ -1,4 +1,10 @@
-import { facturasAtrasadas, invoiceStatus, invoiceTotals, type FacturaParaAtraso } from './purchase-invoice';
+import {
+  codigoDeCompra,
+  facturasAtrasadas,
+  invoiceStatus,
+  invoiceTotals,
+  type FacturaParaAtraso,
+} from './purchase-invoice';
 
 /**
  * ⚠️ Los números esperados están **puestos a mano**, no calculados con el
@@ -447,5 +453,26 @@ describe('facturasAtrasadas', () => {
 
   it('sin facturas no hay atraso', () => {
     expect(facturasAtrasadas([], HOY)).toEqual([]);
+  });
+});
+
+/**
+ * EL CÓDIGO DE LA COMPRA ES NUESTRO, no del proveedor (2026-11-01).
+ *
+ * ⚠️ Hasta acá la única identidad de una compra era `reference`, que es el
+ * número que le pone EL PROVEEDOR. Eso dejaba compras sin nombre ("(sin
+ * número)") y hacía que dos proveedores pudieran usar el mismo "0003".
+ */
+describe('codigoDeCompra', () => {
+  it('va con prefijo y cuatro cifras', () => {
+    expect(codigoDeCompra(1)).toBe('C-0001');
+    expect(codigoDeCompra(42)).toBe('C-0042');
+  });
+
+  // ⚠️ El relleno es un MÍNIMO, no un tope: la compra 12 345 tiene que poder
+  // mostrarse entera. Cortarla a cuatro cifras daría dos compras con el mismo
+  // código en pantalla.
+  it('no recorta cuando se pasa de cuatro cifras', () => {
+    expect(codigoDeCompra(12345)).toBe('C-12345');
   });
 });

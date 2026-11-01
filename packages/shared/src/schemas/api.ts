@@ -1098,6 +1098,13 @@ export const PurchaseInvoiceUpsertSchema = z.object({
   supplierId: z.string().min(1).optional().nullable(),
   /** Cuándo se espera que llegue. Es una expectativa, no un compromiso. */
   expectedAt: FECHA_OPCIONAL,
+  /**
+   * El número que le puso EL PROVEEDOR a su factura o recibo ("A-001").
+   *
+   * ⚠️ **No es la identidad de la compra**: esa es `code`, el código propio,
+   * y **no viaja en este DTO a propósito** — lo asigna el servidor. Si el
+   * cliente pudiera mandarlo, podría pisar el correlativo de otra compra.
+   */
   reference: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
   lines: z.array(PurchaseInvoiceLineSchema).min(1, 'Una factura sin líneas no compra nada'),

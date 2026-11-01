@@ -39,8 +39,16 @@ const FILAS = {
  * devolviera siempre la fila pedida haría pasar los tests de aislamiento con y
  * sin el filtro por organización — el error de la fase 2.
  */
-const coincide = (fila: Record<string, unknown>, where: Record<string, unknown>) =>
-  Object.entries(where).every(([k, v]) => fila[k] === v);
+const coincide = (fila: Record<string, unknown>, where: Record<string, unknown>): boolean =>
+  Object.entries(where).every(([k, v]) => {
+    // ⚠️ `{ not: x }` es un OPERADOR de Prisma, no un valor. Compararlo con
+    // `===` no casaba nunca, así que un `where` con `not` no encontraba NADA y
+    // los tests de "no se rechaza contra sí misma" pasaban sin probar nada.
+    if (v && typeof v === 'object' && 'not' in (v as Record<string, unknown>)) {
+      return fila[k] !== (v as { not: unknown }).not;
+    }
+    return fila[k] === v;
+  });
 
 /**
  * …y ORDENA como la base: por las claves del `orderBy`, en ese orden. Sin esto,
@@ -101,8 +109,11 @@ function makePrisma(
       // ⚠️ Filtra por el `where` como el resto: una factura de OTRA
       // organización no se alcanza. Devolverla siempre hacía pasar los tests de
       // aislamiento con y sin el filtro por organización.
-      findFirst: jest.fn(({ where }: Consulta) =>
-        Promise.resolve(todas.find((f) => coincide(f, where)) ?? null),
+      // ⚠️ ORDENA como la base. El correlativo pide "la de mayor `code`" con un
+      // `orderBy`; un mock que lo ignorara devolvería la primera del array y el
+      // test pasaría aunque el servicio pidiera el orden al revés.
+      findFirst: jest.fn(({ where, orderBy }: Consulta) =>
+        Promise.resolve(ordenar(todas.filter((f) => coincide(f, where)), orderBy)[0] ?? null),
       ),
       findMany: jest.fn(({ where }: Consulta) =>
         Promise.resolve(todas.filter((f) => coincide(f, where))),
@@ -1924,5 +1935,108 @@ describe('PurchaseInvoicesService — lo que se guarda al cargar la factura', ()
     const l = await cargar({ nombreNuevo: 'Placa', nuevoTipo: 'COMPONENT', quantity: 1, unitPrice: 40 });
     expect(l.nuevoTipo).toBe('COMPONENT');
     expect(l.nombreNuevo).toBe('Placa');
+  });
+});
+
+/**
+ * EL CÓDIGO ES NUESTRO; EL NÚMERO ES DEL PROVEEDOR (2026-11-01).
+ *
+ * ⚠️ Antes la única identidad de una compra era `reference`, el número que le
+ * pone el proveedor. Eso dejaba compras literalmente "(sin número)" y permitía
+ * que dos proveedores usaran el mismo "0003" sin que la app los distinguiera.
+ */
+describe('Código propio de la compra', () => {
+  const conCodigo = (code: number, over: Record<string, unknown> = {}) => ({
+    ...FACTURA_VACIA,
+    id: 'f' + code,
+    code,
+    ...over,
+  });
+
+  it('la primera compra de la organización lleva el código 1', async () => {
+    const p = makePrisma();
+    await servicio(p).create(ORG, ALTA as never);
+    expect(p.purchaseInvoice.create.mock.calls[0][0].data.code).toBe(1);
+  });
+
+  // ⚠️ El mayor + 1, no "cuántas hay": con una factura borrada, contar daría un
+  // código ya usado y el UNIQUE de la base reventaría el alta.
+  it('la siguiente lleva el mayor código + 1, no la cantidad de facturas', async () => {
+    const p = makePrisma(conCodigo(7), [], [conCodigo(2), conCodigo(4)]);
+    await servicio(p).create(ORG, ALTA as never);
+    expect(p.purchaseInvoice.create.mock.calls[0][0].data.code).toBe(8);
+  });
+
+  // ⚠️ El correlativo es POR organización: si mirara todas, el código de una
+  // saltaría al comprar la otra y dejaría huecos sin explicación.
+  it('no cuenta las compras de otra organización', async () => {
+    const p = makePrisma(conCodigo(9, { organizationId: OTRA }));
+    await servicio(p).create(ORG, ALTA as never);
+    expect(p.purchaseInvoice.create.mock.calls[0][0].data.code).toBe(1);
+  });
+
+  it('el código sale en la respuesta', async () => {
+    const p = makePrisma();
+    const f = await servicio(p).create(ORG, ALTA as never);
+    expect(f.code).toBe(1);
+  });
+
+  it('rechaza cargar dos veces la misma factura del mismo proveedor', async () => {
+    const p = makePrisma(conCodigo(3, { supplierId: 'prov-mio', reference: 'A-001' }));
+    await expect(
+      servicio(p).create(ORG, { ...ALTA, supplierId: 'prov-mio', reference: 'A-001' } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(p.purchaseInvoice.create).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ El aviso tiene que decir CUÁL es la que ya está, o el dueño no sabe si
+  // se equivocó al escribir o si de verdad ya la cargó.
+  it('el aviso nombra la compra que ya tenía ese número', async () => {
+    const p = makePrisma(conCodigo(3, { supplierId: 'prov-mio', reference: 'A-001' }));
+    await expect(
+      servicio(p).create(ORG, { ...ALTA, supplierId: 'prov-mio', reference: 'A-001' } as never),
+    ).rejects.toThrow(/C-0003/);
+  });
+
+  // ⚠️ "Sin número" no es un número repetido: varias compras pueden no traer
+  // papel. Si esto chocara, la segunda compra sin recibo sería incargable.
+  it('deja cargar varias compras SIN número del proveedor', async () => {
+    const p = makePrisma(conCodigo(3, { supplierId: 'prov-mio', reference: null }));
+    await servicio(p).create(ORG, { ...ALTA, supplierId: 'prov-mio' } as never);
+    expect(p.purchaseInvoice.create).toHaveBeenCalled();
+  });
+
+  // ⚠️ La razón de ser del cambio: el "0003" de un proveedor no es el "0003"
+  // de otro. Si chocaran, cambiar de proveedor sería imposible.
+  it('el mismo número de OTRO proveedor sí se puede cargar', async () => {
+    const p = makePrisma(conCodigo(3, { supplierId: 'otro-prov', reference: '0003' }));
+    await servicio(p).create(ORG, { ...ALTA, supplierId: 'prov-mio', reference: '0003' } as never);
+    expect(p.purchaseInvoice.create).toHaveBeenCalled();
+  });
+
+  // ⚠️ Al corregir, la factura se encuentra a SÍ MISMA con su propio número.
+  // Sin excluirla, dejar de tocar el número volvería la factura incorregible.
+  it('corregir una factura sin cambiarle el número no la rechaza contra sí misma', async () => {
+    const p = makePrisma(conCodigo(3, { id: 'f3', supplierId: 'prov-mio', reference: 'A-001' }));
+    await expect(
+      servicio(p).update(ORG, 'f3', {
+        ...ALTA,
+        supplierId: 'prov-mio',
+        reference: 'A-001',
+      } as never),
+    ).resolves.toBeDefined();
+  });
+
+  it('corregir una factura poniéndole el número de OTRA sí se rechaza', async () => {
+    const p = makePrisma(conCodigo(3, { id: 'f3', supplierId: 'prov-mio', reference: null }), [], [
+      conCodigo(5, { id: 'f5', supplierId: 'prov-mio', reference: 'A-001' }),
+    ]);
+    await expect(
+      servicio(p).update(ORG, 'f3', {
+        ...ALTA,
+        supplierId: 'prov-mio',
+        reference: 'A-001',
+      } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

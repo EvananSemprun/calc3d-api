@@ -307,3 +307,18 @@ export function facturasAtrasadas(
 
   return atrasadas.sort((a, b) => b.diasDeAtraso - a.diasDeAtraso);
 }
+
+/**
+ * EL CÓDIGO PROPIO de una compra: `C-0001`.
+ *
+ * ⚠️ No confundir con `reference`, que es el número que le pone **el
+ * proveedor** (su "A-001", su "Recibo 0003"). Ese es suyo, no nuestro: puede
+ * faltar, puede repetirse entre proveedores y puede cambiar de formato cuando
+ * al proveedor se le ocurra. El código de acá es el que identifica la compra
+ * dentro de la app, y lo asigna ella.
+ *
+ * El relleno a cuatro cifras es un MÍNIMO: la compra 12 345 se muestra entera.
+ */
+export function codigoDeCompra(code: number): string {
+  return `C-${String(code).padStart(4, '0')}`;
+}

@@ -1402,7 +1402,13 @@ model PurchaseInvoice {
   date       DateTime
   /// Cuándo se espera que llegue. Es una expectativa, no un compromiso.
   expectedAt DateTime?
-  /// Número de factura o del pedido, para reconciliar con el proveedor.
+  /// CÓDIGO PROPIO de la compra: correlativo por organización, lo asigna la
+  /// app y no cambia. Se muestra como `C-0001` (ver `codigoDeCompra`).
+  code       Int
+  /// El número que le puso EL PROVEEDOR a su factura o recibo ("A-001",
+  /// "Recibo 0003"). Es SUYO, no nuestro: puede faltar, puede repetirse entre
+  /// proveedores y puede cambiar de formato. Sirve para reconciliar contra su
+  /// estado de cuenta; la identidad de la compra es `code`.
   reference  String?
   notes      String?
 
@@ -1420,6 +1426,11 @@ model PurchaseInvoice {
   source    RecordSource @default(MANUAL)
   createdAt DateTime     @default(now())
 
+  @@unique([organizationId, code])
+  /// La misma factura del mismo proveedor no se carga dos veces. Postgres
+  /// trata los NULL como distintos, así que varias compras SIN número del
+  /// proveedor conviven sin chocar — que es lo que se quiere.
+  @@unique([organizationId, supplierId, reference])
   @@index([organizationId])
   @@index([organizationId, date])
 }

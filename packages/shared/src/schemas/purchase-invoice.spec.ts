@@ -1,6 +1,7 @@
 import {
   PurchaseInvoiceLineSchema,
   PurchaseInvoicePaymentSchema,
+  PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
 } from './api';
 
@@ -339,5 +340,26 @@ describe('PurchaseInvoiceLineSchema: la ficha nueva trae su tipo', () => {
     expect(
       PurchaseInvoiceLineSchema.safeParse({ materialId: 'mat-1', quantity: 1, unitPrice: 10 }).success,
     ).toBe(true);
+  });
+});
+
+/**
+ * EL CÓDIGO PROPIO NO VIAJA EN EL BODY (2026-11-01).
+ *
+ * ⚠️ `code` es la identidad de la compra y la asigna el servidor. Si el
+ * cliente pudiera mandarlo, podría pisar el correlativo de otra compra o
+ * reventar el UNIQUE de la base desde afuera. Es el mismo patrón que el saldo:
+ * **un campo que decide identidad o plata no sale nunca del body.**
+ */
+describe('PurchaseInvoiceUpsertSchema: el código lo pone el servidor', () => {
+  const ALTA = { date: '2026-11-01', lines: [{ materialId: 'm1', quantity: 1, unitPrice: 10 }] };
+
+  it('descarta un `code` mandado desde afuera', () => {
+    const r = PurchaseInvoiceUpsertSchema.parse({ ...ALTA, code: 999 });
+    expect(r).not.toHaveProperty('code');
+  });
+
+  it('el número del proveedor sí se acepta', () => {
+    expect(PurchaseInvoiceUpsertSchema.parse({ ...ALTA, reference: 'A-001' }).reference).toBe('A-001');
   });
 });

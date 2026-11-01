@@ -2857,6 +2857,104 @@ como respaldo. **Ya no se sincroniza Excel → app.**
   De septiembre en adelante los dos coinciden al centavo.
 - Si aparece un `.xlsx` editado a mano, **no sincronizarlo: preguntar primero.**
 
+### Cuánto vale el filamento que queda (2026-11-01, shared 0.62.0)
+
+El dueño quería ver, al cerrar el inventario del mes, **cuánto es eso en
+dinero**. La cuenta vive en `packages/shared/src/calc/valor-inventario.ts` y
+`FilamentService.summary()` la cablea; se muestra en `/filament` (pestaña
+Stock del mes), debajo de las métricas del mes cerrado.
+
+**La convención, elegida por el dueño sobre números medidos:** sellado 100 %,
+en uso 50 %, por acabarse 12.5 % (`FRACCIONES_DE_ROLLO`). El 12.5 no es a ojo:
+`running` es "menos de un cuarto", y 0.125 es el punto medio de 0–0.25.
+
+⚠️ **La convención NO es un detalle: decide el número entero.** Medido sobre
+el inventario real de septiembre (28 rollos: 4 sellados, 16 en uso, 8 por
+acabarse): solo sellados $90.91 · 100/50/12.5 **$266.35** · todo completo
+$565.91. Un factor de 6×, porque el 86 % de los rollos está abierto. Por eso
+la tarjeta muestra **el desglose y el rango (piso–techo)** y no un número
+pelado: sin eso, una estimación se lee como una medición.
+
+**Dos límites honestos, escritos en la propia pantalla:**
+- El precio es el de la **última compra** (`Material.rollPrice`), o sea **costo
+  de reposición**, no lo que se pagó. No es valuación contable histórica.
+- El conteo **no sabe gramos**. Ningún porcentaje lo convierte en medición.
+
+**Reglas que el cableado tiene que respetar (las tres tienen test):**
+1. **Un mes ABIERTO no da plata.** `summary()` ya vacía `actual` si no está
+   cerrado, así que el valor sale 0 sin ningún caso aparte. Mostrar plata de un
+   conteo a medio hacer es justo lo que el cierre mensual existe para evitar.
+2. **Una ficha que nunca se compró no se valora.** `rollPrice` existe aunque la
+   ficha se haya dado de alta a mano: usarlo inventaría plata. Esos rollos se
+   cuentan aparte en `valor.sinPrecio` ("un default no es un dato").
+3. El dinero se suma con **decimal.js** (`D`/`sum`/`toMoney`), no con floats.
+
+⚠️ **Al verificar contra la pantalla local, ojo con qué base se está mirando.**
+La medición con `prod.mjs` dio $266.35 y el panel local mostraba $264.47: NO
+era un bug de dos caminos que no cuadran, era que la copia local es del 01/10 y
+tiene otros precios de última compra. Confirmado corriendo `summary()` contra
+cada base: local $264.4707 (= la pantalla), producción $266.3457 (= el script).
+Antes de cazar un bug de cálculo, comprobar que los dos lados leen la MISMA base.
+
+⚠️ **Un test que depende del calendario se rompe solo.**
+`StockTab.sugerencia.spec.tsx` se puso rojo el 2026-11-01 sin que nadie lo
+tocara: esperaba la palabra "octubre" y el mes sale de `currentMonthKey()`, o
+sea del reloj. Se arregló fijando la fecha (`vi.setSystemTime`). Lo nuevo que
+dependa de "hoy" tiene que fijar la fecha o no dice nada del código.
+
+### El código es NUESTRO; el número es del PROVEEDOR (2026-11-01, shared 0.62.0)
+
+Hasta acá la única identidad de una compra era `reference`, que es **el número
+que le pone el proveedor**. El dueño lo señaló: *"el CIAM puede ser 003, pero
+si el proveedor le vendió a otra persona, de pronto no es igual"*. Tenía razón
+y ya dolía: la compra del Cyan figuraba **"(sin número)"** —sin nombre, no se
+podía ni nombrar— y `A-001` (apartados) y `0003` (recibos) son dos
+numeraciones distintas **del mismo** proveedor.
+
+- **`PurchaseInvoice.code`**: correlativo por organización, lo asigna el
+  servidor, no cambia. Se muestra con `codigoDeCompra` → `C-0001`. Mismo patrón
+  que `Order.code`, que ya existía: los pedidos tenían número propio y las
+  compras no, una asimetría sin razón.
+- **`reference` queda como lo que siempre fue**: el número del proveedor, para
+  cruzar su estado de cuenta. En pantalla dice "N.º del proveedor". **No se
+  renombró la columna a propósito** (13 archivos + el contrato + el front):
+  el comentario del schema y la etiqueta de la UI alcanzan.
+- **`code` NO viaja en el DTO de alta**, y hay test de contrato que lo fija: es
+  identidad, y desde el body se podría pisar el correlativo de otra compra.
+
+**Dos UNIQUE, y el segundo tiene una sutileza:**
+`@@unique([organizationId, code])` y `@@unique([organizationId, supplierId, reference])`.
+El segundo bloquea cargar dos veces la misma factura del mismo proveedor — el
+error que el 2026-11-01 hubo que cazar a mano contra el estado de cuenta.
+⚠️ **Postgres trata los NULL como distintos**, así que varias compras SIN
+número del proveedor conviven sin chocar: es lo que se quiere, porque "sin
+papel" no es "número repetido". Comprobado con SQL sobre una copia de
+producción: repetir `A-001` falla, dos `NULL` entran, repetir el `code` falla.
+
+**Sin proveedor no hay bloqueo**, y es correcto: el número "0003" no identifica
+nada si no se sabe de quién es la factura.
+
+⚠️ **La migración rellena datos, así que se ENSAYÓ contra una copia de
+producción** y no solo contra la base local — que no tenía ni una factura, o
+sea que el `UPDATE ... ROW_NUMBER()` no se habría ejercitado. El ensayo:
+restaurar el último `pg_dump` en una base `calc3d_ensayo`, correr
+`prisma migrate deploy` ahí, comprobar los códigos y **borrar la base**.
+Resultado: 5 facturas, C-0001 a C-0005 en orden de compra, sin huecos ni nulos.
+El `ORDER BY "date", "createdAt", "id"` es un orden TOTAL a propósito: sin el
+desempate, dos facturas del mismo día podrían intercambiarse los códigos.
+
+⚠️ **Dos verdes falsos que encontraron las mutaciones, los dos en el MOCK:**
+1. `purchaseInvoice.findFirst` ignoraba el `orderBy`, así que el test del
+   correlativo habría pasado aunque el servicio pidiera el orden al revés.
+2. `coincide` comparaba `{ not: x }` con `===`, que no casa nunca: un `where`
+   con `not` no encontraba NADA y el test de "no se rechaza contra sí misma"
+   pasaba **sin probar nada**. El mock tiene que MODELAR la base, operadores
+   incluidos.
+
+⚠️ **`vitest` no chequea tipos; `tsc` sí.** Agregar `code` al contrato dejó
+`Purchases.abonar.spec.tsx` roto y los 258 tests siguieron en verde: lo cantó
+`pnpm -r build`. Un cambio de contrato no está verificado hasta correr el build.
+
 ## Entorno
 - Windows / PowerShell: usar su sintaxis (`$env:VAR` no `$VAR`, `$null` no
   `/dev/null`, backtick para continuar línea). Rutas con backslash de Windows.

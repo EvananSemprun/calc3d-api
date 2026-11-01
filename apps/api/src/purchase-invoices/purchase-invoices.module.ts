@@ -19,6 +19,7 @@ import {
   PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
   PurchaseVoidSchema,
+  codigoDeCompra,
   invoiceStatus,
   invoiceTotals,
   purchaseCostPerRoll,
@@ -182,6 +183,7 @@ export class PurchaseInvoicesService {
 
     return {
       id: f.id,
+      code: f.code,
       date: f.date.toISOString(),
       expectedAt: f.expectedAt?.toISOString() ?? null,
       reference: f.reference,
@@ -313,11 +315,63 @@ export class PurchaseInvoicesService {
     }));
   }
 
+/**
+   * EL CÓDIGO PROPIO de la compra: el mayor de la organización + 1. Mismo
+   * patrón que `Order.code`.
+   *
+   * ⚠️ El mayor + 1, **no** "cuántas hay": con una compra borrada, contar
+   * daría un código ya usado y el UNIQUE de la base rechazaría el alta.
+   */
+  private async siguienteCodigo(organizationId: string): Promise<number> {
+    const ultima = await this.prisma.purchaseInvoice.findFirst({
+      where: { organizationId },
+      orderBy: { code: 'desc' },
+      select: { code: true },
+    });
+    return (ultima?.code ?? 0) + 1;
+  }
+
+  /**
+   * La misma factura del mismo proveedor no se carga dos veces.
+   *
+   * ⚠️ **"Sin número" no es un número repetido.** Varias compras pueden no
+   * traer papel; si chocaran, la segunda compra sin recibo sería incargable.
+   * Por eso un `reference` vacío no se chequea (y el UNIQUE de la base tampoco
+   * lo alcanza: Postgres trata los NULL como distintos).
+   *
+   * ⚠️ Al CORREGIR, la factura se encuentra a sí misma con su propio número:
+   * `exceptoId` la saca de la búsqueda. Sin eso, dejarle el número quieto
+   * volvería la factura incorregible.
+   *
+   * La base tiene el UNIQUE que lo garantiza de verdad; esto existe para dar
+   * un aviso que diga CUÁL es la compra que ya tenía ese número.
+   */
+  private async numeroDelProveedorLibre(
+    organizationId: string,
+    dto: PurchaseInvoiceUpsertDto,
+    exceptoId?: string,
+  ): Promise<void> {
+    const reference = dto.reference || null;
+    const supplierId = dto.supplierId || null;
+    if (!reference || !supplierId) return;
+
+    const ya = await this.prisma.purchaseInvoice.findFirst({
+      where: { organizationId, supplierId, reference, ...(exceptoId && { id: { not: exceptoId } }) },
+      select: { code: true, date: true },
+    });
+    if (!ya) return;
+    throw new BadRequestException(
+      `Ese proveedor ya tiene la factura "${reference}": es la compra ${codigoDeCompra(ya.code)}, del ${ya.date.toISOString().slice(0, 10)}. Si es otra compra distinta, cambiale el número; si es la misma, corregila en vez de cargarla de nuevo.`,
+    );
+  }
+
   async create(organizationId: string, dto: PurchaseInvoiceUpsertDto) {
     await this.validarReferencias(organizationId, dto);
+    await this.numeroDelProveedorLibre(organizationId, dto);
     const f = await this.prisma.purchaseInvoice.create({
       data: {
         organizationId,
+        code: await this.siguienteCodigo(organizationId),
         date: new Date(dto.date),
         expectedAt: dto.expectedAt ? new Date(dto.expectedAt) : null,
         supplierId: dto.supplierId || null,
@@ -349,6 +403,7 @@ export class PurchaseInvoicesService {
       );
     }
     await this.validarReferencias(organizationId, dto);
+    await this.numeroDelProveedorLibre(organizationId, dto, id);
 
     const f = await this.prisma.$transaction(async (tx) => {
       await tx.purchaseInvoiceLine.deleteMany({ where: { invoiceId: id } });
