@@ -2329,28 +2329,68 @@ en el repo web: se sobrescribe al sincronizar.
   Como no hay registro público, **el seed es la única vía de crear la cuenta**. Con
   `SEED_DEMO=1` además siembra un catálogo de ejemplo (caso del llavero) en su org.
 
-## Producción (desde 2026-10-01): API en Render, base en Railway, panel en Cloudflare
+## Producción (desde 2026-11-05): TODO en Railway, panel en Cloudflare
 
 | Pieza | Dónde | URL |
 |---|---|---|
-| API (este repo) | **Render**, plan free, Docker | `https://calc3d-api.onrender.com/api` |
-| Base de datos | **Railway**, PostgreSQL **17** | host `crossover.proxy.rlwy.net`, puerto `48405`, base `railway` |
+| API (este repo) | **Railway**, proyecto `remarkable-tenderness`, Docker | `https://calc3d-api-production.up.railway.app/api` |
+| Base de datos | **Railway**, PostgreSQL **18**, mismo proyecto que la API | URL en `apps/api/.env.production.local` (⚠️ **este repo es PÚBLICO**: ni host ni puerto se escriben acá) |
 | Panel (`calc3d-web`) | **Cloudflare Pages** | `https://calc3d-web.pages.dev` |
 
-- **Render** se configura con `render.yaml` (Blueprint) y redespliega solo en
-  cada push a `main` (`autoDeploy`). Variables: `DATABASE_URL` (la URL **pública**
-  de Railway, `DATABASE_PUBLIC_URL`; la interna `*.railway.internal` no se alcanza
-  desde Render), `JWT_SECRET` (la genera Render), `JWT_EXPIRES_IN`, `TRUST_PROXY=1`,
-  y `WEB_ORIGIN` / `APP_URL` = `https://calc3d-web.pages.dev` **exacto, sin barra
-  final**: si no coincide, el navegador bloquea el login por CORS sin decir por
-  qué. No hacen falta `STORE_*` ni `R2_*` mientras se use solo el panel.
-- ⚠️ **Plan free: la API se duerme a los 15 min sin tráfico** y la primera request
-  tarda ~50 s en despertarla (aceptado por el dueño: solo usa el panel). Si algún
-  día se publica la tienda, eso no sirve para un cliente: ping a `/api/health`
-  cada 10 min (no toca la base) o pasar a un plan pago.
+### La mudanza de Render a Railway (2026-11-05)
+
+Hasta ese día la API vivía en **Render** (plan free, se dormía a los 15 min) y la
+base en otro proyecto de Railway (Postgres 17).
+El dueño movió las dos cosas a un proyecto Railway nuevo. **Lo viejo quedó sin
+uso**; se conservó unos días como red de seguridad y después se borra.
+
+Cómo se hizo la base: `pg_dump -Fc` de la vieja → `pg_restore --single-transaction`
+en la nueva (vacía). De 17 a 18 va sin problema. **No alcanza con contar filas
+para decir que quedaron iguales**: un `COUNT(*)` no ve una fila EDITADA. Se
+comparó un **md5 del contenido de cada tabla**, ordenado, y además se leyeron los
+números del negocio con los servicios reales contra las dos bases. Las 39 tablas
+dieron idénticas. El script quedó documentado abajo, en «Respaldar, migrar».
+
+⚠️ **Los dos tropiezos de la mudanza fueron de COPIAR Y PEGAR, y los dos
+costaron un rato de bucle de reinicios:**
+1. `DATABASE_URL` quedó como `ppostgresql://…` (una `p` de más) y entre comillas.
+   Prisma decía *"the URL must start with the protocol `postgresql://`"*. Ese
+   mensaje **prueba que la variable existe**: si faltara, diría *"Environment
+   variable not found"*. Se ve en Variables → **Raw Editor**. Mejor todavía:
+   dentro del mismo proyecto, poner `${{Postgres.DATABASE_URL}}` y elegir el
+   servicio del autocompletado — usa la red interna y no hay nada que tipear.
+2. `VITE_API_URL` quedó **sin el `/api` final**, y el panel pidió `/auth/login`
+   → 404 `Cannot POST /auth/login`. La API monta todo bajo `setGlobalPrefix('api')`.
+   El CORS y el resto ya estaban bien: la respuesta traía `railway-hikari` y el
+   `Access-Control-Allow-Origin` correcto. **Un 404 ahí es la ruta, no el CORS.**
+
+⚠️ **Cómo saber a qué base le habla la app, sin suponerlo:** contar las
+conexiones de aplicación de cada base (`pg_stat_activity`, descartando las de
+`psql`). Después del corte: vieja **0**, nueva **37**. Y para el panel, leer el
+bundle PUBLICADO y buscar la URL embebida — `VITE_API_URL` se escribe dentro del
+bundle en tiempo de build, así que **guardar la variable no basta: hay que
+redesplegar**.
+
+- **Railway** construye con el `Dockerfile` de este repo y redespliega solo en
+  cada push a `main`. Variables del servicio: `DATABASE_URL`, `JWT_SECRET`,
+  `JWT_EXPIRES_IN`, `TRUST_PROXY=1`, y `WEB_ORIGIN` / `APP_URL` =
+  `https://calc3d-web.pages.dev` **exacto, sin barra final**: si no coincide, el
+  navegador bloquea el login por CORS sin decir por qué. No hacen falta `STORE_*`
+  ni `R2_*` mientras se use solo el panel.
+  - El `CMD` del Dockerfile corre `prisma migrate deploy` antes de arrancar, así
+    que **un push con migraciones se auto-aplica**, igual que en Render.
+  - ⚠️ **Poner el Healthcheck Path en `/api/health`** (Settings → Deploy). Vacío,
+    un deploy roto reemplaza igual al que funcionaba — que es lo que pasó con la
+    `p` de más: el servicio quedó en bucle de reinicios y no había a qué volver.
+- `render.yaml` sigue en el repo pero **ya no describe la producción**: quedó de
+  la etapa en Render. Si no se piensa volver, conviene borrarlo para que no
+  confunda al siguiente que lo lea.
+- ✅ Railway **no duerme el servicio** como hacía el plan free de Render (~50 s
+  para despertar). Eso era el tope para publicar la tienda; ya no lo es.
 - ✅ **`GET /api/health` DICE QUÉ VERSIÓN ESTÁ SIRVIENDO** (2026-10-10). Devuelve
   `{ ok: true, ts, version }` y, **solo si el entorno expone
-  `RENDER_GIT_COMMIT`**, un `commit` de 7 caracteres (si no lo expone, el campo
+  `RENDER_GIT_COMMIT`** (en Railway NO existe, así que el campo `commit` no viene;
+  para verificar un despliegue se usa `version`, que sí está), un `commit` de 7 caracteres (si no lo expone, el campo
   **no está**: no se inventa un `'unknown'` ni se agrega configuración nueva).
   `version` es `SHARED_VERSION`, **importado**, nunca un literal.
   - **Así se verifica un despliegue**: comparar ese `version` con el
