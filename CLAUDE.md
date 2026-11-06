@@ -432,7 +432,8 @@ en el repo web: se sobrescribe al sincronizar.
     - **El seed no siembra credenciales conocidas**: con `NODE_ENV=production` exige
       `OWNER_PASSWORD` explícito y ya no imprime la contraseña en el log.
     - **Rate limiting** (`@nestjs/throttler` + `ProxyThrottlerGuard`): grupo estricto
-      (login / forgot-password / reset-password) a **10/min** por **IP real**; el resto
+      (login / forgot-password / reset-password) a **5/min** por **IP real** — que en
+      producción son ~10 reales, ver abajo —; el resto
       (incluido `refresh`) usa el default del módulo (60/min). La IP real sale de
       `req.ip` (honra `trust proxy`, configurable con `TRUST_PROXY` en `main.ts`);
       `cf-connecting-ip` solo se usa si hay proxy confiable (si no, sería falsificable).
@@ -3000,34 +3001,40 @@ desempate, dos facturas del mismo día podrían intercambiarse los códigos.
 Pasada adversarial completa antes de publicar la tienda con dominio propio: el
 Nivel 2 que pide el CLAUDE.md global cuando un cambio abre superficie.
 
-### ⚠️ EL HALLAZGO: el rate limiting del LOGIN no corta en producción
+### ⚠️ EL HALLAZGO: el tope por IP vale el DOBLE (y lo primero que se dijo era falso)
 
-**Medido, no supuesto**, y es el único que cambia de categoría con un dominio
-público — hoy solo entra el dueño; con un formulario de login a la vista es
-fuerza bruta sin freno.
+**Se diagnosticó mal dos veces antes de acertar, y las dos correcciones valen
+más que el hallazgo**, porque las dos salieron de volver a medir:
 
-```
-PRODUCCIÓN (Railway)
-  13 logins fallidos seguidos, en ~4 s  -> 401 x13, ningún bloqueo
-  15 logins fallidos en paralelo        -> 401 x15, ningún bloqueo
-LOCAL (el MISMO código, sin proxy)
-  14 logins fallidos seguidos           -> 401 x10, luego 429 429 429 429
-```
+1. Primero se reportó que **el login no cortaba nunca** y que eso lo dejaba "a
+   fuerza bruta sin freno". **Falso, y exagerado.** La medición era real (13
+   seguidos y 15 en paralelo sin un solo 429) pero el volumen era corto:
+   **50 en paralelo bloquean 44**. El limitador funciona.
+2. Después se culpó a **`TRUST_PROXY`**. También falso: su valor es `1`, que es
+   el correcto, y repetir la prueba tras parchear `proxy-addr` dio **lo mismo**.
 
-**El código está bien**: en local corta en el intento exacto. Lo que falla es el
-identificador del cliente — el limitador cuenta por IP y en Railway la que ve el
-servidor no es estable entre peticiones, así que el contador se reparte.
-El mismo síntoma, más suave, en el resto: el endpoint público de pedidos (tope
-5/min) bloqueó **17 de 20 en ráfaga** pero dejó pasar 7 seguidas espaciadas.
-**Qué mirar: `TRUST_PROXY` en Railway** (con un proxy delante, el valor es `1`).
+**Lo que de verdad pasa, medido:** 26 intentos seguidos cortan recién en el
+**17**, y consistentemente desde el 21. Con UNA instancia habrían cortado en el
+11; con TRES, en ninguno. O sea **dos instancias**, cada una con su contador
+**en memoria**: el tope real es `limit × instancias`. Las 24 consultas al health
+devolvieron la MISMA versión, así que no es un despliegue viejo conviviendo.
 
-⚠️ **Dos trampas de MEDICIÓN que casi hacen reportar lo contrario:**
-1. La primera corrida secuencial podía explicarse por lentitud (si cada login
-   tardara 5 s, 13 intentos pasan de los 60 s de la ventana y el límite libera
-   solo). Hubo que **medir la latencia** (0,26 s) y repetir **en paralelo**.
-2. Comparar contra **local** es lo que separó "bug del código" de "configuración
-   del entorno". Sin esa corrida, el arreglo se habría buscado en el lugar
-   equivocado.
+- **Severidad real: MEDIA, no alta.** 20 intentos por minuto contra una
+  contraseña decente son 28.800 al día: irrelevante. El informe que decía
+  "fuerza bruta sin freno" exageraba.
+- **Arreglo aplicado**: `TIGHT` bajó de 10 a **5**, así el efectivo vuelve a ser
+  el que el código pretende. La medición quedó escrita al lado de la constante.
+- **No lo arregla ninguna variable de entorno.** Mientras el contador sea en
+  memoria, el tope se multiplica por las instancias. El arreglo de fondo es un
+  almacén compartido (Redis), que hoy no se justifica. ⚠️ **Si Railway escala a
+  más instancias, este número se queda corto otra vez.**
+
+⚠️ **La lección de método, que es lo que hay que recordar:** las tres
+mediciones eran correctas y las tres conclusiones distintas. Un limitador no se
+prueba con el volumen justo — con 13 intentos contra un tope de 10 no se
+distingue "no funciona" de "funciona y está repartido" —. **Hay que barrer el
+volumen hasta que corte y mirar DÓNDE corta**: ese número es el que dice
+cuántos contadores hay, y es el único que distingue las hipótesis.
 
 ### Lo que se arregló ese día
 

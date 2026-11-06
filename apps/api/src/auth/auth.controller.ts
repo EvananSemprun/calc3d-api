@@ -16,9 +16,28 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { ProxyThrottlerGuard } from './throttler-proxy.guard';
 import { AuthService } from './auth.service';
 
-// Límite estricto para endpoints sensibles a fuerza bruta: 10 intentos por minuto
-// por IP real. El resto de la API no se throttlea aquí.
-const TIGHT = { default: { limit: 10, ttl: 60_000 } };
+/**
+ * Límite estricto para los endpoints sensibles a fuerza bruta. El resto de la
+ * API no se throttlea acá.
+ *
+ * ⚠️ **Es 5 y no 10 porque el tope real es el DOBLE del que dice este
+ * número.** El contador del throttler vive en la MEMORIA del proceso, y en
+ * producción hay dos instancias atendiendo: cada una lleva el suyo, así que
+ * un atacante dispone de `limit × instancias` por minuto.
+ *
+ * Medido contra producción el 2026-11-05, con el límite en 10: 13 intentos
+ * seguidos no bloqueaban ninguno, 50 en paralelo bloqueaban 44, y 26 seguidos
+ * cortaban recién en el **17** (con una sola instancia habrían cortado en el
+ * 11; con tres, en ninguno). Las 24 consultas al health devolvieron la MISMA
+ * versión, así que no es un despliegue viejo conviviendo: son dos del mismo.
+ *
+ * ⚠️ **Esto NO lo arregla `TRUST_PROXY`** (su valor es correcto) ni ninguna
+ * variable: mientras el contador sea en memoria, el tope se multiplica por la
+ * cantidad de instancias. El arreglo de fondo es un almacén compartido (Redis),
+ * que hoy no se justifica para un negocio de un solo dueño. Si algún día
+ * Railway escala a más instancias, este número se vuelve a quedar corto.
+ */
+const TIGHT = { default: { limit: 5, ttl: 60_000 } };
 
 @Controller('auth')
 @UseGuards(ProxyThrottlerGuard)
