@@ -10,3 +10,27 @@ allowBuilds:
   prisma: true
   bcryptjs: true
   esbuild: true
+
+# Parches de seguridad sobre dependencias INDIRECTAS (auditoría del 2026-11-05).
+#
+# ⚠️ Van acá y no en `package.json`: desde pnpm 11 el campo `pnpm.overrides`
+# del package.json **se ignora en silencio** — solo lo delata un WARN que es
+# fácil pasar por alto. Si alguien los mueve de vuelta, dejan de aplicarse y la
+# auditoría vuelve a salir en rojo sin que nada falle.
+#
+# ⚠️ Todos se quedan DENTRO de su versión mayor, a propósito: forzar un salto
+# de mayor en una dependencia indirecta rompe en ejecución sin que los tests lo
+# noten. Por eso quedan fuera uuid (8→11, lo pide exceljs y rompería el reporte
+# en Excel), file-type (20→21) y deepmerge-ts (7→8).
+overrides:
+  # CRÍTICA. Es lo que Express usa para resolver `req.ip`, de lo que depende el
+  # limitador de intentos de login: con la IP de origen falsificable, el tope
+  # por IP no protege de nada.
+  proxy-addr: ^2.0.8
+  # Caídas por agotamiento de recursos desde peticiones externas.
+  body-parser: ^1.20.9
+  lodash: ^4.17.24
+  qs: ^6.15.2
+  multer: ^2.1.0
+  brace-expansion@1: ^1.1.17
+  brace-expansion@2: ^2.1.7

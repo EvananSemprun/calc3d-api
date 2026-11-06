@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -7,6 +8,28 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+
+  /**
+   * Cabeceras de seguridad (auditoria del 2026-11-05). Antes la API no mandaba
+   * ninguna y anunciaba su stack con `x-powered-by: Express`.
+   *
+   * ⚠️ **`crossOriginResourcePolicy` va en `cross-origin` a proposito.** El
+   * default de helmet (`same-origin`) romperia las DESCARGAS del panel — el
+   * reporte en Excel, los CSV, las notas en PDF — porque el panel vive en otro
+   * origen (Cloudflare) y la API en Railway. Quien decide quien puede llamar a
+   * la API es el CORS de abajo, no esta cabecera.
+   *
+   * HSTS solo tiene efecto sobre HTTPS, asi que en local no molesta.
+   */
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      hsts: { maxAge: 15552000, includeSubDomains: true },
+    }),
+  );
+  // No anunciar el framework: no es una defensa, pero es informacion gratis
+  // para quien busca objetivos por stack.
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
 
   app.setGlobalPrefix('api');
 

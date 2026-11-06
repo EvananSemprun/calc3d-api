@@ -2995,6 +2995,90 @@ desempate, dos facturas del mismo día podrían intercambiarse los códigos.
 `Purchases.abonar.spec.tsx` roto y los 258 tests siguieron en verde: lo cantó
 `pnpm -r build`. Un cambio de contrato no está verificado hasta correr el build.
 
+## Auditoría de seguridad del 2026-11-05 (antes de abrir el dominio)
+
+Pasada adversarial completa antes de publicar la tienda con dominio propio: el
+Nivel 2 que pide el CLAUDE.md global cuando un cambio abre superficie.
+
+### ⚠️ EL HALLAZGO: el rate limiting del LOGIN no corta en producción
+
+**Medido, no supuesto**, y es el único que cambia de categoría con un dominio
+público — hoy solo entra el dueño; con un formulario de login a la vista es
+fuerza bruta sin freno.
+
+```
+PRODUCCIÓN (Railway)
+  13 logins fallidos seguidos, en ~4 s  -> 401 x13, ningún bloqueo
+  15 logins fallidos en paralelo        -> 401 x15, ningún bloqueo
+LOCAL (el MISMO código, sin proxy)
+  14 logins fallidos seguidos           -> 401 x10, luego 429 429 429 429
+```
+
+**El código está bien**: en local corta en el intento exacto. Lo que falla es el
+identificador del cliente — el limitador cuenta por IP y en Railway la que ve el
+servidor no es estable entre peticiones, así que el contador se reparte.
+El mismo síntoma, más suave, en el resto: el endpoint público de pedidos (tope
+5/min) bloqueó **17 de 20 en ráfaga** pero dejó pasar 7 seguidas espaciadas.
+**Qué mirar: `TRUST_PROXY` en Railway** (con un proxy delante, el valor es `1`).
+
+⚠️ **Dos trampas de MEDICIÓN que casi hacen reportar lo contrario:**
+1. La primera corrida secuencial podía explicarse por lentitud (si cada login
+   tardara 5 s, 13 intentos pasan de los 60 s de la ventana y el límite libera
+   solo). Hubo que **medir la latencia** (0,26 s) y repetir **en paralelo**.
+2. Comparar contra **local** es lo que separó "bug del código" de "configuración
+   del entorno". Sin esa corrida, el arreglo se habría buscado en el lugar
+   equivocado.
+
+### Lo que se arregló ese día
+
+- **`overrides` de dependencias** en `pnpm-workspace.yaml` (NO en `package.json`:
+  desde pnpm 11 ese campo **se ignora en silencio**, solo lo delata un WARN).
+  De **34 vulnerabilidades (1 crítica, 19 altas) a 6**, todas las restantes
+  con parche solo en la **major siguiente**.
+  - La crítica era **`proxy-addr`** (falsear la IP de origen): justo la pieza de
+    la que depende el limitador del hallazgo de arriba.
+  - ⚠️ **Todos se quedan DENTRO de su major, a propósito**: un salto de major
+    en una dependencia indirecta rompe en ejecución **sin que los tests lo
+    noten**. Quedan fuera `uuid` (8→11, lo pide `exceljs` y rompería el reporte
+    en Excel), `file-type` (20→21) y `deepmerge-ts` (7→8).
+  - ⚠️ Los tests **no ejercitan el stack HTTP**, así que después de mover
+    `multer`, `qs` y `body-parser` hay que **arrancar la API de verdad**: login
+    correcto (201) y el limitador cortando en el 10.º
+- **`helmet` en `main.ts`** + `disable('x-powered-by')`. Antes la API no mandaba
+  **ninguna** cabecera de seguridad y anunciaba su stack.
+  - ⚠️ **`crossOriginResourcePolicy` va en `cross-origin`**: el default de
+    helmet (`same-origin`) **rompe las descargas** del panel (Excel, CSV, PDF),
+    que vive en otro origen. Verificado con una descarga real de 1,2 MB.
+- **`common/guard-de-controllers.audit.spec.ts`**: falla si un controller nuevo
+  nace sin `JwtAuthGuard`, y exige que **todo público tenga rate limiting**. La
+  autenticación acá es *opt-in* (no hay guard global), así que lo nuevo nace
+  abierto y nada avisa.
+  - ⚠️ **El primer intento reportó 7 falsos positivos** y el número delató al
+    instrumento: la expresión regular iba del `@Controller` al `export class`,
+    y **el `@UseGuards` suele ir ARRIBA**. Se recorre línea por línea.
+  - ⚠️ Se analiza **por controller y no por archivo**: hay archivos con dos
+    (uno público y uno de panel), y mirar el archivo entero da por protegido al
+    público porque su vecino tiene guard.
+
+### Lo que se midió y estaba BIEN (no romperlo)
+
+Secreto de firma sin respaldo en código (con su test), aislamiento multi-tenant
+auditado, **el precio no viaja en el pedido**, subidas acotadas (PNG/JPEG/WebP,
+5 MB, con confirmación contra el almacenamiento), **topes en todos los campos
+públicos** + body de 2 MB (que es lo que mitiga el DoS de Zod en la práctica),
+y `ProxyThrottlerGuard`, que se niega a confiar en cabeceras falsificables sin
+proxy configurado.
+
+### Pendiente, con su motivo
+
+- **`TRUST_PROXY` en Railway**: el hallazgo de arriba.
+- **Content-Security-Policy** en el panel y la tienda: hay que inventariar
+  orígenes (fuentes de Google, la API, R2) y mal puesto **no avisa**, solo deja
+  la pantalla en blanco o las fotos vacías. Tiene su propio trabajo.
+- **Zod 3→4 y Nest 10→11**: migraciones con cambios incompatibles, y Zod es el
+  contrato entre el panel y la API. No es algo para la víspera de publicar.
+- **`STORE_ORIGIN`** con el dominio nuevo, exacto y sin barra final.
+
 ## Entorno
 - Windows / PowerShell: usar su sintaxis (`$env:VAR` no `$VAR`, `$null` no
   `/dev/null`, backtick para continuar línea). Rutas con backslash de Windows.
