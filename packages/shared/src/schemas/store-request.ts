@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { STORE_MAX_OPTION_GROUPS } from './store';
 
 /**
  * Contratos de la BANDEJA DE TIENDA: lo que un visitante sin sesión puede
@@ -53,7 +54,19 @@ export type StoreCustomerDto = z.infer<typeof StoreCustomerSchema>;
 export const StoreRequestItemSchema = z.object({
   slug: z.string().trim().min(1).max(80),
   qty: z.number().int().positive().max(STORE_REQUEST_MAX_QTY, 'Cantidad demasiado alta'),
-  options: z.record(z.string().max(40), z.string().max(60)).default({}),
+  /**
+   * ⚠️ Acotado en CANTIDAD, no solo en largo (auditoría del 2026-11-05). Cada
+   * par ya estaba limitado, pero sin tope de cuántos: con el cuerpo de 2 MB
+   * entraban miles, y validarlos es trabajo que un visitante sin cuenta le
+   * puede pedir al servidor. El tope es el mismo que limita los grupos de una
+   * ficha: no puede haber más opciones elegidas que grupos donde elegirlas.
+   */
+  options: z
+    .record(z.string().max(40), z.string().max(60))
+    .refine((o) => Object.keys(o).length <= STORE_MAX_OPTION_GROUPS, {
+      message: 'Demasiadas opciones en un renglón',
+    })
+    .default({}),
   /**
    * Personalización opcional (solo en productos `custom`). La foto se sube antes
    * a R2 y acá viaja SU CLAVE; el servidor la revalida contra el almacenamiento
@@ -95,7 +108,7 @@ export type StoreCustomRequestDto = z.infer<typeof StoreCustomRequestSchema>;
  * de fotos del panel (tipo + tamaño): un solo esquema para no divergir. El
  * endpoint público lo valida igual.
  */
-export { StoreImageUploadUrlSchema, type StoreImageUploadUrlDto } from './store';
+export { StoreImageUploadUrlSchema, type StoreImageUploadUrlDto, STORE_MAX_OPTION_GROUPS } from './store';
 
 // ----- Lado del panel -----
 

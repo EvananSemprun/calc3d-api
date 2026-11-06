@@ -1,6 +1,20 @@
 import { z } from 'zod';
 import { CalcInputSchema } from './calc';
 
+
+/**
+ * Cuántos grupos de opciones puede tener una ficha (Color, Tamaño…).
+ *
+ * ⚠️ Lo lee TAMBIÉN el contrato del pedido público, para acotar cuántas
+ * opciones puede traer un renglón: no puede haber más opciones elegidas que
+ * grupos donde elegirlas. Si se sube acá, el pedido lo sigue solo.
+ *
+ * ⚠️ Va al PRINCIPIO del archivo: es un `const`, y declarada más abajo los
+ * schemas de arriba no pueden usarla (TDZ al cargar el módulo). Es la misma
+ * trampa que obligó a subir `FECHA` en `api.ts`.
+ */
+export const STORE_MAX_OPTION_GROUPS = 10;
+
 /**
  * Contratos de la TIENDA — el catálogo ÚNICO del negocio.
  *
@@ -145,7 +159,7 @@ const StoreProductFields = z.object({
   input: CalcInputSchema.nullable().optional(),
   /** Tramos de precio por cantidad (mayoreo). El descuento lo aplica el servidor. */
   priceTiers: z.array(StorePriceTierSchema).max(8).default([]),
-  optionGroups: z.array(StoreOptionGroupSchema).max(10).default([]),
+  optionGroups: z.array(StoreOptionGroupSchema).max(STORE_MAX_OPTION_GROUPS).default([]),
 });
 
 export const StoreProductCreateSchema = StoreProductFields.superRefine(validarTramos);

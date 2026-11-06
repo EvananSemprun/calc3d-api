@@ -3069,6 +3069,27 @@ públicos** + body de 2 MB (que es lo que mitiga el DoS de Zod en la práctica),
 y `ProxyThrottlerGuard`, que se niega a confiar en cabeceras falsificables sin
 proxy configurado.
 
+### Parches del cierre (mismo día)
+
+- **Tope de opciones por renglón** (shared 0.63.0, `STORE_MAX_OPTION_GROUPS`).
+  Cada opción ya estaba acotada en LARGO pero no en CANTIDAD: con el cuerpo de
+  2 MB entraban miles de pares, y validarlos es trabajo que un visitante sin
+  cuenta le podía pedir al servidor.
+  - ⚠️ **El tope NO se eligió a ojo**: es el mismo que ya limitaba los grupos de
+    una ficha (10, que estaba inline en `store.ts` y ahora es constante). No
+    puede haber más opciones elegidas que grupos donde elegirlas. Medido en
+    producción ese día: la ficha con más grupos tiene **2**.
+  - ⚠️ La constante va al **PRINCIPIO de `store.ts`**: declarada más abajo,
+    `optionGroups` no podía usarla (TDZ al cargar el módulo) y el build fallaba.
+    Es la misma trampa que obligó a subir `FECHA` en `api.ts`.
+
+### Lo que la auditoría destapó de paso: la tienda NO está configurada
+
+`GET /api/public/store/info` en producción responde **503 "La tienda no está
+configurada"** y `/products` devuelve 0. Faltan sus variables en Railway
+(`STORE_ORGANIZATION_ID`, `STORE_ORIGIN` y las `R2_*`). **Comprar el dominio no
+alcanza**: sin eso la tienda no sirve nada y las fotos no tienen dónde vivir.
+
 ### Pendiente, con su motivo
 
 - **`TRUST_PROXY` en Railway**: el hallazgo de arriba.
