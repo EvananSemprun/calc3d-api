@@ -45,8 +45,9 @@ export class StorePublicController {
 
   @Get('products')
   @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
-  list(@Query('category') category?: string) {
-    return this.service.list(category);
+  list(@Query('category') category?: string, @Query('detail') detail?: string) {
+    // `full` es el único valor que cambia la respuesta; cualquier otro se ignora.
+    return this.service.list(category, detail === 'full' ? 'full' : undefined);
   }
 
   @Get('products/:slug')

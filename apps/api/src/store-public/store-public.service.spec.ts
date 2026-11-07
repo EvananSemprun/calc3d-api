@@ -512,3 +512,142 @@ describe('Subcategorías de la tienda', () => {
     expect(slugsDe(await service.list())).toEqual(['p-anime', 'p-maceta', 'p-madre', 'p-mundial']);
   });
 });
+
+describe('Listado público en modo completo (?detail=full)', () => {
+  /** Fila cruda de Prisma, con TODO lo interno que trae el include real: ids,
+   *  groupId, optionId, position, claves de bucket y el costo. */
+  const FILA_CRUDA = {
+    ...PRODUCTO,
+    description: 'Texto largo de la ficha',
+    specs: [
+      { label: 'Material', value: 'PLA' },
+      { basura: true },
+    ],
+    images: [
+      { id: 'img1', productId: 'sp1', optionId: null, position: 0, key: `${ORG}/store/sp1/a.jpg`, alt: 'A', width: 800, height: 800 },
+      { id: 'img2', productId: 'sp1', optionId: null, position: 1, key: `${ORG}/store/sp1/b.jpg`, alt: null, width: 600, height: 600 },
+    ],
+    optionGroups: [
+      {
+        id: 'g1',
+        productId: 'sp1',
+        name: 'Color',
+        required: true,
+        drivesPhoto: true,
+        position: 0,
+        options: [
+          {
+            id: 'o1',
+            groupId: 'g1',
+            value: 'Rojo',
+            priceDeltaUsd: '1.5000',
+            swatchHex: '#FF0000',
+            position: 0,
+            images: [
+              { id: 'img3', productId: 'sp1', optionId: 'o1', position: 0, key: `${ORG}/store/sp1/rojo.jpg`, alt: 'Rojo', width: 500, height: 500 },
+            ],
+          },
+          { id: 'o2', groupId: 'g1', value: 'Azul', priceDeltaUsd: '0', swatchHex: null, position: 1, images: [] },
+        ],
+      },
+    ],
+  };
+
+  it('con detail=full cada producto trae description, specs, images y optionGroups', async () => {
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([FILA_CRUDA]) });
+    const { products } = await service.list(undefined, 'full');
+    const p = products[0];
+    expect(p.description).toBe('Texto largo de la ficha');
+    expect(p.specs).toEqual([{ label: 'Material', value: 'PLA' }]);
+    expect(p.images).toHaveLength(2);
+    expect(p.images[0].url).toBe(`https://cdn.example/${ORG}/store/sp1/a.jpg`);
+    expect(p.optionGroups).toEqual([
+      {
+        name: 'Color',
+        required: true,
+        drivesPhoto: true,
+        options: [
+          {
+            value: 'Rojo',
+            priceDeltaUsd: 1.5,
+            swatchHex: '#FF0000',
+            images: [{ url: `https://cdn.example/${ORG}/store/sp1/rojo.jpg`, alt: 'Rojo', width: 500, height: 500 }],
+          },
+          { value: 'Azul', priceDeltaUsd: 0, swatchHex: null, images: [] },
+        ],
+      },
+    ]);
+    // Conserva lo de la tarjeta: la tienda sigue pintando el listado igual.
+    expect(p.colors).toEqual([{ value: 'Rojo', swatchHex: '#FF0000' }]);
+    expect(p.requiresOptions).toBe(true);
+  });
+
+  it('⚠️ con detail=full NO se filtra nada interno: ni id, ni groupId, ni position, ni costAtPublish', async () => {
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([FILA_CRUDA]) });
+    const { products } = await service.list(undefined, 'full');
+    const claves = clavesDe(products);
+    for (const campo of [...PROHIBIDOS, 'groupId', 'optionId']) expect([...claves]).not.toContain(campo);
+    expect(JSON.stringify(products)).not.toContain('1.25');
+  });
+
+  it('sin el parámetro la respuesta sigue siendo la tarjeta de siempre (ni description ni optionGroups)', async () => {
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([FILA_CRUDA]) });
+    for (const r of [await service.list(), await service.list(undefined, 'otra-cosa')]) {
+      const claves = clavesDe(r.products);
+      for (const campo of ['description', 'specs', 'images', 'optionGroups']) expect(claves.has(campo)).toBe(false);
+      expect(r.products[0]).toHaveProperty('image');
+    }
+  });
+
+  it('detail=full respeta el filtro por categoría, incluidas las hijas', async () => {
+    const { service, findMany } = makeService({ findMany: jest.fn().mockResolvedValue([FILA_CRUDA]) });
+    await service.list('llaveros', 'full');
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG,
+          visible: true,
+          category: { OR: [{ slug: 'llaveros' }, { parent: { slug: 'llaveros' } }] },
+        }),
+      }),
+    );
+  });
+
+  it('la foto de la tarjeta sale de la galería base, no de una opción (los dos modos)', async () => {
+    const { service, findMany } = makeService();
+    await service.list();
+    await service.list(undefined, 'full');
+    for (const [args] of findMany.mock.calls) {
+      expect(args.include.images.where).toEqual({ optionId: null });
+    }
+    // Tarjeta: una sola foto. Completo: la galería entera.
+    expect(findMany.mock.calls[0][0].include.images.take).toBe(1);
+    expect(findMany.mock.calls[1][0].include.images.take).toBeUndefined();
+  });
+
+  it('el modo completo no suma consultas: es UN findMany y las fotos de opción viajan dentro del include', async () => {
+    const { service, findMany, prisma } = makeService();
+    await service.list(undefined, 'full');
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.calls[0][0].include.optionGroups.include.options.include).toEqual({
+      images: { orderBy: { position: 'asc' } },
+    });
+    expect(prisma.storeProduct.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('el modo tarjeta no pide las fotos por opción', async () => {
+    const { service, findMany } = makeService();
+    await service.list();
+    expect(findMany.mock.calls[0][0].include.optionGroups.include.options.include).toBeUndefined();
+  });
+
+  it('la ficha individual y el modo completo publican exactamente la misma forma', async () => {
+    const { service } = makeService({
+      findMany: jest.fn().mockResolvedValue([FILA_CRUDA]),
+      findFirst: jest.fn().mockResolvedValue(FILA_CRUDA),
+    });
+    const [enLista] = (await service.list(undefined, 'full')).products;
+    const ficha = await service.bySlug('llavero-mundial');
+    expect(enLista).toEqual(ficha);
+  });
+});

@@ -108,6 +108,65 @@ interface PublicBanner {
   linkValue: string | null;
 }
 
+/** Campos de la fila de Prisma que alimentan la tarjeta. */
+interface CardRow {
+  slug: string;
+  name: string;
+  kind: 'PHYSICAL' | 'SERVICE';
+  summary: string | null;
+  priceUsd: unknown;
+  compareAtUsd: unknown;
+  priceTiers: unknown;
+  leadTimeDays: number | null;
+  minQty: number;
+  material: string | null;
+  badge: string | null;
+  custom: boolean;
+  category: PublicCategory | null;
+}
+
+interface ImageRow {
+  key: string;
+  alt: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+/** Galería BASE: solo las fotos de nivel producto. Las de una opción (color) salen
+ *  por su opción; sin este filtro la foto de la tarjeta podía ser la de un color. */
+const GALERIA_BASE = { optionId: null } as const;
+
+/** Consulta de la tarjeta: la categoría, UNA foto base y los grupos de opciones. */
+function includeTarjeta() {
+  return {
+    category: { select: { name: true, slug: true } },
+    images: { where: GALERIA_BASE, orderBy: { position: 'asc' as const }, take: 1 },
+    // TODOS los grupos con todas sus opciones, no solo el de color: no se filtra
+    // por nombre. La tarjeta los lee para los colores y `requiresOptions`.
+    optionGroups: {
+      orderBy: { position: 'asc' as const },
+      include: { options: { orderBy: { position: 'asc' as const } } },
+    },
+  };
+}
+
+/** Consulta de la ficha: la galería base entera y las fotos de cada opción. */
+function includeFicha() {
+  return {
+    category: { select: { name: true, slug: true } },
+    images: { where: GALERIA_BASE, orderBy: { position: 'asc' as const } },
+    optionGroups: {
+      orderBy: { position: 'asc' as const },
+      include: {
+        options: {
+          orderBy: { position: 'asc' as const },
+          include: { images: { orderBy: { position: 'asc' as const } } },
+        },
+      },
+    },
+  };
+}
+
 @Injectable()
 export class StorePublicService {
   constructor(
@@ -211,30 +270,41 @@ export class StorePublicService {
     };
   }
 
-  /** Vitrina: solo lo publicado, en el orden que fijó el dueño. */
-  async list(categorySlug?: string): Promise<{ products: PublicProductCard[] }> {
-    const products = await this.prisma.storeProduct.findMany({
-      where: {
-        organizationId: this.organizationId,
-        visible: true,
-        // La madre incluye los productos de sus hijas; una hija, solo los suyos.
-        ...(categorySlug
-          ? { category: { OR: [{ slug: categorySlug }, { parent: { slug: categorySlug } }] } }
-          : {}),
-      },
-      orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
-      include: {
-        category: { select: { name: true, slug: true } },
-        images: { orderBy: { position: 'asc' }, take: 1 },
-        // Solo el grupo de COLOR: la vitrina filtra por color, y traer todos los
-        // grupos engordaría el listado sin que nada los use.
-        optionGroups: {
-          orderBy: { position: 'asc' },
-          include: { options: { orderBy: { position: 'asc' } } },
-        },
-      },
-    });
+  /** Vitrina: solo lo publicado, en el orden que fijó el dueño.
+   *
+   *  Dos modos, con UNA sola consulta cada uno:
+   *  - tarjeta (por defecto): lo mínimo para listar.
+   *  - `detalle === 'full'`: la ficha completa de cada producto, para que la tienda
+   *    construya el sitio sin pedir las fichas una por una (con 1.000 productos
+   *    serían 1.000 peticiones y el límite público rechazaría casi todas). Sale del
+   *    mismo `include` de siempre: descripción, ficha técnica y grupos de opciones
+   *    ya viajaban desde la base y se descartaban; solo se suman la galería entera
+   *    y las fotos por opción, sin ningún round trip nuevo. */
+  async list(categorySlug?: string): Promise<{ products: PublicProductCard[] }>;
+  async list(categorySlug: string | undefined, detalle: 'full'): Promise<{ products: PublicProductDetail[] }>;
+  async list(
+    categorySlug?: string,
+    detalle?: string,
+  ): Promise<{ products: PublicProductCard[] | PublicProductDetail[] }>;
+  async list(
+    categorySlug?: string,
+    detalle?: string,
+  ): Promise<{ products: PublicProductCard[] | PublicProductDetail[] }> {
+    const where = {
+      organizationId: this.organizationId,
+      visible: true,
+      // La madre incluye los productos de sus hijas; una hija, solo los suyos.
+      ...(categorySlug
+        ? { category: { OR: [{ slug: categorySlug }, { parent: { slug: categorySlug } }] } }
+        : {}),
+    };
+    const orderBy = [{ position: 'asc' as const }, { createdAt: 'desc' as const }];
 
+    if (detalle === 'full') {
+      const products = await this.prisma.storeProduct.findMany({ where, orderBy, include: includeFicha() });
+      return { products: products.map((p) => this.detail(p)) };
+    }
+    const products = await this.prisma.storeProduct.findMany({ where, orderBy, include: includeTarjeta() });
     return { products: products.map((p) => this.listCard(p)) };
   }
 
@@ -253,14 +323,7 @@ export class StorePublicService {
     const rows = await this.prisma.storeProduct.findMany({
       where: { organizationId, visible: true, compareAtUsd: { not: null } },
       orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
-      include: {
-        category: { select: { name: true, slug: true } },
-        images: { orderBy: { position: 'asc' }, take: 1 },
-        optionGroups: {
-          orderBy: { position: 'asc' },
-          include: { options: { orderBy: { position: 'asc' } } },
-        },
-      },
+      include: includeTarjeta(),
     });
     // Prisma no compara dos columnas; el "compareAt > price" se filtra acá.
     const products = rows
@@ -276,40 +339,73 @@ export class StorePublicService {
   async bySlug(slug: string): Promise<PublicProductDetail> {
     const product = await this.prisma.storeProduct.findFirst({
       where: { organizationId: this.organizationId, slug, visible: true },
-      include: {
-        category: { select: { name: true, slug: true } },
-        // Galería base: solo las fotos de nivel producto. Las de una opción
-        // (color) salen por su opción, así que acá se excluyen para no duplicar.
-        images: { where: { optionId: null }, orderBy: { position: 'asc' } },
-        optionGroups: {
-          orderBy: { position: 'asc' },
-          include: {
-            options: {
-              orderBy: { position: 'asc' },
-              include: { images: { orderBy: { position: 'asc' } } },
-            },
-          },
-        },
-      },
+      include: includeFicha(),
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
 
+    return this.detail(product);
+  }
+
+  // ----- Proyecciones (la lista blanca vive acá y en ningún otro lado) -----
+
+  /** Lo que la vitrina necesita saber de las opciones: qué colores pintar y si hay
+   *  que elegir antes de pedir. UNA definición, para la tarjeta y la ficha. */
+  private opciones(
+    groups: { name: string; required: boolean; options: { value: string; swatchHex: string | null }[] }[],
+  ) {
     return {
-      ...this.card(product),
-      requiresOptions: product.optionGroups.some((g) => g.required && g.options.length > 0),
-      colors: (product.optionGroups.find((g) => /color/i.test(g.name))?.options ?? [])
+      colors: (groups.find((g) => /color/i.test(g.name))?.options ?? [])
         .filter((o) => o.swatchHex)
         .map((o) => ({ value: o.value, swatchHex: o.swatchHex as string })),
-      description: product.description,
+      requiresOptions: groups.some((g) => g.required && g.options.length > 0),
+    };
+  }
+
+  /** Tarjeta de vitrina CON imagen y colores. Única lista blanca para el listado
+   *  y para el Flash Sale: no pueden divergir. */
+  private listCard(
+    p: CardRow & {
+      images: ImageRow[];
+      optionGroups: { name: string; required: boolean; options: { value: string; swatchHex: string | null }[] }[];
+    },
+  ): PublicProductCard {
+    return {
+      ...this.card(p),
+      image: p.images[0] ? this.image(p.images[0]) : null,
+      ...this.opciones(p.optionGroups),
+    };
+  }
+
+  /** Ficha completa. Única lista blanca para `bySlug` y para el listado en modo
+   *  completo: dos copias terminarían publicando formas distintas del mismo producto.
+   *  Las opciones se proyectan campo por campo: las de Prisma traen `id`, `groupId`
+   *  y `position`, que jamás pueden salir. */
+  private detail(
+    p: CardRow & {
+      description: string | null;
+      specs: unknown;
+      images: ImageRow[];
+      optionGroups: {
+        name: string;
+        required: boolean;
+        drivesPhoto: boolean;
+        options: { value: string; priceDeltaUsd: unknown; swatchHex: string | null; images: ImageRow[] }[];
+      }[];
+    },
+  ): PublicProductDetail {
+    return {
+      ...this.card(p),
+      ...this.opciones(p.optionGroups),
+      description: p.description,
       // La ficha técnica es libre: se sanea la forma antes de publicarla, para
       // que un JSON viejo o a medias no rompa la tienda.
-      specs: Array.isArray(product.specs)
-        ? (product.specs as unknown[])
+      specs: Array.isArray(p.specs)
+        ? (p.specs as unknown[])
             .filter((x): x is PublicSpec => !!x && typeof x === 'object' && 'label' in x && 'value' in x)
             .map((x) => ({ label: String(x.label), value: String(x.value) }))
         : [],
-      images: product.images.map((img) => this.image(img)),
-      optionGroups: product.optionGroups.map((g) => ({
+      images: p.images.map((img) => this.image(img)),
+      optionGroups: p.optionGroups.map((g) => ({
         name: g.name,
         required: g.required,
         drivesPhoto: g.drivesPhoto,
@@ -323,52 +419,7 @@ export class StorePublicService {
     };
   }
 
-  // ----- Proyecciones (la lista blanca vive acá y en ningún otro lado) -----
-
-  /** Tarjeta de vitrina CON imagen y colores. Única lista blanca para el listado
-   *  y para el Flash Sale: no pueden divergir. */
-  private listCard(p: {
-    slug: string;
-    name: string;
-    kind: 'PHYSICAL' | 'SERVICE';
-    summary: string | null;
-    priceUsd: unknown;
-    compareAtUsd: unknown;
-    priceTiers: unknown;
-    leadTimeDays: number | null;
-    minQty: number;
-    material: string | null;
-    badge: string | null;
-    custom: boolean;
-    category: PublicCategory | null;
-    images: { key: string; alt: string | null; width: number | null; height: number | null }[];
-    optionGroups: { name: string; required: boolean; options: { value: string; swatchHex: string | null }[] }[];
-  }): PublicProductCard {
-    return {
-      ...this.card(p),
-      image: p.images[0] ? this.image(p.images[0]) : null,
-      colors: (p.optionGroups.find((g) => /color/i.test(g.name))?.options ?? [])
-        .filter((o) => o.swatchHex)
-        .map((o) => ({ value: o.value, swatchHex: o.swatchHex as string })),
-      requiresOptions: p.optionGroups.some((g) => g.required && g.options.length > 0),
-    };
-  }
-
-  private card(p: {
-    slug: string;
-    name: string;
-    kind: 'PHYSICAL' | 'SERVICE';
-    summary: string | null;
-    priceUsd: unknown;
-    compareAtUsd: unknown;
-    priceTiers: unknown;
-    leadTimeDays: number | null;
-    minQty: number;
-    material: string | null;
-    badge: string | null;
-    custom: boolean;
-    category: PublicCategory | null;
-  }) {
+  private card(p: CardRow) {
     return {
       slug: p.slug,
       name: p.name,
@@ -391,12 +442,7 @@ export class StorePublicService {
     };
   }
 
-  private image(img: {
-    key: string;
-    alt: string | null;
-    width: number | null;
-    height: number | null;
-  }): PublicImage {
+  private image(img: ImageRow): PublicImage {
     // Sale la URL pública, no la clave del bucket: la estructura interna del
     // almacenamiento no es asunto del cliente.
     return {
