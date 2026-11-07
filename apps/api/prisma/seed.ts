@@ -2,6 +2,7 @@ import 'dotenv/config'; // carga apps/api/.env (DATABASE_URL) al correr con ts-n
 import { PrismaClient } from '@prisma/client';
 import { RATE_LABELS } from '@calc3d/shared';
 import * as bcrypt from 'bcryptjs';
+import { seedCatalogoSintetico } from './seed-catalogo-sintetico';
 
 /**
  * Seed para la app de "un solo dueño". Por DEFECTO asegura (idempotente) UNA
@@ -139,6 +140,9 @@ async function main() {
   const orgId = await ensureOwner();
   const wantDemo = process.env.SEED_DEMO === '1' || process.env.SEED_DEMO === 'true';
   if (wantDemo) await seedDemoCatalog(orgId);
+  const wantSintetico =
+    process.env.SEED_CATALOGO_SINTETICO === '1' || process.env.SEED_CATALOGO_SINTETICO === 'true';
+  if (wantSintetico) await seedCatalogoSintetico(orgId);
 }
 
 main()
