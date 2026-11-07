@@ -2434,8 +2434,8 @@ redesplegar**.
   2026-10-01 se borró la otra cuenta, a pedido del dueño). ⚠️ Venía con
   la contraseña del seed, que está escrita más abajo en este archivo PÚBLICO: el
   dueño tiene que haberla cambiado (y conviene pasarle el correo a uno real, o el
-  reset de contraseña no le llega a nadie). Sin `RESEND_API_KEY` en Render, el
-  correo de reset no se envía.
+  reset de contraseña no le llega a nadie). Sin `RESEND_API_KEY` en el entorno de
+  producción (Railway), el correo de reset no se envía.
 - ⚠️ **Desde el 2026-10-01 la base que manda es la de PRODUCCIÓN**: el dueño
   carga datos en el panel publicado. La local quedó como copia de ese día. Los
   scripts `sincronizar-*.mjs` leen `DATABASE_URL` del `.env` (la LOCAL): correrlos
@@ -2648,9 +2648,10 @@ Railway el 01/10 desde la local (18 → 17, compatible).
 ### 3. Orden del despliegue
 
 ⚠️ **Si cambia la FORMA de la respuesta de la API, se despliega la API PRIMERO**
-y se espera a que Render la levante antes de pushear el panel. Cloudflare
-publica en ~1 minuto y Render tarda varios: soltando los dos a la vez, el panel
-nuevo le pregunta a la API vieja por un campo que todavía no existe. Al revés es
+y se espera a que Railway la levante antes de pushear el panel. Cloudflare
+publica en ~1 minuto y Railway tarda más (construye la imagen del `Dockerfile` y
+corre `migrate deploy` al arrancar): soltando los dos a la vez, el panel nuevo le
+pregunta a la API vieja por un campo que todavía no existe. Al revés es
 inofensivo.
 
 Si el cambio no toca el contrato (un refactor interno, algo solo del panel), el
@@ -2663,7 +2664,9 @@ desplegado algo que sí estaba:
 
 ```bash
 # API: ¿sirve el commit que acabo de pushear?
-curl -s https://calc3d-api.onrender.com/api/health
+# ⚠️ Railway desde el 2026-11-05. La URL vieja de Render (`calc3d-api.onrender.com`)
+# ya NO existe: ese servicio se borró. Si la ves en algún lado, está vieja.
+curl -s https://calc3d-api-production.up.railway.app/api/health
 # → {"ok":true,"version":"0.58.0","commit":"4f83ff1"}
 
 # Panel: el bundle se compila en Cloudflare, así que su HASH NO tiene por qué
@@ -2685,11 +2688,19 @@ SELECT migration_name, finished_at, rolled_back_at
 `finished_at` nulo = **migración a medias**: el contenedor no arrancó.
 Verificado el 2026-10-19: 60 aplicadas, 0 con problema.
 
-⚠️ **Render puede tardar o no tomar el commit.** El 2026-10-12 quedó 30 minutos
-sirviendo el anterior con el commit ya en GitHub; el servicio respondía bien, no
-se había perdido nada. Si pasa: mirar el log en el panel de Render (build
-encolado o fallido) y, si solo estaba encolado, «Manual Deploy → Deploy latest
-commit». **Eso no lo puede resolver nadie desde la consola: necesita al dueño.**
+⚠️ **El servicio puede tardar o no tomar el commit, y eso NO se ve desde la
+consola.** Si `/health` sigue devolviendo el commit anterior con el nuevo ya en
+GitHub, **no es un fallo del cambio**: es el despliegue que no corrió. Lo que
+hay que hacer es mirar el log del servicio en el panel (build encolado o
+fallido) y, si solo estaba encolado, redesplegar desde ahí. **Eso necesita al
+dueño**: nadie lo resuelve con `curl`.
+
+Pasó con Render el 2026-10-12 — 30 minutos sirviendo el anterior, el servicio
+respondía bien y no se había perdido nada. Desde el 2026-11-05 el servicio es
+**Railway**, donde el equivalente es «Deployments → el último → Redeploy».
+Railway construye el `Dockerfile` y recién entonces corre `migrate deploy`: un
+build fallido deja la versión ANTERIOR en pie, así que la API sigue respondiendo
+—con el código viejo— y el `/health` es la única forma de notarlo.
 
 ⚠️ **Los datos de prueba que se crearon para verificar se borran al terminar**,
 contando antes y después para dejarlo demostrado.
@@ -2713,7 +2724,7 @@ contando antes y después para dejarlo demostrado.
   `apps/api/.env.production.local` (lo cubre el `.gitignore` con `.env.*`; ese
   archivo NO se carga solo).
 - ⚠️ **El `Dockerfile` corre `prisma migrate deploy` al arrancar el contenedor**:
-  cada push a `main` despliega en Render y **aplica solo** las migraciones
+  cada push a `main` despliega en Railway y **aplica solo** las migraciones
   pendientes contra Railway. Por eso el backup (`pg_dump`) y el OK explícito del
   dueño van **ANTES del push**, no antes de un `migrate deploy` manual: para
   cuando alguien fuera a correrlo a mano, el deploy ya lo disparó solo.
@@ -2995,6 +3006,96 @@ desempate, dos facturas del mismo día podrían intercambiarse los códigos.
 ⚠️ **`vitest` no chequea tipos; `tsc` sí.** Agregar `code` al contrato dejó
 `Purchases.abonar.spec.tsx` roto y los 258 tests siguieron en verde: lo cantó
 `pnpm -r build`. Un cambio de contrato no está verificado hasta correr el build.
+
+## R2 y la tienda, configurados en producción (2026-11-07)
+
+Hasta este día `GET /api/public/store/info` respondía **503 "La tienda no está
+configurada"**: faltaban sus variables en Railway. Comprar el dominio no
+alcanzaba. Verificado al terminar: `storageReady: true` y el catálogo en 200.
+
+⚠️ **Los valores NO se escriben acá: este repo es PÚBLICO.** Van en Railway y
+se leen desde ahí. Lo que sigue es **de dónde sale cada uno**:
+
+| Variable | De dónde sale |
+|---|---|
+| `STORE_ORGANIZATION_ID` | el `id` de la única `Organization` de la base |
+| `STORE_ORIGIN` | el dominio de la tienda, **exacto y sin barra final** |
+| `R2_ACCOUNT_ID` | del "S3 API" del bucket: `https://<ESTO>.r2.cloudflarestorage.com/...` |
+| `R2_BUCKET` | el nombre del bucket (`banano-lab`) |
+| `R2_PUBLIC_URL` | el dominio público del bucket, sin barra final |
+| `R2_ACCESS_KEY_ID` | del token de R2 |
+| `R2_SECRET_ACCESS_KEY` | ídem (se muestra **una sola vez**) |
+
+### ⚠️ LA POLÍTICA CORS DEL BUCKET ES OBLIGATORIA, y no es evidente
+
+**El navegador sube el archivo DIRECTO al bucket**, con un `PUT` a la URL
+firmada (así la foto no pasa por la API). Eso es cross-origin, así que **el
+bucket necesita su propia política CORS** — que no tiene nada que ver con el
+CORS de la API. Sin ella **no se puede subir ni una foto**, y el error del
+navegador **no menciona CORS ni el bucket**.
+
+Los orígenes que hacen falta son **dos reales**, y olvidar uno rompe la mitad:
+- el **panel** (sube las fotos de los productos),
+- la **tienda** (sube la foto que el cliente adjunta a su pedido).
+
+Más `localhost:5180` y `localhost:5182` para poder probar en local. Método
+`PUT` solamente: todo lo demás pasa por la API. **`GET` no hace falta**, las
+fotos se muestran con `<img src>` y eso no pasa por CORS.
+
+### El token de R2: tres credenciales y solo DOS van
+
+⚠️ Cloudflare muestra **tres** cosas al crear el token y es fácil pegar la
+equivocada: el **"Valor del token" (`cfat_...`) NO se usa** — es para la API de
+administración de Cloudflare. Las que van son el **Access Key ID** y el
+**Secret Access Key**, las credenciales S3.
+
+- **Token de cuenta, no de usuario.** El de usuario se desactiva si esa cuenta
+  se desvincula de la organización: la tienda se quedaría sin fotos sin que
+  nada lo explique.
+- **Permiso "Lectura y escritura de objetos"**, NO administrador. La app nunca
+  crea ni borra buckets; con el permiso de administrador, un token filtrado se
+  lleva el bucket entero y no solo las fotos.
+- **Limitado a ESE bucket**, no "todos los de la cuenta": si no, cualquier
+  bucket futuro queda alcanzable con una credencial que vive en una variable
+  de entorno.
+
+### ⚠️ `r2.dev` NO es para producción (lo dice Cloudflare en su propia pantalla)
+
+*"Esta URL tiene una tasa limitada y no se recomienda para producción. Las
+funciones como Access y Caching no están disponibles."* Sin caché, cada
+visitante va al origen, y con límite de tasa las fotos empiezan a fallar **justo
+cuando hay visitas**. Sirve para probar; antes de difundir la tienda va un
+**dominio personalizado** (`fotos.<dominio>`), conectado desde R2.
+
+✅ **Cambiar de dominio es cambiar UNA variable**: `StoreImage` guarda **la
+clave del objeto, no la URL** (decisión vieja, ver "Fotos en Cloudflare R2").
+Las fotos subidas con `r2.dev` siguen funcionando con el dominio nuevo.
+
+### ⚠️ El orden importa: la API ANTES que el build de la tienda
+
+El build de `calc3d-landing` prerenderiza **pegándole a la API**. Si corre antes
+de que la API tenga `STORE_ORGANIZATION_ID`, **falla con 503** — a propósito,
+para no publicar un catálogo vacío. Primero las variables de Railway, después
+el build.
+
+### Cómo se verificó (y qué verificar si alguna vez se rehace)
+
+No alcanza con que el panel pueda subir: hay que comprobar que **un origen
+ajeno NO pueda**. Un preflight `OPTIONS` al bucket con un `Origin` inventado
+tiene que devolver **403**; con el del panel y el de la tienda, **204** con su
+`Access-Control-Allow-Origin`. Lo demás: `storageReady: true` en
+`/public/store/info`, el catálogo en 200 y el dominio público devolviendo
+**404** para un archivo inexistente (404 = el dominio vive).
+
+### Cambiar una foto: se AGREGA y se BORRA, no se actualiza
+
+Pregunta del dueño, respondida leyendo el código: **no hay endpoint de
+reemplazo**. La clave lleva un `randomUUID()`
+(`{org}/store/{productId}/{uuid}.{ext}`), así que **ninguna subida pisa a otra
+nunca**. Para cambiar una foto se sube la nueva y se borra la vieja; el borrado
+sí elimina el objeto del bucket (mejor esfuerzo). La **primera foto es la
+portada**, así que borrar esa promueve a la siguiente. El **logo del negocio**
+es el único que sí se reemplaza: vive en la base, no en R2.
 
 ## Auditoría de seguridad del 2026-11-05 (antes de abrir el dominio)
 

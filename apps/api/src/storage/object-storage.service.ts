@@ -8,6 +8,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { resolvePublicUrlBase } from './public-url';
 
 /**
  * Almacenamiento de objetos para las fotos del catálogo (Cloudflare R2, que es
@@ -53,7 +54,10 @@ export class ObjectStorageService {
     const accessKeyId = config.get<string>('R2_ACCESS_KEY_ID');
     const secretAccessKey = config.get<string>('R2_SECRET_ACCESS_KEY');
     this.bucket = config.get<string>('R2_BUCKET', '');
-    this.publicUrlBase = (config.get<string>('R2_PUBLIC_URL') ?? '').replace(/\/+$/, '');
+    // Valida y normaliza: si hay un valor y no es una URL http(s), LANZA y la
+    // app no arranca. Ver `public-url.ts` — un valor roto acá no se ve hasta
+    // que una foto aparece como recuadro vacío, muy lejos de su causa.
+    this.publicUrlBase = resolvePublicUrlBase(config.get<string>('R2_PUBLIC_URL'));
 
     if (!accountId || !accessKeyId || !secretAccessKey || !this.bucket) {
       // No se rompe el arranque: el resto de la app funciona sin fotos. El error
