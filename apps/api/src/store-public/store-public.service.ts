@@ -49,7 +49,9 @@ interface PublicCategory {
 }
 
 /** Nodo del árbol de categorías, en lista plana: la madre viaja como SLUG (el id
- *  es interno) y el consumidor arma el árbol con `arbolDeCategorias`. */
+ *  es interno). Para armar el árbol con `arbolDeCategorias` (shared) hay que mapear cada
+ *  nodo a `CategoriaPlana`: `id: slug`, `parentId: parentSlug`, `position: el índice` en la
+ *  lista. NO se exponen `id` ni `position` reales: la lista blanca los prohíbe. */
 interface PublicCategoryNode extends PublicCategory {
   parentSlug: string | null;
 }

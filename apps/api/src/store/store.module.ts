@@ -21,6 +21,8 @@ import {
   type StoreBannerCreateDto,
   type StoreBannerUpdateDto,
   type StoreCategoryDto,
+  type StoreCategoryUpdateDto,
+  StoreCategoryUpdateSchema,
   type StoreImageConfirmDto,
   type StoreImageUploadUrlDto,
   type StoreProductCreateDto,
@@ -70,7 +72,7 @@ export class StoreController {
   updateCategory(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(StoreCategorySchema)) dto: StoreCategoryDto,
+    @Body(new ZodValidationPipe(StoreCategoryUpdateSchema)) dto: StoreCategoryUpdateDto,
   ) {
     return this.service.updateCategory(user.organizationId, id, dto);
   }

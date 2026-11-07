@@ -181,9 +181,17 @@ export const StoreCategorySchema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio').max(60),
   slug: SlugSchema.optional(),
   /** `null` = moverla a la raíz; ausente = no tocarla. Las dos hacen falta. */
-  parentId: z.string().nullable().optional(),
+  parentId: z.string().min(1).nullable().optional(),
 });
 export type StoreCategoryDto = z.infer<typeof StoreCategorySchema>;
+
+/**
+ * PATCH de categoría: PARCIAL. Mover manda solo `parentId` y renombrar solo `name`;
+ * si el contrato exigiera `name`, mover pisaría el nombre (y el enlace público) con el
+ * valor cacheado del panel.
+ */
+export const StoreCategoryUpdateSchema = StoreCategorySchema.partial();
+export type StoreCategoryUpdateDto = z.infer<typeof StoreCategoryUpdateSchema>;
 
 // ----- Fotos -----
 

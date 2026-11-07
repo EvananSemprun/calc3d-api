@@ -98,6 +98,22 @@ describe('Categorías — la madre se persiste', () => {
   });
 });
 
+describe('Categorías — el PATCH es parcial', () => {
+  it('⚠️ updateCategory sin name (mover) no toca ni el nombre ni el enlace público', async () => {
+    const { service, rows } = makeDeps([cat('raiz'), cat('hoja')]);
+    const antes = { name: fila(rows, 'hoja')?.name, slug: fila(rows, 'hoja')?.slug };
+    await service.updateCategory(ORG, 'hoja', { parentId: 'raiz' });
+    expect(fila(rows, 'hoja')?.parentId).toBe('raiz');
+    expect({ name: fila(rows, 'hoja')?.name, slug: fila(rows, 'hoja')?.slug }).toEqual(antes);
+  });
+
+  it('renombrar sigue recalculando el enlace', async () => {
+    const { service, rows } = makeDeps([cat('hoja')]);
+    await service.updateCategory(ORG, 'hoja', { name: 'Nombre Nuevo' });
+    expect(fila(rows, 'hoja')?.slug).toBe('nombre-nuevo');
+  });
+});
+
 describe('Categorías — dos niveles y nada de ciclos', () => {
   it('rechaza colgar una categoría de sí misma', async () => {
     const { service, rows } = makeDeps([cat('a')]);

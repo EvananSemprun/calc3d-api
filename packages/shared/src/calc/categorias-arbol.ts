@@ -2,8 +2,9 @@
  * Árbol de categorías de la tienda (dos niveles como máximo).
  *
  * Función pura: recibe la lista plana y devuelve madres con sus hijas. Es la
- * ÚNICA definición de cómo se anidan y se ordenan; la API, el panel y la tienda
- * la consumen en vez de rehacer la cuenta.
+ * ÚNICA definición de cómo se anidan y se ordenan; la consumen el panel (y la tienda
+ * pública cuando la adopte, mapeando su lista: `id: slug`, `parentId: parentSlug`,
+ * `position: índice`). La API NO la usa: devuelve la lista plana.
  */
 
 export interface CategoriaPlana {
@@ -63,4 +64,24 @@ export function descendientesDe<T extends CategoriaPlana>(planas: T[], id: strin
   return planas
     .filter((c) => c.parentId === id && c.id !== id)
     .sort(porPosicionYNombre);
+}
+
+/**
+ * Texto de la opción de una hija en un selector de una sola columna: sangría con
+ * espacios duros. Si OTRA hija de otra madre se llama igual, agrega la madre entre
+ * paréntesis: al buscar solo se muestran las coincidencias y, sin la madre, «Autos» bajo
+ * Juguetes y «Autos» bajo Llaveros serían idénticas. Si el nombre es único, queda limpio.
+ */
+export function etiquetaDeHija<T extends CategoriaPlana>(
+  arbol: CategoriaConHijas<T>[],
+  madre: T,
+  hija: T,
+): string {
+  const norm = (n: string) => n.trim().toLowerCase();
+  const repetida = arbol.some(
+    (g) =>
+      g.categoria.id !== madre.id &&
+      g.hijas.some((h) => h.id !== hija.id && norm(h.name) === norm(hija.name)),
+  );
+  return '  ' + hija.name + (repetida ? ` (${madre.name})` : '');
 }

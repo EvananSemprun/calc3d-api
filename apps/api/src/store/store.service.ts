@@ -7,6 +7,7 @@ import {
   STORE_IMAGE_MIME_TYPES,
   slugify,
   type StoreCategoryDto,
+  type StoreCategoryUpdateDto,
   type StoreImageConfirmDto,
   type StoreImageUploadUrlDto,
   type StoreProductCreateDto,
@@ -333,19 +334,21 @@ export class StoreService {
     });
   }
 
-  async updateCategory(organizationId: string, id: string, dto: StoreCategoryDto) {
+  async updateCategory(organizationId: string, id: string, dto: StoreCategoryUpdateDto) {
     await this.assertCategory(organizationId, id);
     await this.assertMadreValida(organizationId, id, dto.parentId);
-    const slug = await this.uniqueCategorySlug(
-      organizationId,
-      dto.slug ?? slugify(dto.name),
-      id,
-    );
+    // PATCH parcial: sin `name` (ni `slug` explícito) no se recalcula el enlace: mover no
+    // debe cambiar la URL pública.
+    const baseSlug = dto.slug ?? (dto.name !== undefined ? slugify(dto.name) : undefined);
+    const slug =
+      baseSlug !== undefined
+        ? await this.uniqueCategorySlug(organizationId, baseSlug, id)
+        : undefined;
     return this.prisma.storeCategory.update({
       where: { id },
       data: {
-        name: dto.name,
-        slug,
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(slug !== undefined && { slug }),
         // Solo si vino: un PATCH que no manda la madre no debe borrarla.
         ...(dto.parentId !== undefined && { parentId: dto.parentId }),
       },

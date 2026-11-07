@@ -1,4 +1,4 @@
-import { arbolDeCategorias, descendientesDe, CategoriaPlana } from './categorias-arbol';
+import { arbolDeCategorias, descendientesDe, etiquetaDeHija, CategoriaPlana } from './categorias-arbol';
 
 const cat = (id: string, name: string, position: number, parentId?: string | null): CategoriaPlana => ({
   id,
@@ -68,5 +68,31 @@ describe('descendientesDe', () => {
   });
   it('devuelve [] si el id no existe', () => {
     expect(descendientesDe(lista, 'zzz')).toEqual([]);
+  });
+});
+
+describe('etiquetaDeHija', () => {
+  const lista = [
+    cat('j', 'Juguetes', 0),
+    cat('aj', 'Autos', 0, 'j'),
+    cat('l', 'Llaveros', 1),
+    cat('al', 'Autos', 0, 'l'),
+    cat('mu', 'Muñecas', 1, 'j'),
+  ];
+  const arbol = arbolDeCategorias(lista);
+  const etiqueta = (madreId: string, id: string) =>
+    etiquetaDeHija(arbol, lista.find((c) => c.id === madreId)!, lista.find((c) => c.id === id)!);
+
+  it('⚠️ con el nombre repetido en otra madre, agrega la madre entre paréntesis', () => {
+    expect(etiqueta('j', 'aj')).toBe('  Autos (Juguetes)');
+    expect(etiqueta('l', 'al')).toBe('  Autos (Llaveros)');
+  });
+  it('con el nombre único queda limpio, solo con la sangría', () => {
+    expect(etiqueta('j', 'mu')).toBe('  Muñecas');
+  });
+  it('ignora mayúsculas al detectar el repetido', () => {
+    const l2 = [cat('j', 'J', 0), cat('a', 'AUTOS', 0, 'j'), cat('k', 'K', 1), cat('b', 'autos', 0, 'k')];
+    const a2 = arbolDeCategorias(l2);
+    expect(etiquetaDeHija(a2, l2[0], l2[1])).toBe('  AUTOS (J)');
   });
 });
