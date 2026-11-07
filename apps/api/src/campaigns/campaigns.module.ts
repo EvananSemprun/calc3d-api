@@ -270,7 +270,6 @@ export class CampaignsService {
         objetivo: c.objective ? OBJECTIVE_ES[c.objective] ?? c.objective : '',
         inicio: c.startDate.toISOString().slice(0, 10),
         fin: c.endDate ? c.endDate.toISOString().slice(0, 10) : '',
-        presupuesto_usd: c.budget != null ? Number(c.budget) : '',
         invertido_usd: st.invested,
         vendido_usd: st.revenue,
         ganancia_usd: st.hasCost ? st.profit : '',
@@ -329,8 +328,9 @@ export class CampaignsService {
     doc.fontSize(14).text('Métricas (USD)');
     doc.moveDown(0.3);
     doc.fontSize(10);
+    // El PRESUPUESTO ESTIMADO salió de los reportes (2026-11-07): no entraba en
+    // ninguna cuenta y el dueño anota lo que PAGÓ. La columna sigue en la base.
     this.row(doc, 'Invertido en publicidad', fmt(st.invested));
-    if (campaign.budget != null) this.row(doc, 'Presupuesto estimado', fmt(Number(campaign.budget)));
     this.row(doc, 'Vendido (atribuido)', fmt(st.revenue));
     this.row(doc, 'Ganancia atribuida', st.hasCost ? fmt(st.profit) : '— (sin costo conocido)');
     this.row(doc, 'ROAS (retorno sobre inversión)', r != null ? `${r.toLocaleString(locale, { maximumFractionDigits: 2 })}×` : '—');

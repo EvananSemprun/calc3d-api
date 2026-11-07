@@ -547,10 +547,63 @@ export type OrderCreateDto = z.infer<typeof OrderCreateSchema>;
 export const OrderUpdateSchema = OrderCreateSchema.partial();
 export type OrderUpdateDto = z.infer<typeof OrderUpdateSchema>;
 
-export const PaymentCreateSchema = z.object({
+/**
+ * UN ABONO A UN ENCARGO, cobrado en USD o en otra moneda (2026-11-07).
+ *
+ * ⚠️ **EL MONTO EN USD NO SE ACEPTA DEL CLIENTE cuando se cobró en otra
+ * moneda**: el panel manda lo que el dueño escribió —los bolívares y la tasa—
+ * y el SERVIDOR deriva el USD con `usdDesdeMoneda`. Es la misma regla que
+ * sostiene `costAtPublish` en la tienda y el monto de una recepción: un
+ * número de plata que viaja en el cuerpo es un número que cualquiera elige.
+ *
+ * Son DOS formas y el refine las mantiene separadas:
+ * - **En USD**: `amount`, y ninguno de los tres campos de moneda.
+ * - **En otra moneda**: `currencyLabel` + `rate` + `amountForeign`, y
+ *   `amount` PROHIBIDO. Prohibirlo (en vez de ignorarlo) es lo que convierte
+ *   un intento de mandarlo en un 400 visible y no en un dato descartado en
+ *   silencio.
+ */
+const PaymentFields = z.object({
   date: FECHA,
-  amount: z.number().positive('El abono debe ser mayor que 0'),
+  /** USD. Solo cuando se cobró en dólares. */
+  amount: z.number().positive('El abono debe ser mayor que 0').optional(),
   note: z.string().optional().nullable(),
+  /** Nombre de la tasa con la que se cobró, p. ej. "BCV Euro". */
+  currencyLabel: z.string().min(1).max(60).optional(),
+  /** Unidades de esa moneda por 1 USD. La ESCRIBE el dueño: puede no ser la vigente. */
+  rate: z.number().positive('La tasa tiene que ser mayor que 0').optional(),
+  /** Lo que pagó el cliente EN ESA MONEDA, tal cual se escribió. */
+  amountForeign: z.number().positive('El abono debe ser mayor que 0').optional(),
+});
+
+export const PaymentCreateSchema = PaymentFields.superRefine((v, ctx) => {
+  const enMoneda = v.currencyLabel != null || v.rate != null || v.amountForeign != null;
+  if (!enMoneda) {
+    if (v.amount == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'El abono debe ser mayor que 0',
+      });
+    }
+    return;
+  }
+  for (const campo of ['currencyLabel', 'rate', 'amountForeign'] as const) {
+    if (v[campo] == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [campo],
+        message: 'Para cobrar en otra moneda hacen falta la moneda, la tasa y el monto',
+      });
+    }
+  }
+  if (v.amount != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['amount'],
+      message: 'El monto en USD lo calcula el servidor con la tasa: no lo mandes',
+    });
+  }
 });
 export type PaymentCreateDto = z.infer<typeof PaymentCreateSchema>;
 
@@ -1149,6 +1202,15 @@ export type PurchaseInvoicePaymentDto = z.infer<typeof PurchaseInvoicePaymentSch
 /** Anular pide motivo: un abono anulado sin explicación es un agujero. */
 export const PurchaseVoidSchema = z.object({
   reason: z.string().trim().min(1, 'Decí por qué se anula'),
+  /**
+   * EL SEGUNDO SÍ, pasados los 3 días desde que se cargó (2026-11-07).
+   *
+   * ⚠️ Es un candado BLANDO: con esto en `true` la anulación se hace igual. No
+   * existe para impedirla —el error que se descubre al cuarto día es un caso
+   * real— sino para que no sea un click más. Sin él, el servidor devuelve 400
+   * y dice cuántos días pasaron.
+   */
+  confirmoFueraDePlazo: z.boolean().optional(),
 });
 export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;
 

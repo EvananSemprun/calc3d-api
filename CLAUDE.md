@@ -3221,6 +3221,135 @@ alcanza**: sin eso la tienda no sirve nada y las fotos no tienen dónde vivir.
   contrato entre el panel y la API. No es algo para la víspera de publicar.
 - **`STORE_ORIGIN`** con el dominio nuevo, exacto y sin barra final.
 
+
+## La tanda del 2026-11-07 (shared 0.64.0)
+
+Diez cambios pedidos por el dueño en una sola pasada; acá queda lo del backend
+y lo del motor. El resto vive en el CLAUDE.md de `calc3d-web`.
+
+### UN ABONO COBRADO EN OTRA MONEDA (migración `20261107120000_abono_en_su_moneda`)
+
+El cliente paga en bolívares y el dueño anota los bolívares y **la tasa a la
+que cobró**; el servidor deriva el USD, que sigue siendo la base de todo.
+
+- ⚠️ **EL USD NO SE ACEPTA DEL CLIENTE.** `PaymentCreateSchema` tiene dos
+  caminos y el refine los mantiene separados: en USD viaja `amount` y ninguno
+  de los tres campos de moneda; en otra moneda viajan `currencyLabel` + `rate`
+  + `amountForeign` y **`amount` está PROHIBIDO**. Prohibirlo —en vez de
+  ignorarlo— es lo que convierte un intento en un 400 visible y no en un dato
+  descartado en silencio. Es la misma regla que `costAtPublish` en la tienda y
+  el monto de una recepción.
+- ⚠️ **LA TASA ES «MONEDA DESTINO POR 1 USD»: se DIVIDE.** Bs 1.900 a 250 son
+  $7,60; multiplicando darían 475.000. La cuenta vive en
+  `usdDesdeMoneda` (`shared/calc/abono-en-moneda.ts`), con decimal.js, y lanza
+  con tasa ≤ 0 en vez de devolver infinito.
+- ⚠️ **La tasa que se guarda es LA DEL ABONO, no la vigente.** Antes
+  `addPayment` le pegaba al abono la tasa vigente de la moneda del pedido al
+  momento de guardar: un cobro a otra tasa quedaba registrado con una que
+  nunca se usó. La moneda SÍ se valida contra las tasas cargadas (de ahí sale
+  el `currencyCode`); si ya no existe, corta **antes de escribir**.
+- **`Payment.amountForeign`** guarda los bolívares EXACTOS que se escribieron.
+  No es redundante con `amount × rate`: el USD se deriva dividiendo y se
+  recorta a 4 decimales, así que reconstruir los bolívares devuelve 1.899,9999
+  donde el cliente pagó 1.900. Uno es el número del recibo, el otro el del
+  negocio.
+- ⚠️ La columna es **NULLABLE y sin DEFAULT**: los abonos que ya existen se
+  cobraron en USD o con la tasa congelada del pedido y ninguno tiene este dato.
+  Un default los haría afirmar un monto que nadie registró — la lección de
+  `paidBy`.
+- **Pasarse del saldo NO se bloquea**: con diferencia cambiaria pasarse unos
+  centavos es el caso real, y trabar ahí sería trabar justo lo que esto vino a
+  resolver. El saldo queda negativo (ya podía) y el panel avisa antes de
+  guardar. `saldoAFavorDelAbono` compara **al centavo**, no al cuarto decimal:
+  sin eso, el residuo de dividir bolívares sacaba el aviso en un abono exacto.
+- Regresión: `calc/abono-en-moneda.spec.ts` (11),
+  `schemas/abono-en-moneda.spec.ts` (10, con el test de seguridad del
+  mass-assignment) y 8 en `orders.service.spec.ts`. Por mutación, tomar el
+  `amount` del cuerpo tumba 1 en la API y el `.div` por `.mul` tumba 4 en
+  shared.
+
+### ⚠️ EL INVENTARIO DE FECHAS NO MIRABA DENTRO DE LOS `superRefine`
+
+Al volver `PaymentCreateSchema` un `ZodEffects`, **dejó de estar en la red del
+inventario** de `fecha-calendario.spec.ts` —que solo recorría `ZodObject`— y su
+`date` quedó sin vigilar de un commit al otro, **sin que nada fallara**.
+`StoreProductCreateSchema` llevaba así desde que existe.
+
+El inventario ahora **desenvuelve** los `ZodEffects` hasta el objeto de abajo.
+Comprobado por mutación: aflojar `PaymentCreateSchema.date` a
+`z.string().min(1)` pone 5 tests en rojo nombrando el campo; antes del arreglo
+no habría puesto ninguno. **Un schema que gana un `.superRefine()` se sale de
+toda red que filtre por `typeName`** — si aparece otra, hay que desenvolverla
+igual.
+
+### EL CANDADO BLANDO PARA ANULAR EN COMPRAS
+
+Pasados **3 días desde que se CARGÓ**, anular una factura o un abono exige
+`confirmoFueraDePlazo: true`; sin él es un 400 que dice cuántos días pasaron.
+
+- ⚠️ **Desde `createdAt`, no desde la fecha del documento.** Son las dos clases
+  de fecha de este proyecto y la diferencia es visible en los datos: hay una
+  compra del 05/10 con un abono fechado el 02/11. Contando por el documento, un
+  abono cargado hoy con fecha vieja **nacería fuera de plazo**.
+- **Blando a propósito**: el error que se descubre al cuarto día es un caso
+  real, y un candado duro en un negocio de una sola persona significa tocar la
+  base a mano. Lo que evita es el click distraído.
+- ⚠️ **La regla vive en el motor** (`anulacionNecesitaConfirmacion` +
+  `DIAS_PARA_ANULAR_SIN_CONFIRMAR`, en `calc/purchase-invoice.ts`), no en el
+  servicio: el panel la necesita para saber cuándo cambiar el texto de la
+  confirmación, y escrita en dos lados se separarían el día que el plazo
+  cambie. `ahora` entra como parámetro, como `facturasAtrasadas`.
+- ⚠️ **Una fecha ilegible PIDE confirmación.** Lo contrario convertiría un dato
+  roto en un permiso para anular sin preguntar.
+- ⚠️ **La regla DURA gana**: una factura con mercadería recibida no se anula ni
+  confirmando, y el candado corre DESPUÉS de esa comprobación. Al revés,
+  mandaba a confirmar un camino cerrado — el error de mensaje que este módulo
+  ya cometió una vez. Tiene su test.
+- `serializar()` expone ahora `createdAt` en la factura y en cada abono: arma la
+  respuesta CAMPO POR CAMPO, así que lo que no se agregue ahí existe en la
+  base, pasa los tipos y **nunca llega al cliente**.
+- **No hubo migración**: las dos tablas ya tenían `createdAt`.
+- Regresión: 6 en `calc/purchase-invoice.spec.ts` y 5 en
+  `purchase-invoices.service.spec.ts`. Por mutación, sacar el candado de la
+  factura tumba 1.
+
+### Los tramos de mayoreo van de la calculadora a la ficha
+
+`tramosParaLaTienda` (`calc/store-pricing.ts`) traduce los
+`wholesale.tiers` del `CalcInput` a los `priceTiers` de la ficha. **No es un
+cast**: los dos contratos no aceptan lo mismo y pasar la lista cruda hacía
+**rebotar el guardado entero** del producto.
+
+- Se caen los tramos que no superan el mínimo del producto («desde 1 unidad» no
+  es un tramo, es el precio base), los que no descuentan nada, y de las
+  cantidades repetidas queda **el de mayor descuento** —cobrar de menos por una
+  ambigüedad del formulario es preferible a cobrar de más sin que el dueño lo
+  haya decidido—. Pasados 8, sobran los de cantidad más alta.
+- ⚠️ **Silencioso a propósito**: devuelve lo que sirve en vez de lanzar. Quien
+  llama está guardando un producto, y volarle el guardado por un tramo de más
+  sería perder el costeo entero por un dato accesorio.
+- ⚠️ El chequeo `minQty < 2` que tenía era **código muerto** (un tramo tiene que
+  superar `minQtyProducto`, que nunca baja de 1). Lo destapó una mutación que
+  **no compiló**: 21 tests dejaron de correr en vez de fallar, que es el verde
+  falso del que avisa este archivo.
+- Tests: 9 en `calc/store-pricing.spec.ts`, incluido el que exige que lo que
+  devuelve **atraviese `StoreProductCreateSchema`** y que el crudo NO.
+
+### El presupuesto estimado salió de los reportes
+
+`Campaign.budget` ya no sale en el Excel (`presupuesto_usd`) ni en el PDF.
+**No entraba en ninguna cuenta**: el ROI siempre usó `invested`, que son los
+gastos reales. El DTO lo sigue aceptando y la columna se queda con lo ya
+cargado; simplemente nadie la lee.
+
+### `PATCH /sales/:id` existía y el panel no lo usaba
+
+No hubo cambio de backend. Queda anotado porque buscar «¿se puede editar una
+venta?» **solo en `apps/web`** hizo concluir lo contrario: el endpoint y el
+servicio estaban completos desde siempre. Antes de afirmar que falta una
+capacidad, buscarla en los dos repos.
+
+
 ## Entorno
 - Windows / PowerShell: usar su sintaxis (`$env:VAR` no `$VAR`, `$null` no
   `/dev/null`, backtick para continuar línea). Rutas con backslash de Windows.

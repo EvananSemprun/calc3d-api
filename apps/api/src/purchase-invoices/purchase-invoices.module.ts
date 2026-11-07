@@ -19,6 +19,8 @@ import {
   PurchaseInvoiceUpsertSchema,
   PurchaseReceiveSchema,
   PurchaseVoidSchema,
+  DIAS_PARA_ANULAR_SIN_CONFIRMAR,
+  anulacionNecesitaConfirmacion,
   codigoDeCompra,
   invoiceStatus,
   invoiceTotals,
@@ -164,6 +166,8 @@ export class PurchaseInvoicesService {
       tomadoDeFacturaId: p.tomadoDeFacturaId,
       voidedAt: p.voidedAt?.toISOString() ?? null,
       voidReason: p.voidReason,
+      /** CUÁNDO SE CARGÓ, no la fecha del documento: de acá sale el plazo de anulación. */
+      createdAt: p.createdAt?.toISOString() ?? null,
     }));
 
     // ⚠️ **El total ya NO es `Σ cantidad × precio pedido`.** Cada línea viaja con
@@ -191,6 +195,13 @@ export class PurchaseInvoicesService {
       supplier: f.supplier,
       voidedAt: f.voidedAt?.toISOString() ?? null,
       voidReason: f.voidReason,
+      /**
+       * CUÁNDO SE CARGÓ. No es `date`, que es la fecha del DOCUMENTO: el panel
+       * necesita ésta para saber si anular pide la confirmación extra, y
+       * contar por la del documento haría que una compra cargada hoy con fecha
+       * vieja naciera fuera de plazo.
+       */
+      createdAt: f.createdAt?.toISOString() ?? null,
       source: f.source,
       lines,
       payments,
@@ -428,6 +439,28 @@ export class PurchaseInvoicesService {
    * historial tiene que seguir siendo legible. Anularla saca sus abonos de la
    * caja (ver el `where` de `cash.service.ts`).
    */
+  /**
+   * EL CANDADO BLANDO DE LA ANULACIÓN (2026-11-07).
+   *
+   * Pasados 3 días desde que se CARGÓ, anular pide un segundo sí. No se
+   * impide: se exige decirlo. El plazo y el "desde cuándo" los decide
+   * `anulacionNecesitaConfirmacion` (shared), no este archivo — si la regla se
+   * escribiera acá, el panel tendría que adivinarla para saber cuándo mostrar
+   * la advertencia y las dos definiciones se separarían.
+   *
+   * ⚠️ Va en el SERVIDOR y no solo en el botón: un candado dibujado no es un
+   * candado, y esto revierte plata ya contada.
+   */
+  private exigirConfirmacion(cargadoEl: Date | undefined, dto: PurchaseVoidDto, que: string) {
+    if (!anulacionNecesitaConfirmacion(cargadoEl ?? '', new Date())) return;
+    if (dto.confirmoFueraDePlazo) return;
+    const ms = cargadoEl instanceof Date ? cargadoEl.getTime() : Number.NaN;
+    const dias = Number.isFinite(ms) ? Math.floor((Date.now() - ms) / 86_400_000) : null;
+    throw new BadRequestException(
+      `${que} ${dias == null ? 'no se cargó hoy' : `se cargó hace ${dias} días`}. Pasados ${DIAS_PARA_ANULAR_SIN_CONFIRMAR}, anular pide una confirmación extra: volvé a intentarlo confirmando.`,
+    );
+  }
+
   async void(organizationId: string, id: string, dto: PurchaseVoidDto) {
     const f = await this.mia(organizationId, id);
     if (f.voidedAt) throw new BadRequestException('Esa factura ya estaba anulada');
@@ -440,6 +473,7 @@ export class PurchaseInvoicesService {
         `Esta factura tiene ${recibidas.length} línea(s) con mercadería recibida. Deshacé esas recepciones ("Deshacer recepción", en cada línea) y después anulala.`,
       );
     }
+    this.exigirConfirmacion(f.createdAt, dto, 'Esta factura');
     await this.prisma.purchaseInvoice.update({
       where: { id },
       data: { voidedAt: new Date(), voidReason: dto.reason },
@@ -821,6 +855,7 @@ export class PurchaseInvoicesService {
     });
     if (!pago) throw new NotFoundException('No existe ese abono');
     if (pago.voidedAt) throw new BadRequestException('Ese abono ya estaba anulado');
+    this.exigirConfirmacion(pago.createdAt, dto, 'Este abono');
 
     await this.prisma.purchaseInvoicePayment.update({
       where: { id: paymentId },

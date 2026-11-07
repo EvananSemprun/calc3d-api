@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -22,6 +23,7 @@ import {
   orderBalance,
   orderPaid,
   orderTotal,
+  usdDesdeMoneda,
   type OrderCreateDto,
   type OrderLine,
   type OrderUpdateDto,
@@ -156,14 +158,57 @@ export class OrdersService {
     return { ok: true };
   }
 
+  /**
+   * UN ABONO. Dos caminos, y el que decide es el cuerpo (ver
+   * `PaymentCreateSchema`).
+   *
+   * - **En USD**: como siempre. Se congela la tasa VIGENTE de la moneda del
+   *   pedido, para poder reconciliar en Bs aunque el total se muestre en vivo.
+   * - **En otra moneda** (2026-11-07): el dueño manda los bolívares y la tasa
+   *   que COBRÓ, que puede no ser la vigente, y el **servidor deriva el USD**.
+   *
+   * ⚠️ El USD nunca sale del cuerpo en el segundo camino: lo calcula
+   * `usdDesdeMoneda`. Si viajara, cualquiera acreditaría lo que quisiera
+   * diciendo que pagó en bolívares. El schema además lo PROHÍBE, así que un
+   * intento es un 400 y no un dato descartado en silencio.
+   *
+   * ⚠️ Pasarse del saldo NO se bloquea: con diferencia cambiaria pasarse unos
+   * centavos es el caso real, y trabar ahí sería trabar justo lo que esto
+   * viene a resolver. El panel avisa antes de guardar.
+   */
   async addPayment(organizationId: string, orderId: string, dto: PaymentCreateDto) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, organizationId },
       select: { currencyLabel: true },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
-    // Congelar en el abono la tasa VIGENTE de la moneda del pedido (para reconciliar
-    // en Bs aunque el total/saldo se muestren en vivo). Null si el pedido es solo USD.
+
+    if (dto.amountForeign != null && dto.rate != null && dto.currencyLabel != null) {
+      // La moneda tiene que existir en las tasas del negocio: de ahí sale el
+      // `currencyCode` con el que después se formatea el recibo. La TASA, en
+      // cambio, es la que escribió el dueño — es el punto de todo esto.
+      const moneda = await this.rateForLabel(organizationId, dto.currencyLabel);
+      if (!moneda) {
+        throw new BadRequestException(
+          `Ya no existe la tasa "${dto.currencyLabel}". Cargala en Configuración → Moneda y volvé a intentar.`,
+        );
+      }
+      await this.prisma.payment.create({
+        data: {
+          orderId,
+          organizationId,
+          date: new Date(dto.date),
+          amount: usdDesdeMoneda(dto.amountForeign, dto.rate),
+          amountForeign: dto.amountForeign,
+          note: dto.note ?? null,
+          rate: dto.rate,
+          currencyCode: moneda.currencyCode,
+          currencyLabel: moneda.label,
+        },
+      });
+      return this.get(organizationId, orderId);
+    }
+
     const frozen = order.currencyLabel
       ? await this.rateForLabel(organizationId, order.currencyLabel)
       : null;
@@ -172,7 +217,7 @@ export class OrdersService {
         orderId,
         organizationId,
         date: new Date(dto.date),
-        amount: dto.amount,
+        amount: dto.amount!,
         note: dto.note ?? null,
         rate: frozen?.rate ?? null,
         currencyCode: frozen?.currencyCode ?? null,

@@ -470,6 +470,18 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
     // habría dado verde. Van anclados a nombre COMPLETO: con `[a-z]to$`,
     // `photo` entraría como si fuera una fecha.
     const PARECE_FECHA = /^(from|to|month)$|(^|[a-z])(date|at)$/i;
+
+    type Def = { typeName?: string; shape?: () => Record<string, ZodTypeAny>; schema?: unknown };
+    /** Baja por los `ZodEffects` hasta el objeto de abajo (o se rinde). */
+    const desenvolver = (schema: unknown): Def | undefined => {
+      let actual = schema;
+      for (let i = 0; i < 10; i++) {
+        const def = (actual as { _def?: Def })?._def;
+        if (def?.typeName !== 'ZodEffects') return def;
+        actual = def.schema;
+      }
+      return undefined;
+    };
     const abiertos: string[] = [];
 
     for (const [nombre, schema] of Object.entries(API as Record<string, unknown>)) {
@@ -478,8 +490,13 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
       // valida con él un cuerpo del cliente, y su `updatedAt` es un instante
       // real con hora, no un día de negocio.
       if (nombre.endsWith('ViewSchema') || nombre.endsWith('ResponseSchema')) continue;
-      const def = (schema as { _def?: { typeName?: string; shape?: () => Record<string, ZodTypeAny> } })
-        ._def;
+      // ⚠️ HAY QUE DESENVOLVER `ZodEffects` (2026-11-07). Un schema con
+      // `.superRefine()` NO es un `ZodObject`, así que el inventario lo
+      // saltaba y el schema quedaba fuera de la red **sin que nada fallara**.
+      // Pasó al agregarle el cobro en otra moneda a `PaymentCreateSchema`:
+      // su `date` dejó de estar vigilado de un commit al otro.
+      // `StoreProductCreateSchema` llevaba así desde que existe.
+      const def = desenvolver(schema);
       if (def?.typeName !== 'ZodObject' || typeof def.shape !== 'function') continue;
 
       for (const [campo, tipo] of Object.entries(def.shape())) {

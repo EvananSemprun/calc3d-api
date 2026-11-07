@@ -322,3 +322,42 @@ export function facturasAtrasadas(
 export function codigoDeCompra(code: number): string {
   return `C-${String(code).padStart(4, '0')}`;
 }
+
+/**
+ * CUÁNTOS DÍAS SE PUEDE ANULAR SIN DAR EXPLICACIONES (2026-11-07).
+ *
+ * Tres: el plazo que pidió el dueño. La anulación es la única operación de
+ * Compras que revierte plata ya contada, y un click distraído sobre una
+ * factura vieja descuadra la deuda con el proveedor sin que nadie lo note.
+ */
+export const DIAS_PARA_ANULAR_SIN_CONFIRMAR = 3;
+
+/**
+ * ¿Anular esto necesita la confirmación extra?
+ *
+ * ⚠️ **Se cuenta desde que se CARGÓ (`createdAt`), no desde la fecha del
+ * documento.** Son dos cosas distintas en este dominio y la diferencia es
+ * visible en los datos: hay compras del 05/10 con un abono fechado el 02/11.
+ * Contando por la fecha del documento, un abono cargado con fecha vieja
+ * **nacería necesitando confirmación** — o sea que el plazo no existiría para
+ * él.
+ *
+ * ⚠️ **Es un candado BLANDO: devuelve si hay que confirmar, no si se puede.**
+ * Un candado duro sobre un negocio de una sola persona significa "hay que
+ * tocar la base a mano", y el error que se descubre al cuarto día es un caso
+ * real. Lo que evita es el click distraído, que es el problema que había.
+ *
+ * `ahora` entra como PARÁMETRO y no se lee del reloj acá: un test contra el
+ * reloj pasa hoy y falla solo algún martes. Misma convención que
+ * `facturasAtrasadas` y `cashChainCuts`.
+ */
+export function anulacionNecesitaConfirmacion(cargadoEl: Date | string, ahora: Date): boolean {
+  const desde = cargadoEl instanceof Date ? cargadoEl : new Date(cargadoEl);
+  const ms = desde.getTime();
+  // Una fecha ilegible NO puede abrir la puerta: si no se sabe cuándo se cargó,
+  // se pide la confirmación. Lo contrario convertiría un dato roto en un
+  // permiso.
+  if (!Number.isFinite(ms)) return true;
+  const dias = (ahora.getTime() - ms) / 86_400_000;
+  return dias > DIAS_PARA_ANULAR_SIN_CONFIRMAR;
+}

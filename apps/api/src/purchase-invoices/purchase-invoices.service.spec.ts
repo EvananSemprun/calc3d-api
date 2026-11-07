@@ -372,6 +372,73 @@ describe('PurchaseInvoicesService — lo ya recibido no se toca', () => {
     expect(p.purchaseInvoiceLine.deleteMany).toHaveBeenCalledWith({ where: { invoiceId: 'f1' } });
   });
 
+  /**
+   * EL CANDADO BLANDO DE LA ANULACIÓN (2026-11-07). Pasados 3 días desde que
+   * se CARGÓ, anular pide un segundo sí.
+   *
+   * ⚠️ Va en el SERVIDOR, que es lo que estos tests cuidan: un candado que
+   * viva solo en el botón no es un candado. Y es BLANDO a propósito — con la
+   * confirmación la anulación se hace, porque el error que se descubre al
+   * cuarto día es un caso real.
+   */
+  describe('plazo para anular', () => {
+    const haceDias = (d: number) => new Date(Date.now() - d * 86_400_000);
+
+    it('recién cargada se anula sin confirmar nada', async () => {
+      const p = makePrisma({ ...FACTURA_VACIA, createdAt: haceDias(1) });
+      await servicio(p).void(ORG, 'f1', { reason: 'me equivoqué' });
+      expect(p.purchaseInvoice.update).toHaveBeenCalled();
+    });
+
+    it('pasados los 3 días corta ANTES de escribir y dice cuántos pasaron', async () => {
+      const p = makePrisma({ ...FACTURA_VACIA, createdAt: haceDias(40) });
+      await expect(servicio(p).void(ORG, 'f1', { reason: 'me equivoqué' })).rejects.toThrow(
+        /se cargó hace 40 días/,
+      );
+      expect(p.purchaseInvoice.update).not.toHaveBeenCalled();
+    });
+
+    it('con la confirmación SÍ se anula, aunque sea vieja', async () => {
+      const p = makePrisma({ ...FACTURA_VACIA, createdAt: haceDias(40) });
+      await servicio(p).void(ORG, 'f1', { reason: 'me equivoqué', confirmoFueraDePlazo: true });
+      expect(p.purchaseInvoice.update).toHaveBeenCalled();
+    });
+
+    it('lo mismo vale para un abono', async () => {
+      const p = makePrisma({ ...FACTURA_VACIA, createdAt: haceDias(1) });
+      p.purchaseInvoicePayment.findFirst.mockResolvedValue({
+        id: 'ab1',
+        invoiceId: 'f1',
+        organizationId: ORG,
+        voidedAt: null,
+        createdAt: haceDias(40),
+      } as never);
+      await expect(
+        servicio(p).voidPayment(ORG, 'f1', 'ab1', { reason: 'x' }),
+      ).rejects.toThrow(/se cargó hace 40 días/);
+      expect(p.purchaseInvoicePayment.update).not.toHaveBeenCalled();
+
+      await servicio(p).voidPayment(ORG, 'f1', 'ab1', { reason: 'x', confirmoFueraDePlazo: true });
+      expect(p.purchaseInvoicePayment.update).toHaveBeenCalled();
+    });
+
+    /**
+     * ⚠️ La regla DURA gana: una factura con mercadería recibida no se anula
+     * ni confirmando. Mandar a confirmar un camino cerrado es el error de
+     * mensaje que este módulo ya cometió una vez.
+     */
+    it('la mercadería recibida gana sobre el plazo', async () => {
+      const p = makePrisma({
+        ...FACTURA_VACIA,
+        createdAt: haceDias(40),
+        lines: [linea({ received: 2 })],
+      });
+      await expect(
+        servicio(p).void(ORG, 'f1', { reason: 'x', confirmoFueraDePlazo: true }),
+      ).rejects.toThrow(/mercadería recibida/);
+    });
+  });
+
   it('anular una factura con mercadería recibida → 400', async () => {
     const p = makePrisma({ ...FACTURA_VACIA, lines: [linea({ received: 2 })] });
     await expect(servicio(p).void(ORG, 'f1', { reason: 'me equivoqué' })).rejects.toBeInstanceOf(

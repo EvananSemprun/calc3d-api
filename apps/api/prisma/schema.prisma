@@ -615,6 +615,15 @@ model Payment {
   currencyCode   String?
   currencyLabel  String?
 
+  /// LO QUE PAGÓ EL CLIENTE EN ESA MONEDA, tal cual lo escribió el dueño
+  /// (2026-11-07). `null` = se cobró en USD, o es un abono anterior a esto.
+  ///
+  /// ⚠️ **No es redundante con `amount × rate`.** El USD se deriva dividiendo
+  /// y se recorta a 4 decimales, así que reconstruir los bolívares desde él
+  /// devuelve 1.899,9999 donde el cliente pagó 1.900. Este es el número del
+  /// recibo; `amount` es el que cuenta para el negocio.
+  amountForeign  Decimal? @db.Decimal(14, 4)
+
   /// Mismo criterio que `Sale.source`: el abono importado del Excel lleva su
   /// insignia en el detalle de "Ventas cobradas".
   source RecordSource @default(MANUAL)

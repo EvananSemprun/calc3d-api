@@ -1,4 +1,4 @@
-import {
+import { anulacionNecesitaConfirmacion,
   codigoDeCompra,
   facturasAtrasadas,
   invoiceStatus,
@@ -474,5 +474,48 @@ describe('codigoDeCompra', () => {
   // código en pantalla.
   it('no recorta cuando se pasa de cuatro cifras', () => {
     expect(codigoDeCompra(12345)).toBe('C-12345');
+  });
+});
+
+describe('anulacionNecesitaConfirmacion', () => {
+  const ahora = new Date('2026-11-07T15:00:00.000Z');
+  const haceDias = (d: number) => new Date(ahora.getTime() - d * 86_400_000);
+
+  it('recién cargado NO pide confirmación', () => {
+    expect(anulacionNecesitaConfirmacion(ahora, ahora)).toBe(false);
+    expect(anulacionNecesitaConfirmacion(haceDias(1), ahora)).toBe(false);
+  });
+
+  it('en el último momento del plazo todavía NO pide', () => {
+    expect(anulacionNecesitaConfirmacion(haceDias(3), ahora)).toBe(false);
+  });
+
+  it('pasado el plazo SÍ pide', () => {
+    expect(anulacionNecesitaConfirmacion(haceDias(3.01), ahora)).toBe(true);
+    expect(anulacionNecesitaConfirmacion(haceDias(40), ahora)).toBe(true);
+  });
+
+  it('acepta la fecha como texto, que es como llega de la base', () => {
+    expect(anulacionNecesitaConfirmacion('2026-11-06T10:00:00.000Z', ahora)).toBe(false);
+    expect(anulacionNecesitaConfirmacion('2026-10-01T10:00:00.000Z', ahora)).toBe(true);
+  });
+
+  /**
+   * ⚠️ Un dato roto PIDE confirmación, no la saltea: lo contrario convertiría
+   * una fecha ilegible en un permiso para anular sin preguntar.
+   */
+  it('con una fecha ilegible pide confirmación', () => {
+    expect(anulacionNecesitaConfirmacion('cualquier cosa', ahora)).toBe(true);
+  });
+
+  /**
+   * ⚠️ Se cuenta desde que se CARGÓ, no desde la fecha del documento. En los
+   * datos reales hay una compra del 05/10 con un abono fechado el 02/11: por
+   * la fecha del documento, un abono cargado hoy con fecha vieja nacería
+   * pidiendo confirmación y el plazo no existiría para él.
+   */
+  it('el plazo lo da la carga, aunque el documento sea viejo', () => {
+    const cargadoHoy = ahora;
+    expect(anulacionNecesitaConfirmacion(cargadoHoy, ahora)).toBe(false);
   });
 });
