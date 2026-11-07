@@ -800,10 +800,15 @@ model StoreCategory {
   position       Int          @default(0)
   createdAt      DateTime     @default(now())
 
+  parent   StoreCategory?  @relation("CategoriaMadre", fields: [parentId], references: [id], onDelete: Restrict)
+  parentId String?
+  children StoreCategory[] @relation("CategoriaMadre")
+
   products StoreProduct[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
+  @@index([parentId])
 }
 
 model StoreProduct {
