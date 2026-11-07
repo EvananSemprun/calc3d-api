@@ -326,24 +326,43 @@ export class StoreService {
   async createCategory(organizationId: string, dto: StoreCategoryDto) {
     const slug = await this.uniqueCategorySlug(organizationId, dto.slug ?? slugify(dto.name));
     if (!slug) throw new BadRequestException('El nombre no genera un enlace válido');
+    await this.assertMadreValida(organizationId, null, dto.parentId);
     const count = await this.prisma.storeCategory.count({ where: { organizationId } });
     return this.prisma.storeCategory.create({
-      data: { organizationId, name: dto.name, slug, position: count },
+      data: { organizationId, name: dto.name, slug, position: count, parentId: dto.parentId ?? null },
     });
   }
 
   async updateCategory(organizationId: string, id: string, dto: StoreCategoryDto) {
     await this.assertCategory(organizationId, id);
+    await this.assertMadreValida(organizationId, id, dto.parentId);
     const slug = await this.uniqueCategorySlug(
       organizationId,
       dto.slug ?? slugify(dto.name),
       id,
     );
-    return this.prisma.storeCategory.update({ where: { id }, data: { name: dto.name, slug } });
+    return this.prisma.storeCategory.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        slug,
+        // Solo si vino: un PATCH que no manda la madre no debe borrarla.
+        ...(dto.parentId !== undefined && { parentId: dto.parentId }),
+      },
+    });
   }
 
   async removeCategory(organizationId: string, id: string) {
     await this.assertCategory(organizationId, id);
+    // La FK es RESTRICT: se corta acá para dar un mensaje claro y no un error crudo de Postgres.
+    const hijas = await this.prisma.storeCategory.count({
+      where: { organizationId, parentId: id },
+    });
+    if (hijas > 0) {
+      throw new BadRequestException(
+        `La categoría tiene ${hijas} ${hijas === 1 ? 'subcategoría' : 'subcategorías'}: movelas o borralas antes`,
+      );
+    }
     // Las fichas quedan sin categoría (SetNull), no se borran con ella.
     await this.prisma.storeCategory.delete({ where: { id } });
     return { ok: true };
@@ -484,6 +503,42 @@ export class StoreService {
     }
 
     return keysABorrar;
+  }
+
+  /**
+   * Reglas de la madre de una categoría: no ella misma, de esta organización,
+   * que no tenga madre (solo dos niveles) y, si la categoría ya tiene hijas,
+   * que no pase a ser hija. `id` es null al crear.
+   */
+  private async assertMadreValida(
+    organizationId: string,
+    id: string | null,
+    parentId: string | null | undefined,
+  ): Promise<void> {
+    if (!parentId) return;
+    if (parentId === id) {
+      throw new BadRequestException('Una categoría no puede ser su propia madre');
+    }
+    await this.assertCategory(organizationId, parentId);
+    const madre = await this.prisma.storeCategory.findFirst({
+      where: { id: parentId, organizationId },
+      select: { parentId: true },
+    });
+    if (madre?.parentId) {
+      throw new BadRequestException(
+        'Esa categoría ya es una subcategoría: solo se admiten dos niveles',
+      );
+    }
+    if (id) {
+      const hijas = await this.prisma.storeCategory.count({
+        where: { organizationId, parentId: id },
+      });
+      if (hijas > 0) {
+        throw new BadRequestException(
+          'Esta categoría ya tiene subcategorías: no puede pasar a ser una subcategoría',
+        );
+      }
+    }
   }
 
   /** Verifica que la categoría, si viene, sea de esta organización. */
