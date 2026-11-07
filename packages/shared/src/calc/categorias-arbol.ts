@@ -25,18 +25,25 @@ function porPosicionYNombre(a: CategoriaPlana, b: CategoriaPlana): number {
 }
 
 /**
- * Anida la lista plana. Una categoría cuya madre no existe en la lista, o que
- * se apunta a sí misma, se trata como raíz: perderla por un dato roto es peor
+ * Anida la lista plana. Una categoría cuya madre no existe en la lista, que
+ * se apunta a sí misma, cuya madre es a su vez hija (nieta) o que forma un
+ * ciclo, se trata como raíz: perderla por un dato roto es peor
  * que mostrarla fuera de lugar.
  */
 export function arbolDeCategorias<T extends CategoriaPlana>(planas: T[]): CategoriaConHijas<T>[] {
   const ids = new Set(planas.map((c) => c.id));
+  const tieneMadreValida = (c: T): boolean =>
+    !!c.parentId && c.parentId !== c.id && ids.has(c.parentId);
+  // Solo puede ser madre quien NO tiene madre válida. Así una nieta (tres
+  // niveles) o un ciclo suben a la raíz en vez de quedar colgadas de una lista
+  // que nunca se emite.
+  const puedenSerMadre = new Set(planas.filter((c) => !tieneMadreValida(c)).map((c) => c.id));
   const raices: T[] = [];
   const hijasPorMadre = new Map<string, T[]>();
 
   for (const c of planas) {
     const madre = c.parentId;
-    if (madre && madre !== c.id && ids.has(madre)) {
+    if (madre && madre !== c.id && puedenSerMadre.has(madre)) {
       const lista = hijasPorMadre.get(madre) ?? [];
       lista.push(c);
       hijasPorMadre.set(madre, lista);

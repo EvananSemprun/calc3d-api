@@ -34,6 +34,24 @@ describe('arbolDeCategorias', () => {
     expect(arbol[0].hijas).toEqual([]);
   });
 
+  const total = (arbol: ReturnType<typeof arbolDeCategorias>) =>
+    arbol.reduce((n, x) => n + 1 + x.hijas.length, 0);
+
+  it('una nieta (madre que a su vez tiene madre) sube a la raíz y no se pierde', () => {
+    const entrada = [cat('m', 'M', 0), cat('h', 'H', 0, 'm'), cat('n', 'N', 1, 'h')];
+    const arbol = arbolDeCategorias(entrada);
+    expect(total(arbol)).toBe(entrada.length);
+    expect(arbol.map((x) => x.categoria.id)).toEqual(['m', 'n']);
+    expect(arbol[0].hijas.map((h) => h.id)).toEqual(['h']);
+  });
+
+  it('un ciclo de dos no pierde ninguna categoría', () => {
+    const entrada = [cat('a', 'A', 0, 'b'), cat('b', 'B', 1, 'a')];
+    const arbol = arbolDeCategorias(entrada);
+    expect(total(arbol)).toBe(entrada.length);
+    expect(arbol.map((x) => x.categoria.id)).toEqual(['a', 'b']);
+  });
+
   it('devuelve [] con una lista vacía', () => {
     expect(arbolDeCategorias([])).toEqual([]);
   });
