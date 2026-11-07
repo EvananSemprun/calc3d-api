@@ -345,7 +345,7 @@ describe('Catálogo público', () => {
       await service.list('llaveros');
       const where = findMany.mock.calls[0][0].where;
       expect(where.organizationId).toBe(ORG);
-      expect(where.category).toEqual({ slug: 'llaveros' });
+      expect(where.category).toEqual({ OR: [{ slug: 'llaveros' }, { parent: { slug: 'llaveros' } }] });
     });
 
     it('sin STORE_ORGANIZATION_ID la tienda no sirve nada', async () => {
@@ -434,5 +434,81 @@ describe('Flash Sale público (GET /public/store/sale)', () => {
   it('sin STORE_ORGANIZATION_ID no responde', async () => {
     const { service } = makeService({ storeOrganizationId: null, settings: ventana });
     await expect(service.sale()).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe('Subcategorías de la tienda', () => {
+  // Árbol: Llaveros (raíz) > Mundial, Anime. Hogar (raíz) > Macetas.
+  const CATEGORIAS = [
+    { name: 'Llaveros', slug: 'llaveros', parent: null },
+    { name: 'Mundial', slug: 'mundial', parent: { slug: 'llaveros' } },
+    { name: 'Anime', slug: 'anime', parent: { slug: 'llaveros' } },
+    { name: 'Hogar', slug: 'hogar', parent: null },
+    { name: 'Macetas', slug: 'macetas', parent: { slug: 'hogar' } },
+  ];
+  const catDe = (slug: string) => CATEGORIAS.find((c) => c.slug === slug)!;
+  const producto = (slug: string, catSlug: string) => ({
+    ...PRODUCTO,
+    slug,
+    name: slug,
+    category: { name: catDe(catSlug).name, slug: catSlug },
+    categoryRow: catDe(catSlug),
+  });
+  const PRODUCTOS = [
+    producto('p-madre', 'llaveros'),
+    producto('p-mundial', 'mundial'),
+    producto('p-anime', 'anime'),
+    producto('p-maceta', 'macetas'),
+  ];
+
+  /** Evalúa el `where.category` como lo haría Postgres: por slug propio o por el de la madre. */
+  function coincide(cat: { slug: string; parent: { slug: string } | null }, filtro: any): boolean {
+    if (filtro.OR) return filtro.OR.some((f: unknown) => coincide(cat, f));
+    if (filtro.slug !== undefined && cat.slug !== filtro.slug) return false;
+    if (filtro.parent?.slug !== undefined && cat.parent?.slug !== filtro.parent.slug) return false;
+    return true;
+  }
+  const productosFalsos = () =>
+    jest.fn(async (args: any) =>
+      PRODUCTOS.filter((p) => !args.where.category || coincide(p.categoryRow, args.where.category)),
+    );
+  const slugsDe = (r: { products: { slug: string }[] }) => r.products.map((p) => p.slug).sort();
+
+  it('categories() devuelve parentSlug de cada categoría, y null en las raíces', async () => {
+    const { service } = makeService({ categoryFindMany: jest.fn().mockResolvedValue(CATEGORIAS) });
+    const { categories } = await service.categories();
+    expect(categories).toEqual([
+      { name: 'Llaveros', slug: 'llaveros', parentSlug: null },
+      { name: 'Mundial', slug: 'mundial', parentSlug: 'llaveros' },
+      { name: 'Anime', slug: 'anime', parentSlug: 'llaveros' },
+      { name: 'Hogar', slug: 'hogar', parentSlug: null },
+      { name: 'Macetas', slug: 'macetas', parentSlug: 'hogar' },
+    ]);
+  });
+
+  it('⚠️ categories() NO filtra por lista blanca de más: sigue sin id, organizationId ni position', async () => {
+    const filaInterna = { ...CATEGORIAS[1], id: 'c2', organizationId: ORG, position: 3, parentId: 'c1' };
+    const { service } = makeService({ categoryFindMany: jest.fn().mockResolvedValue([filaInterna]) });
+    const claves = clavesDe(await service.categories());
+    for (const prohibida of [...PROHIBIDOS, 'parentId', 'parent']) {
+      expect(claves.has(prohibida)).toBe(false);
+    }
+    expect(claves.has('parentSlug')).toBe(true);
+  });
+
+  it('list() con el slug de una madre trae los productos de sus hijas', async () => {
+    const { service } = makeService({ findMany: productosFalsos() });
+    expect(slugsDe(await service.list('llaveros'))).toEqual(['p-anime', 'p-madre', 'p-mundial']);
+  });
+
+  it('list() con el slug de una hija trae solo los suyos (hermano alcanzable)', async () => {
+    const { service } = makeService({ findMany: productosFalsos() });
+    expect(slugsDe(await service.list('mundial'))).toEqual(['p-mundial']);
+    expect(slugsDe(await service.list('anime'))).toEqual(['p-anime']);
+  });
+
+  it('list() sin categoría los trae todos', async () => {
+    const { service } = makeService({ findMany: productosFalsos() });
+    expect(slugsDe(await service.list())).toEqual(['p-anime', 'p-maceta', 'p-madre', 'p-mundial']);
   });
 });

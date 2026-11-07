@@ -48,6 +48,12 @@ interface PublicCategory {
   slug: string;
 }
 
+/** Nodo del árbol de categorías, en lista plana: la madre viaja como SLUG (el id
+ *  es interno) y el consumidor arma el árbol con `arbolDeCategorias`. */
+interface PublicCategoryNode extends PublicCategory {
+  parentSlug: string | null;
+}
+
 /** Una fila de la ficha técnica. */
 interface PublicSpec {
   label: string;
@@ -148,13 +154,16 @@ export class StorePublicService {
     };
   }
 
-  async categories() {
-    const categories = await this.prisma.storeCategory.findMany({
+  async categories(): Promise<{ categories: PublicCategoryNode[] }> {
+    const rows = await this.prisma.storeCategory.findMany({
       where: { organizationId: this.organizationId },
       orderBy: [{ position: 'asc' }, { name: 'asc' }],
-      select: { name: true, slug: true },
+      select: { name: true, slug: true, parent: { select: { slug: true } } },
     });
-    return { categories };
+    // Lista blanca: ni `id` ni `parentId` salen; la ruta pública se arma con slugs.
+    return {
+      categories: rows.map((c) => ({ name: c.name, slug: c.slug, parentSlug: c.parent?.slug ?? null })),
+    };
   }
 
   /** Banners del carrusel: solo los visibles, en el orden del panel. Lista
@@ -206,7 +215,10 @@ export class StorePublicService {
       where: {
         organizationId: this.organizationId,
         visible: true,
-        ...(categorySlug ? { category: { slug: categorySlug } } : {}),
+        // La madre incluye los productos de sus hijas; una hija, solo los suyos.
+        ...(categorySlug
+          ? { category: { OR: [{ slug: categorySlug }, { parent: { slug: categorySlug } }] } }
+          : {}),
       },
       orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
       include: {
