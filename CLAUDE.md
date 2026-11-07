@@ -2668,6 +2668,19 @@ desplegado algo que sí estaba:
 # ya NO existe: ese servicio se borró. Si la ves en algún lado, está vieja.
 curl -s https://calc3d-api-production.up.railway.app/api/health
 # → {"ok":true,"version":"0.58.0","commit":"4f83ff1"}
+#
+# ⚠️ **Si NO viene `commit`, esta verificación no sirve** — y el endpoint no
+# se queja, porque el campo es opcional. Pasó del 2026-11-05 al 07: el
+# controlador leía `RENDER_GIT_COMMIT`, Railway no la inyecta, y `/health`
+# devolvió `{ok, ts, version}` a secas durante dos días sin que fallara nada.
+# Verificar un despliegue volvió a ser esperar por reloj. Arreglado mirando
+# `RAILWAY_GIT_COMMIT_SHA` primero (`health.controller.ts`), con su regresión.
+# Si el servicio vuelve a mudarse, el síntoma es este mismo silencio: sumar el
+# nombre que inyecte la plataforma nueva a `COMMIT_ENVS`.
+#
+# ⚠️ **La `version` sola NO distingue un deploy** cuando el cambio no sube
+# `SHARED_VERSION` (un fix, un refactor, docs): los dos commits dicen lo mismo.
+# Para esos, el `commit` es la ÚNICA señal.
 
 # Panel: el bundle se compila en Cloudflare, así que su HASH NO tiene por qué
 # coincidir con el del build local. Comparar hashes da falsos negativos.

@@ -23,6 +23,7 @@ describe('GET /api/health', () => {
   const controller = new HealthController();
 
   afterEach(() => {
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     delete process.env.RENDER_GIT_COMMIT;
   });
 
@@ -71,10 +72,40 @@ describe('GET /api/health', () => {
     expect(sinComentarios).not.toMatch(/['"`]\d+\.\d+\.\d+/);
   });
 
+  /**
+   * ⚠️ **EL ENDPOINT DEJÓ DE DECIR EL COMMIT SIN QUE NADIE LO NOTARA**
+   * (2026-11-07). Este controlador solo miraba `RENDER_GIT_COMMIT`, la variable
+   * que inyectaba **Render**. Al mudar la API a **Railway** el 2026-11-05 esa
+   * variable dejó de existir, así que `/health` pasó a devolver siempre
+   * `{ok, ts, version}` **sin `commit`** — y como el campo es opcional a
+   * propósito, no falló nada: ni un test, ni el arranque, ni el deploy.
+   *
+   * El costo es exactamente lo que este endpoint vino a evitar: el
+   * procedimiento escrito en el CLAUDE.md («¿sirve el commit que acabo de
+   * pushear?») **se quedó sin respuesta**, y verificar un despliegue volvió a
+   * ser esperar por reloj. Se descubrió al intentar verificar el push de ese
+   * día y ver que `commit` no venía.
+   *
+   * Por eso se miran AMBAS y Railway primero: si el servicio vuelve a mudarse,
+   * el síntoma es este mismo silencio.
+   */
   it('el commit viaja si el entorno lo expone, cortado a 7 caracteres', () => {
-    process.env.RENDER_GIT_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+    process.env.RAILWAY_GIT_COMMIT_SHA = '0123456789abcdef0123456789abcdef01234567';
 
     expect(controller.check().commit).toBe('0123456');
+  });
+
+  it('también lo lee de Render, por si alguna vez se vuelve', () => {
+    process.env.RENDER_GIT_COMMIT = 'fedcba9876543210';
+
+    expect(controller.check().commit).toBe('fedcba9');
+  });
+
+  it('con las dos puestas gana Railway, que es donde vive hoy', () => {
+    process.env.RAILWAY_GIT_COMMIT_SHA = 'aaaaaaa1111111';
+    process.env.RENDER_GIT_COMMIT = 'bbbbbbb2222222';
+
+    expect(controller.check().commit).toBe('aaaaaaa');
   });
 
   /**
@@ -83,6 +114,7 @@ describe('GET /api/health', () => {
    * está, y con la versión alcanza.
    */
   it('sin la variable del entorno, el campo commit no aparece', () => {
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
     delete process.env.RENDER_GIT_COMMIT;
 
     expect(controller.check().commit).toBeUndefined();
@@ -126,7 +158,7 @@ describe('GET /api/health', () => {
   it('devuelve exactamente ok, ts y version (más commit si lo hay)', () => {
     expect(Object.keys(controller.check()).sort()).toEqual(['ok', 'ts', 'version']);
 
-    process.env.RENDER_GIT_COMMIT = 'abcdef1234567890';
+    process.env.RAILWAY_GIT_COMMIT_SHA = 'abcdef1234567890';
     expect(Object.keys(controller.check()).sort()).toEqual(['commit', 'ok', 'ts', 'version']);
   });
 
