@@ -180,6 +180,8 @@ export type StoreReorderDto = z.infer<typeof StoreReorderSchema>;
 export const StoreCategorySchema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio').max(60),
   slug: SlugSchema.optional(),
+  /** `null` = moverla a la raíz; ausente = no tocarla. Las dos hacen falta. */
+  parentId: z.string().nullable().optional(),
 });
 export type StoreCategoryDto = z.infer<typeof StoreCategorySchema>;
 
