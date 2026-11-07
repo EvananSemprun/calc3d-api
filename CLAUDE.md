@@ -242,6 +242,22 @@ en el repo web: se sobrescribe al sincronizar.
       tienen muestra): la vitrina filtra por color, y pedir la ficha de cada
       producto solo para eso sería absurdo. Consumidor: repo `calc3d-landing`
       (el sitio público de Banano Lab; se llamaba `calc3d-store` hasta la fusión).
+    - **`GET /public/store/products?detail=full`** (2026-11-07): el catálogo CON todo lo
+      de la ficha (descripción, specs, galería, opciones con recargo) en UNA petición.
+      Existe para que la tienda construya sus ~1.000 fichas sin pedirlas una por una: el
+      límite público es 120/min y el N+1 rompía el build. Sale del mismo `include` del
+      listado, y agrega una consulta agrupada (no una por producto).
+      - ⚠️ **El modo completo NO trae `image`**: la portada sale de `images[0]`. Quien lo
+        consuma tiene que sacarla de la galería (`adapt` de `calc3d-landing` ya lo hace);
+        leer `image` ahí da `undefined` y todas las tarjetas salen sin foto.
+      - Respeta `?category=` (la madre incluye a sus hijas). Un valor distinto de `full`
+        se trata como modo tarjeta.
+    - ⚠️ **Siembra sintética (`SEED_CATALOGO_SINTETICO`)**: `=1` siembra ~1.000
+      productos `sint-*` **visibles**, `=borrar` los elimina (productos y categorías con
+      ese prefijo). Los dos modos **ROMPEN si el host de `DATABASE_URL` no es local**
+      (`common/guarda-base-local.ts`, antes de conectarse): visibles significa publicados
+      en la tienda, y con el `.env` de producción a mano la siembra metía mil productos
+      falsos en `bananolab-3d.com`. Regresión: `common/guarda-base-local.spec.ts`.
   - **Bandeja de la tienda (pedidos que llegan del catálogo público)** —
     `store-requests/`. Es la **PRIMERA y ÚNICA escritura sin sesión** del sistema;
     hasta acá `/public/store/*` era solo lectura. Cuatro reglas que la sostienen:

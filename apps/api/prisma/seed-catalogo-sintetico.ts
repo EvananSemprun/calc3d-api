@@ -1,9 +1,17 @@
 import { PrismaClient } from '@prisma/client';
+import { exigirBaseLocal } from '../src/common/guarda-base-local';
 
 /**
  * Catálogo SINTÉTICO para medir la tienda con ~1.000 productos (producción tiene 1).
- * Se activa con SEED_CATALOGO_SINTETICO=1 y es SOLO para bases locales/de prueba:
- * todo lo que siembra lleva el prefijo `sint-` en el slug para reconocerlo y borrarlo.
+ *
+ * - `SEED_CATALOGO_SINTETICO=1`      siembra.
+ * - `SEED_CATALOGO_SINTETICO=borrar` borra TODO lo que tenga el prefijo `sint-` en el
+ *   slug (productos y categorías; sus opciones y fotos caen en cascada).
+ *
+ * ⚠️ Solo corre contra una base LOCAL: antes de tocar nada, `exigirBaseLocal` rompe si
+ * el host de `DATABASE_URL` no es localhost / 127.0.0.1 / ::1. Los productos se siembran
+ * `visible: true` (si no, la API pública no los vería), así que en una base real
+ * terminarían publicados en la tienda.
  *
  * Idempotente por slug: usa `createMany({ skipDuplicates: true })` apoyándose en
  * @@unique([organizationId, slug]) (patrón nuevo en este archivo: con 1.000 productos,
@@ -35,7 +43,32 @@ const INSIGNIAS = ['Nuevo', 'Más vendido', null, null, null, null];
 const pick = <T>(arr: T[], i: number): T => arr[i % arr.length];
 const slugDe = (texto: string) => texto.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
+/** Borra lo sembrado (todo slug `sint-…`). Productos primero: la categoría que los
+ *  contiene es `Restrict`, y las hijas antes que las madres por la misma razón. */
+export async function borrarCatalogoSintetico(organizationId: string): Promise<void> {
+  exigirBaseLocal();
+  const prisma = new PrismaClient();
+  try {
+    const productos = await prisma.storeProduct.deleteMany({
+      where: { organizationId, slug: { startsWith: PREFIJO } },
+    });
+    const hijas = await prisma.storeCategory.deleteMany({
+      where: { organizationId, slug: { startsWith: PREFIJO }, parentId: { not: null } },
+    });
+    const madres = await prisma.storeCategory.deleteMany({
+      where: { organizationId, slug: { startsWith: PREFIJO }, parentId: null },
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `Catálogo sintético borrado: ${productos.count} producto(s) y ${hijas.count + madres.count} categoría(s).`,
+    );
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 export async function seedCatalogoSintetico(organizationId: string): Promise<void> {
+  exigirBaseLocal();
   const prisma = new PrismaClient();
   try {
     const inicio = Date.now();

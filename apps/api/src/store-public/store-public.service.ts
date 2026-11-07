@@ -279,7 +279,7 @@ export class StorePublicService {
    *    serían 1.000 peticiones y el límite público rechazaría casi todas). Sale del
    *    mismo `include` de siempre: descripción, ficha técnica y grupos de opciones
    *    ya viajaban desde la base y se descartaban; solo se suman la galería entera
-   *    y las fotos por opción, sin ningún round trip nuevo. */
+   *    y las fotos por opción. Eso agrega UNA consulta agrupada (el `include` anidado de `options.images`), no un viaje por producto. */
   async list(categorySlug?: string): Promise<{ products: PublicProductCard[] }>;
   async list(categorySlug: string | undefined, detalle: 'full'): Promise<{ products: PublicProductDetail[] }>;
   async list(
