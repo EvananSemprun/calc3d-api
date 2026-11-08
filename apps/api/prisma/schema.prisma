@@ -863,6 +863,9 @@ model StoreProduct {
    * false = borrador (no sale por la API pública).
    */
   visible  Boolean @default(false)
+  /// Cuando se publico por PRIMERA vez (null = nunca). De aca sale la insignia «Nuevo».
+  /// NO es createdAt: las fichas nacen ocultas y pueden publicarse meses despues.
+  publishedAt DateTime?
   /**
    * Orden manual en la vitrina.
    */

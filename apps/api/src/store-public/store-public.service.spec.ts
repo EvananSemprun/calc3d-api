@@ -32,6 +32,7 @@ const PRODUCTO = {
   productId: 'prod-interno-1',
   quoteId: 'quote-interno-1',
   createdAt: new Date('2026-08-01T00:00:00Z'),
+  publishedAt: null as Date | null,
   updatedAt: new Date('2026-08-01T00:00:00Z'),
   categoryId: 'cat1',
   category: { name: 'Llaveros', slug: 'llaveros' },
@@ -693,5 +694,36 @@ describe('Listado público en modo completo (?detail=full)', () => {
     const [enLista] = (await service.list(undefined, 'full')).products;
     const ficha = await service.bySlug('llavero-mundial');
     expect(enLista).toEqual(ficha);
+  });
+});
+
+/**
+ * La insignia «Nuevo» (2026-11-08): DERIVADA de `publishedAt`, nunca guardada.
+ * La regla pura vive en `shared/calc/novedad.ts`; acá se fija el CABLEADO — que el
+ * endpoint la calcule y la publique.
+ */
+describe('Insignia «Nuevo» en la vitrina pública', () => {
+  const conFecha = (publishedAt: Date | null) => ({
+    ...PRODUCTO,
+    publishedAt,
+    images: [],
+    optionGroups: [],
+  });
+
+  it('una ficha recién publicada sale como nueva', async () => {
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([conFecha(new Date())]) });
+    const { products } = await service.list();
+    expect(products[0].nuevo).toBe(true);
+  });
+
+  it('una vieja no, y su hermano alcanzable lo prueba', async () => {
+    const vieja = new Date(Date.now() - 60 * 24 * 3600 * 1000);
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([conFecha(vieja)]) });
+    expect((await service.list()).products[0].nuevo).toBe(false);
+  });
+
+  it('sin fecha de publicación NO es nueva', async () => {
+    const { service } = makeService({ findMany: jest.fn().mockResolvedValue([conFecha(null)]) });
+    expect((await service.list()).products[0].nuevo).toBe(false);
   });
 });

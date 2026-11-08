@@ -141,7 +141,21 @@ const StoreProductFields = z.object({
   /** Material de impresión que se muestra en la vitrina ("PLA", "PETG"). */
   material: z.string().max(40).nullable().optional(),
   /** Insignia de esquina de la tarjeta ("Nuevo", "Más vendido"). */
-  badge: z.string().max(24).nullable().optional(),
+  /**
+   * Insignia de esquina escrita por el dueño ('Más vendido', 'Edición limitada').
+   *
+   * ⚠️ 'Nuevo' NO se acepta: desde el 2026-11-08 es AUTOMÁTICA y sale de la fecha de
+   * publicación. Escribirla a mano dejaría dos insignias iguales pegadas, y una que
+   * miente cuando el producto deje de ser nuevo y nadie la borre.
+   */
+  badge: z
+    .string()
+    .max(24)
+    .refine((v) => v.trim().toLowerCase() !== 'nuevo', {
+      message: '«Nuevo» se pone solo en los productos recién publicados: elegí otra palabra',
+    })
+    .nullable()
+    .optional(),
   /** Si se puede pedir con nombre, logo o forma del cliente. */
   custom: z.boolean().default(false),
   /** Ficha técnica libre. */

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
+import { businessDateKey, esNuevo } from '@calc3d/shared';
 import { activeSale, type SaleWindow } from './active-sale';
 
 /**
@@ -90,6 +91,15 @@ interface PublicProductCard {
   /** true si hay que elegir algo antes de pedirlo: la vitrina manda a la ficha
    *  en vez de agregar a ciegas y cotizar un precio que no corresponde. */
   requiresOptions: boolean;
+  /**
+   * Insignia «Nuevo», DERIVADA de cuándo se publicó la ficha (`esNuevo` de shared).
+   *
+   * ⚠️ Se calcula al responder, y la tienda la hornea en su build porque es estática:
+   * una ficha deja de ser nueva recién cuando el sitio se reconstruye. Decidido y
+   * aceptado por el dueño el 2026-11-08 — en la práctica se corrige solo, porque
+   * publicar un producto reconstruye la tienda y recalcula a todas.
+   */
+  nuevo: boolean;
 }
 
 /** Ficha completa. */
@@ -127,6 +137,7 @@ interface CardRow {
   material: string | null;
   badge: string | null;
   custom: boolean;
+  publishedAt: Date | null;
   category: PublicCategory | null;
 }
 
@@ -374,6 +385,15 @@ export class StorePublicService {
     };
   }
 
+  /**
+   * ⚠️ El «hoy» se calcula en hora de VENEZUELA, no con `new Date()` a secas: el
+   * servidor corre en UTC y desde las 20:00 de Caracas ya cree que es mañana, así que
+   * una ficha publicada esa noche contaría un día de más.
+   */
+  private esNueva(publishedAt: Date | null) {
+    return esNuevo(publishedAt, businessDateKey(new Date()));
+  }
+
   /** Tarjeta de vitrina CON imagen y colores. Única lista blanca para el listado
    *  y para el Flash Sale: no pueden divergir. */
   private listCard(
@@ -451,6 +471,8 @@ export class StorePublicService {
       material: p.material,
       badge: p.badge,
       custom: p.custom,
+      // Derivado, nunca guardado: la fecha de publicacion es el unico dato.
+      nuevo: this.esNueva(p.publishedAt),
       category: p.category,
     };
   }

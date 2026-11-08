@@ -118,6 +118,8 @@ export class StoreService {
         priceTiers: (dto.priceTiers ?? []) as unknown as Prisma.InputJsonValue,
         minQty: dto.minQty,
         visible: dto.visible,
+        // Se publica AHORA si nace visible. De esta fecha sale la insignia «Nuevo».
+        publishedAt: dto.visible ? new Date() : null,
         position,
         categoryId: dto.categoryId ?? null,
         input: (dto.input as unknown as Prisma.InputJsonValue) ?? Prisma.DbNull,
@@ -127,6 +129,18 @@ export class StoreService {
       include: FULL_INCLUDE,
     });
     return this.withImageUrls(created);
+  }
+
+  /**
+   * La fecha de la PRIMERA publicación, o `undefined` para no tocarla.
+   *
+   * ⚠️ Solo se escribe una vez: ocultar y volver a publicar NO renueva la insignia. Si
+   * se renovara, cualquiera podría volver «Nuevo» un producto viejo con dos clics, y la
+   * insignia dejaría de querer decir algo.
+   */
+  private primeraPublicacion(current: { visible: boolean; publishedAt: Date | null }, visible?: boolean) {
+    if (visible !== true || current.publishedAt) return undefined;
+    return new Date();
   }
 
   async update(organizationId: string, id: string, dto: StoreProductUpdateDto) {
@@ -166,6 +180,11 @@ export class StoreService {
           ...(dto.priceTiers !== undefined && { priceTiers: dto.priceTiers as unknown as Prisma.InputJsonValue }),
           ...(dto.minQty !== undefined && { minQty: dto.minQty }),
           ...(dto.visible !== undefined && { visible: dto.visible }),
+          // La PRIMERA publicacion marca la fecha; volver a publicar no la renueva.
+          ...(() => {
+            const pub = this.primeraPublicacion(current, dto.visible);
+            return pub ? { publishedAt: pub } : {};
+          })(),
           ...(dto.categoryId !== undefined && { categoryId: dto.categoryId ?? null }),
           ...(costAtPublish !== undefined && { costAtPublish }),
         },

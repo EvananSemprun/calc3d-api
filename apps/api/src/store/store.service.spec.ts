@@ -433,3 +433,42 @@ describe('guardado de opciones con ids estables', () => {
     expect(storage.remove).toHaveBeenCalledWith(`${ORG}/store/sp1/rojo.jpg`);
   });
 });
+
+/**
+ * La insignia «Nuevo» sale de `publishedAt`, que marca la PRIMERA publicación.
+ * La regla pura vive en `shared/calc/novedad.ts`; acá se fija cuándo se ESCRIBE la fecha.
+ */
+describe('fecha de la primera publicación', () => {
+  it('una ficha que nace oculta no tiene fecha de publicación', async () => {
+    const { prisma, service } = makeDeps();
+    await service.create(ORG, { ...BASE, name: 'Oculta', priceUsd: 8, visible: false });
+    expect(prisma.storeProduct.create.mock.calls[0][0].data.publishedAt).toBeNull();
+  });
+
+  it('una que nace visible se publica ahora', async () => {
+    const { prisma, service } = makeDeps();
+    await service.create(ORG, { ...BASE, name: 'Visible', priceUsd: 8, visible: true });
+    expect(prisma.storeProduct.create.mock.calls[0][0].data.publishedAt).toBeInstanceOf(Date);
+  });
+
+  it('publicar por primera vez marca la fecha', async () => {
+    const { prisma, service } = makeDeps();
+    prisma.storeProduct.findFirst.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+      Promise.resolve(where.slug ? null : { ...FICHA, visible: false, publishedAt: null }),
+    );
+    await service.update(ORG, 'sp1', { ...BASE, name: 'Llavero', priceUsd: 10, visible: true });
+    expect(prisma.storeProduct.update.mock.calls[0][0].data.publishedAt).toBeInstanceOf(Date);
+  });
+
+  it('⚠️ volver a publicar NO renueva la fecha', async () => {
+    // Si se renovara, cualquiera volvería «Nuevo» un producto viejo con dos clics y la
+    // insignia dejaría de querer decir algo.
+    const vieja = new Date('2026-08-22T12:00:00Z');
+    const { prisma, service } = makeDeps();
+    prisma.storeProduct.findFirst.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+      Promise.resolve(where.slug ? null : { ...FICHA, visible: false, publishedAt: vieja }),
+    );
+    await service.update(ORG, 'sp1', { ...BASE, name: 'Llavero', priceUsd: 10, visible: true });
+    expect(prisma.storeProduct.update.mock.calls[0][0].data.publishedAt).toBeUndefined();
+  });
+});

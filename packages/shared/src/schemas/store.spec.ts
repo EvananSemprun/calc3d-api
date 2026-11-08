@@ -208,3 +208,25 @@ describe('StoreBannerCreateSchema — los tres tipos', () => {
     expect(r.success).toBe(true);
   });
 });
+
+/**
+ * «Nuevo» es AUTOMÁTICA desde el 2026-11-08 (sale de `publishedAt`), así que no se puede
+ * escribir a mano: habría dos insignias iguales, y la escrita seguiría ahí cuando el
+ * producto deje de ser nuevo.
+ */
+describe('la insignia «Nuevo» no se escribe a mano', () => {
+  const base = { name: 'Árbol', kind: 'PHYSICAL' as const, priceUsd: 8, custom: false, visible: false };
+
+  it('rechaza «Nuevo», sin importar mayúsculas ni espacios', () => {
+    for (const v of ['Nuevo', 'nuevo', 'NUEVO', '  Nuevo  ']) {
+      expect(StoreProductCreateSchema.safeParse({ ...base, badge: v }).success).toBe(false);
+    }
+  });
+
+  it('acepta cualquier otra, y también ninguna', () => {
+    expect(StoreProductCreateSchema.safeParse({ ...base, badge: 'Más vendido' }).success).toBe(true);
+    expect(StoreProductCreateSchema.safeParse({ ...base, badge: 'Nuevo precio' }).success).toBe(true);
+    expect(StoreProductCreateSchema.safeParse({ ...base, badge: null }).success).toBe(true);
+    expect(StoreProductCreateSchema.safeParse(base).success).toBe(true);
+  });
+});
