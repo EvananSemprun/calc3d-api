@@ -101,9 +101,14 @@ interface PublicProductDetail extends Omit<PublicProductCard, 'image'> {
 }
 
 interface PublicBanner {
+  /** DÓNDE se muestra. No confundir con `linkType`, que es adónde lleva. */
+  kind: 'HERO' | 'TEXTO' | 'CATEGORIA';
   title: string;
   subtitle: string | null;
-  imageUrl: string;
+  /** null en los de TEXTO: no tienen imagen. */
+  imageUrl: string | null;
+  /** Solo en CATEGORIA: el slug de la categoría donde se muestra. */
+  categorySlug: string | null;
   linkType: 'NONE' | 'CATEGORY' | 'PRODUCT' | 'URL';
   linkValue: string | null;
 }
@@ -238,6 +243,7 @@ export class StorePublicService {
     const rows = await this.prisma.storeBanner.findMany({
       where: { organizationId, visible: true },
       orderBy: { position: 'asc' },
+      include: { category: { select: { slug: true } } },
     });
 
     const catSlugs = rows.filter((b) => b.linkType === 'CATEGORY' && b.linkValue).map((b) => b.linkValue as string);
@@ -254,15 +260,22 @@ export class StorePublicService {
     const prodOk = new Set(prods.map((p) => p.slug));
 
     return {
-      banners: rows.map((b) => {
+      // ⚠️ Un banner de CATEGORIA sin categoría no se devuelve: no hay página donde
+      // mostrarlo. Mismo criterio que degradar un destino colgado, pero acá no alcanza
+      // con degradar — el banner entero no tiene dónde ir.
+      banners: rows
+        .filter((b) => b.kind !== 'CATEGORIA' || !!b.category)
+        .map((b) => {
         const vivo =
           b.linkType === 'CATEGORY' ? catOk.has(b.linkValue ?? '')
           : b.linkType === 'PRODUCT' ? prodOk.has(b.linkValue ?? '')
           : true; // NONE y URL no dependen del catálogo
         return {
+          kind: b.kind,
           title: b.title,
           subtitle: b.subtitle,
-          imageUrl: this.storage.publicUrl(b.imageKey),
+          imageUrl: b.imageKey ? this.storage.publicUrl(b.imageKey) : null,
+          categorySlug: b.category?.slug ?? null,
           linkType: vivo ? b.linkType : 'NONE',
           linkValue: vivo ? b.linkValue : null,
         };

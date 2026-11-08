@@ -805,6 +805,7 @@ model StoreCategory {
   children StoreCategory[] @relation("CategoriaMadre")
 
   products StoreProduct[]
+  banners  StoreBanner[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -971,6 +972,16 @@ model StoreOption {
 // ----- Banners del carrusel de la home -----
 
 /// A dónde lleva el banner al hacerle clic. UN solo tipo por banner.
+/// DÓNDE se muestra el banner. No confundir con StoreBannerLinkType, que es adónde LLEVA.
+enum StoreBannerKind {
+  /// El carrusel de la portada.
+  HERO
+  /// La franja de texto de arriba. Sin imagen.
+  TEXTO
+  /// En esa categoría y en las fichas de sus productos.
+  CATEGORIA
+}
+
 enum StoreBannerLinkType {
   NONE
   CATEGORY
@@ -985,9 +996,17 @@ model StoreBanner {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
 
+  kind      StoreBannerKind @default(HERO)
+
   title     String
   subtitle  String?
-  imageKey  String
+  /// Obligatoria en HERO y CATEGORIA; null en TEXTO. Lo exige el contrato Zod por tipo.
+  imageKey  String?
+
+  /// Solo en CATEGORIA: la categoría donde se muestra. Restrict, no Cascade: borrar una
+  /// categoría con banner tiene que fallar y avisar, no llevárselo en silencio.
+  category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  categoryId String?
 
   linkType  StoreBannerLinkType @default(NONE)
   /// slug de categoría/producto, o URL http(s); null para NONE.
@@ -1001,6 +1020,7 @@ model StoreBanner {
 
   @@index([organizationId])
   @@index([organizationId, visible])
+  @@index([organizationId, kind, visible])
 }
 
 // ----- Bandeja de la tienda (lo que llega SIN sesión) -----

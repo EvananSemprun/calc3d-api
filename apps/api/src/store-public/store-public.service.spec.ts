@@ -58,6 +58,8 @@ const BANNER = {
   title: 'Promo de temporada',
   subtitle: 'Hasta agotar',
   imageKey: `${ORG}/store/banners/promo.png`,
+  kind: 'HERO' as const,
+  category: null as { slug: string } | null,
   linkType: 'CATEGORY' as const,
   linkValue: 'llaveros',
   position: 0,
@@ -135,6 +137,48 @@ function clavesDe(value: unknown, out = new Set<string>()): Set<string> {
 }
 
 describe('Banners públicos', () => {
+  /**
+   * Los TRES TIPOS (2026-11-08). `kind` es DÓNDE se muestra; `linkType`, adónde lleva.
+   * Spec: `docs/superpowers/specs/2026-11-08-tres-tipos-de-banner-design.md`.
+   */
+  it('el de TEXTO viaja sin imagen, no con una URL inventada', async () => {
+    const { service } = makeService({ bannerFindMany: jest.fn().mockResolvedValue([{ ...BANNER, kind: 'TEXTO', imageKey: null, linkType: 'NONE', linkValue: null }]) });
+    const { banners } = await service.banners();
+    expect(banners[0].imageUrl).toBeNull();
+    expect(banners[0].kind).toBe('TEXTO');
+  });
+
+  it('el de CATEGORIA dice el slug de su categoría', async () => {
+    const { service } = makeService({
+      bannerFindMany: jest.fn().mockResolvedValue([{ ...BANNER, kind: 'CATEGORIA', categoryId: 'cat1', category: { slug: 'navidad' }, linkType: 'NONE', linkValue: null }]),
+    });
+    const { banners } = await service.banners();
+    expect(banners[0].categorySlug).toBe('navidad');
+  });
+
+  it('un CATEGORIA sin categoría NO se devuelve: no hay página donde mostrarlo', async () => {
+    const { service } = makeService({
+      bannerFindMany: jest.fn().mockResolvedValue([{ ...BANNER, kind: 'CATEGORIA', categoryId: 'cat1', category: null, linkType: 'NONE', linkValue: null }]),
+    });
+    const { banners } = await service.banners();
+    expect(banners).toHaveLength(0);
+  });
+
+  it('su hermano alcanzable: con la categoría puesta SÍ se devuelve', async () => {
+    // Sin este caso, un filtro que descartara todos los banners pasaría el test de arriba.
+    const { service } = makeService({
+      bannerFindMany: jest.fn().mockResolvedValue([{ ...BANNER, kind: 'CATEGORIA', categoryId: 'cat1', category: { slug: 'navidad' }, linkType: 'NONE', linkValue: null }]),
+    });
+    expect((await service.banners()).banners).toHaveLength(1);
+  });
+
+  it('un HERO no se filtra por tener la categoría vacía', async () => {
+    // La guarda es SOLO para CATEGORIA: los otros dos tipos no tienen categoría y
+    // filtrarlos por eso los borraría a todos.
+    const { service } = makeService({ bannerFindMany: jest.fn().mockResolvedValue([{ ...BANNER, kind: 'HERO', category: null, linkType: 'NONE', linkValue: null }]) });
+    expect((await service.banners()).banners).toHaveLength(1);
+  });
+
   it('devuelve solo banners visibles de la organización del entorno, por posición', async () => {
     const { service, bannerFindMany } = makeService();
     const { banners } = await service.banners();

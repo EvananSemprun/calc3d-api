@@ -34,9 +34,9 @@ export class StoreBannersService {
     });
   }
 
-  private withUrl = <T extends { imageKey: string }>(b: T) => ({
+  private withUrl = <T extends { imageKey: string | null }>(b: T) => ({
     ...b,
-    imageUrl: this.storage.publicUrl(b.imageKey),
+    imageUrl: b.imageKey ? this.storage.publicUrl(b.imageKey) : null,
   });
 
   async list(organizationId: string) {
@@ -103,9 +103,23 @@ export class StoreBannersService {
     return dto.linkType === 'NONE' ? null : dto.linkValue ?? null;
   }
 
+  /**
+   * La categoría se filtra por ORGANIZACIÓN. Sin eso, el id de otro negocio ataría el
+   * banner a su categoría y el slug ajeno saldría por el endpoint público.
+   */
+  private async assertCategoria(organizationId: string, categoryId?: string | null) {
+    if (!categoryId) return;
+    const cat = await this.prisma.storeCategory.findFirst({
+      where: { id: categoryId, organizationId },
+      select: { id: true },
+    });
+    if (!cat) throw new NotFoundException('Esa categoría no existe');
+  }
+
   async create(organizationId: string, dto: StoreBannerCreateDto) {
-    await this.assertImage(organizationId, dto.imageKey);
+    if (dto.imageKey) await this.assertImage(organizationId, dto.imageKey);
     await this.assertLink(organizationId, dto);
+    await this.assertCategoria(organizationId, dto.categoryId);
     const row = await this.prisma.storeBanner.create({
       data: {
         organizationId,
@@ -124,8 +138,9 @@ export class StoreBannersService {
   async update(organizationId: string, id: string, dto: StoreBannerUpdateDto) {
     const current = await this.prisma.storeBanner.findFirst({ where: { id, organizationId } });
     if (!current) throw new NotFoundException('Banner no encontrado');
-    if (dto.imageKey !== current.imageKey) await this.assertImage(organizationId, dto.imageKey);
+    if (dto.imageKey && dto.imageKey !== current.imageKey) await this.assertImage(organizationId, dto.imageKey);
     await this.assertLink(organizationId, dto);
+    await this.assertCategoria(organizationId, dto.categoryId);
     const row = await this.prisma.storeBanner.update({
       where: { id },
       data: {
@@ -138,7 +153,9 @@ export class StoreBannersService {
       },
     });
     // La imagen vieja queda huérfana en R2 si cambió; se borra después de guardar.
-    if (dto.imageKey !== current.imageKey) await this.storage.remove(current.imageKey);
+    // La imagen vieja se borra de R2 si cambió o si el banner dejó de tener una (pasó a
+    // ser de TEXTO). Mejor esfuerzo, como el resto de los borrados del bucket.
+    if (current.imageKey && dto.imageKey !== current.imageKey) await this.storage.remove(current.imageKey);
     return this.withUrl(row);
   }
 
@@ -159,7 +176,8 @@ export class StoreBannersService {
     const b = await this.prisma.storeBanner.findFirst({ where: { id, organizationId } });
     if (!b) throw new NotFoundException('Banner no encontrado');
     await this.prisma.storeBanner.delete({ where: { id } });
-    await this.storage.remove(b.imageKey);
+    // Un banner de TEXTO no tiene imagen que borrar.
+    if (b.imageKey) await this.storage.remove(b.imageKey);
     return { ok: true };
   }
 }

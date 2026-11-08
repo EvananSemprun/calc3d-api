@@ -90,7 +90,7 @@ describe('StoreBannersService — imagen', () => {
   it('rechaza una imagen cuyo prefijo es de otra organización y no la consulta ni crea', async () => {
     const { service, storage, prisma } = makeDeps();
     await expect(
-      service.create(ORG, { title: 'T', imageKey: `${OTHER}/store/banners/x.png`, linkType: 'NONE', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: `${OTHER}/store/banners/x.png`, linkType: 'NONE', visible: true }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.head).not.toHaveBeenCalled();
     expect(prisma.storeBanner.create).not.toHaveBeenCalled();
@@ -100,7 +100,7 @@ describe('StoreBannersService — imagen', () => {
     const { service, storage } = makeDeps();
     storage.head.mockResolvedValueOnce(null);
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
     ).rejects.toThrow('no llegó');
   });
 
@@ -108,7 +108,7 @@ describe('StoreBannersService — imagen', () => {
     const { service, storage } = makeDeps();
     storage.head.mockResolvedValueOnce({ contentType: 'application/pdf', contentLength: 1000 });
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
     ).rejects.toThrow('PNG, JPEG o WebP');
     expect(storage.remove).toHaveBeenCalledWith(goodKey);
   });
@@ -117,7 +117,7 @@ describe('StoreBannersService — imagen', () => {
     const { service, storage } = makeDeps();
     storage.head.mockResolvedValueOnce({ contentType: 'image/png', contentLength: 6 * 1024 * 1024 });
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'NONE', visible: true }),
     ).rejects.toThrow('5 MB');
     expect(storage.remove).toHaveBeenCalledWith(goodKey);
   });
@@ -126,7 +126,7 @@ describe('StoreBannersService — imagen', () => {
     const { service, prisma } = makeDeps({
       banners: [{ id: 'b-0', organizationId: ORG, position: 0, imageKey: 'k', title: 'x' }],
     });
-    await service.create(ORG, { title: 'Nuevo', imageKey: goodKey, linkType: 'NONE', visible: true });
+    await service.create(ORG, { kind: 'HERO' as const, title: 'Nuevo', imageKey: goodKey, linkType: 'NONE', visible: true });
     expect(prisma.storeBanner.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ organizationId: ORG, imageKey: goodKey, position: 1, title: 'Nuevo' }) }),
     );
@@ -137,39 +137,39 @@ describe('StoreBannersService — destino (IDOR)', () => {
   it('rechaza CATEGORY con slug inexistente', async () => {
     const { service } = makeDeps();
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'fantasma', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'fantasma', visible: true }),
     ).rejects.toThrow('categoría');
   });
 
   it('rechaza CATEGORY cuyo slug existe pero en OTRA organización', async () => {
     const { service } = makeDeps({ categories: [{ organizationId: OTHER, slug: 'llaveros' }] });
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'llaveros', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'llaveros', visible: true }),
     ).rejects.toThrow('categoría');
   });
 
   it('acepta CATEGORY cuyo slug existe en la propia organización (hermano alcanzable)', async () => {
     const { service, prisma } = makeDeps({ categories: [{ organizationId: ORG, slug: 'llaveros' }] });
-    await service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'llaveros', visible: true });
+    await service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'CATEGORY', linkValue: 'llaveros', visible: true });
     expect(prisma.storeBanner.create).toHaveBeenCalled();
   });
 
   it('rechaza PRODUCT que existe pero no está visible', async () => {
     const { service } = makeDeps({ products: [{ organizationId: ORG, slug: 'oculto', visible: false }] });
     await expect(
-      service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'PRODUCT', linkValue: 'oculto', visible: true }),
+      service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'PRODUCT', linkValue: 'oculto', visible: true }),
     ).rejects.toThrow('producto');
   });
 
   it('acepta PRODUCT visible de la propia organización', async () => {
     const { service, prisma } = makeDeps({ products: [{ organizationId: ORG, slug: 'llavero', visible: true }] });
-    await service.create(ORG, { title: 'T', imageKey: goodKey, linkType: 'PRODUCT', linkValue: 'llavero', visible: true });
+    await service.create(ORG, { kind: 'HERO' as const, title: 'T', imageKey: goodKey, linkType: 'PRODUCT', linkValue: 'llavero', visible: true });
     expect(prisma.storeBanner.create).toHaveBeenCalled();
   });
 });
 
 describe('StoreBannersService — aislamiento por organización', () => {
-  const seed = { banners: [{ id: 'b1', organizationId: ORG, position: 0, imageKey: goodKey, title: 'T', linkType: 'NONE', linkValue: null }] };
+  const seed = { banners: [{ id: 'b1', organizationId: ORG, position: 0, imageKey: goodKey, kind: 'HERO' as const, title: 'T', linkType: 'NONE', linkValue: null }] };
 
   it('get de otra organización no encuentra el banner', async () => {
     const { service } = makeDeps(seed);
