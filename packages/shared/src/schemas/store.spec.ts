@@ -157,3 +157,54 @@ describe('StoreProductCreateSchema', () => {
     expect(r.success && r.data.optionGroups[0].drivesPhoto).toBe(false);
   });
 });
+
+/**
+ * Los TRES TIPOS de banner (2026-11-08). Cada uno exige lo suyo y prohíbe lo ajeno;
+ * las prohibiciones importan tanto como las exigencias, porque un campo que el tipo no
+ * usa, guardado porque el formulario lo ofrecía, después se lee como información.
+ *
+ * Spec: `docs/superpowers/specs/2026-11-08-tres-tipos-de-banner-design.md`.
+ */
+describe('StoreBannerCreateSchema — los tres tipos', () => {
+  const imagen = 'org/store/banners/x.png';
+
+  it('sin decir el tipo, es de portada: lo que ya existía sigue valiendo', () => {
+    const r = StoreBannerCreateSchema.safeParse({ title: 'Promo', imageKey: imagen });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.kind).toBe('HERO');
+  });
+
+  it('el de TEXTO no lleva imagen ni categoría', () => {
+    expect(StoreBannerCreateSchema.safeParse({ title: 'Envío gratis', kind: 'TEXTO' }).success).toBe(true);
+    expect(StoreBannerCreateSchema.safeParse({ title: 'x', kind: 'TEXTO', imageKey: imagen }).success).toBe(false);
+    expect(StoreBannerCreateSchema.safeParse({ title: 'x', kind: 'TEXTO', categoryId: 'cat1' }).success).toBe(false);
+  });
+
+  it('el de CATEGORIA exige imagen Y categoría', () => {
+    const ok = { title: 'Navidad', kind: 'CATEGORIA', imageKey: imagen, categoryId: 'cat1' };
+    expect(StoreBannerCreateSchema.safeParse(ok).success).toBe(true);
+    expect(StoreBannerCreateSchema.safeParse({ ...ok, categoryId: undefined }).success).toBe(false);
+    expect(StoreBannerCreateSchema.safeParse({ ...ok, imageKey: undefined }).success).toBe(false);
+  });
+
+  it('el de portada exige imagen y NO acepta categoría', () => {
+    expect(StoreBannerCreateSchema.safeParse({ title: 'x', kind: 'HERO' }).success).toBe(false);
+    expect(
+      StoreBannerCreateSchema.safeParse({ title: 'x', kind: 'HERO', imageKey: imagen, categoryId: 'cat1' }).success,
+    ).toBe(false);
+  });
+
+  it('el tipo y el destino son cosas distintas y conviven', () => {
+    // Un banner de categoría puede además enlazar a un producto: `kind` es DÓNDE se ve,
+    // `linkType` es adónde lleva. Confundirlos es el error que este test cierra.
+    const r = StoreBannerCreateSchema.safeParse({
+      title: 'Navidad',
+      kind: 'CATEGORIA',
+      imageKey: imagen,
+      categoryId: 'cat1',
+      linkType: 'PRODUCT',
+      linkValue: 'arbol-de-navidad-con-nombres',
+    });
+    expect(r.success).toBe(true);
+  });
+});

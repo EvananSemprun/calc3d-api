@@ -243,6 +243,16 @@ export type StoreImageConfirmDto = z.infer<typeof StoreImageConfirmSchema>;
 // (StoreImageUploadUrlSchema arriba): se guarda la clave de R2, no la URL.
 
 /** A dónde lleva el banner al hacerle clic. UN solo tipo por banner. */
+/**
+ * QUÉ clase de banner es, o sea DÓNDE se muestra. No confundir con `linkType`, que es
+ * adónde LLEVA: un banner de categoría puede además enlazar a un producto.
+ *  - HERO: el carrusel de la portada.
+ *  - TEXTO: la franja de arriba, en todas las páginas. No lleva imagen.
+ *  - CATEGORIA: se ve en esa categoría y en las fichas de sus productos.
+ */
+export const StoreBannerKindSchema = z.enum(['HERO', 'TEXTO', 'CATEGORIA']);
+export type StoreBannerKind = z.infer<typeof StoreBannerKindSchema>;
+
 export const StoreBannerLinkTypeSchema = z.enum(['NONE', 'CATEGORY', 'PRODUCT', 'URL']);
 export type StoreBannerLinkType = z.infer<typeof StoreBannerLinkTypeSchema>;
 
@@ -250,14 +260,35 @@ export const StoreBannerCreateSchema = z
   .object({
     title: z.string().min(1, 'El título es obligatorio').max(120),
     subtitle: z.string().max(200).nullable().optional(),
-    /** Clave del objeto en R2 (ya subido vía URL firmada). */
-    imageKey: z.string().min(1, 'Falta la imagen').max(200),
+    kind: StoreBannerKindSchema.default('HERO'),
+    /**
+     * Clave del objeto en R2 (ya subido vía URL firmada). OPCIONAL en el contrato y
+     * exigida por tipo en el `superRefine`: un banner de TEXTO no tiene imagen.
+     */
+    imageKey: z.string().min(1, 'Falta la imagen').max(200).nullable().optional(),
+    /** Categoría donde se muestra. Solo en CATEGORIA. */
+    categoryId: z.string().max(60).nullable().optional(),
     linkType: StoreBannerLinkTypeSchema.default('NONE'),
     /** slug de categoría/producto, o URL http(s); vacío para NONE. */
     linkValue: z.string().max(500).nullable().optional(),
     visible: z.boolean().default(true),
   })
   .superRefine((v, ctx) => {
+    // Cada tipo EXIGE lo suyo y PROHÍBE lo ajeno. Lo segundo importa tanto como lo
+    // primero: un campo que el tipo no usa, guardado porque el formulario lo ofrecía,
+    // después alguien lo lee como información.
+    const falta = (campo: 'imageKey' | 'categoryId', message: string) =>
+      ctx.addIssue({ code: 'custom', path: [campo], message });
+
+    if (v.kind === 'TEXTO') {
+      if (v.imageKey) falta('imageKey', 'Un banner de texto no lleva imagen');
+      if (v.categoryId) falta('categoryId', 'Un banner de texto no va en una categoría');
+    } else {
+      if (!v.imageKey) falta('imageKey', 'Falta la imagen');
+      if (v.kind === 'CATEGORIA' && !v.categoryId) falta('categoryId', 'Elegí la categoría donde se muestra');
+      if (v.kind === 'HERO' && v.categoryId) falta('categoryId', 'Un banner de portada no va en una categoría');
+    }
+
     if (v.linkType === 'NONE') {
       if (v.linkValue) {
         ctx.addIssue({ code: 'custom', path: ['linkValue'], message: 'Un banner sin enlace no lleva destino' });
