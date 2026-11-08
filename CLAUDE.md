@@ -3384,3 +3384,66 @@ capacidad, buscarla en los dos repos.
 - No hacer commit ni push salvo que se pida.
 - No usar flags interactivos (`-i`) ni `--no-verify`.
 - Cuando sí se pida commit, usar mensajes limpios y consistentes.
+
+## Lo del 2026-11-08: banners, «Nuevo» y USDT
+
+Tres cosas que tocaron modelo y contrato. Specs:
+`docs/superpowers/specs/2026-11-08-tres-tipos-de-banner-design.md`.
+
+### Los TRES tipos de banner (shared 0.67.0, migración `20261108180000_tipos_de_banner`)
+
+`StoreBanner` gana `kind` (HERO / TEXTO / CATEGORIA) y `categoryId`, e `imageKey` pasa a
+opcional. ⚠️ **`kind` es DÓNDE se muestra; `linkType` es adónde LLEVA**: son cosas
+distintas y conviven (un banner de categoría puede enlazar a un producto). Cada tipo
+**exige lo suyo y prohíbe lo ajeno** — un campo que el tipo no usa, guardado porque el
+formulario lo ofrecía, después se lee como información.
+
+⚠️ Un `CATEGORIA` cuya categoría se borró **no se devuelve** por `/public/store/banners`:
+no hay página donde mostrarlo. Degradar el destino no alcanza, como sí alcanza con un
+enlace colgado.
+
+⚠️ La categoría se filtra por ORGANIZACIÓN al guardar: sin eso, el id de otro negocio
+ataría el banner a su categoría y el slug ajeno saldría por el endpoint público.
+
+### La insignia «Nuevo» (shared 0.68.0, migración `20261108200000_publicado_el`)
+
+`StoreProduct.publishedAt` marca la PRIMERA publicación, y de ahí sale `nuevo` (15 días,
+`esNuevo` en `shared/calc/novedad.ts`), derivado y nunca guardado.
+
+⚠️ **Cuenta desde que se PUBLICA, no desde que se crea**, y lo decidieron los datos: las
+fichas nacen ocultas y al medir producción el «llavero con QR» llevaba **78 días creado y
+seguía sin publicarse**. Con `createdAt`, publicarlo nunca lo habría mostrado como nuevo.
+
+⚠️ **Se escribe UNA sola vez**: ocultar y volver a publicar NO renueva la insignia. Si lo
+hiciera, cualquiera volvería «Nuevo» un producto viejo con dos clics.
+
+⚠️ `publishedAt` es un INSTANTE, así que se lee con `businessDateKey` (no con
+`toISOString`, que lo correría un día desde las 20:00 de Caracas), y el «hoy» se calcula
+en hora de Venezuela.
+
+⚠️ El contrato **rechaza** `badge: "Nuevo"` escrito a mano, sin importar mayúsculas: con
+la automática puesta habría dos insignias iguales, y la escrita seguiría ahí cuando el
+producto deje de ser nuevo.
+
+### Cuánto entra en USDT (shared 0.69.0, sin migración)
+
+`enUsdt` y `brechaUsdt` (`shared/calc/usdt.ts`): los precios de la tienda están en
+dólares **BCV** y en USDT entra menos. La cuenta es ir a bolívares y volver. Con BCV 900 y
+Binance 1026, un producto de $24 son **21,05 USDT** — 12,3 % menos.
+
+⚠️ Es una lectura del PANEL. No cambia lo que se cobra, ni lo que se guarda, ni lo que ve
+el cliente.
+
+⚠️ **Con una tasa cargada mal NO protege, y hay un test que lo fija**: la de USDT estuvo
+en 1,026 en vez de 1026 y la cuenta habría dado 21.052 USDT. Un `null` ahí dejaría al
+dueño sin pista de que la tasa está mal; el disparate tiene que verse.
+
+⚠️ Dato suelto encontrado ese día y NO corregido (decisión del dueño): `defaultRateLabel`
+vale `'Bolívar (BCV)'` y **ninguna tasa se llama así**, así que `/public/store/info`
+devuelve `rate: null` y la tienda no muestra bolívares en ningún precio.
+
+### Respaldos
+
+⚠️ `*.dump` y `*.sql.gz` están en el `.gitignore` desde el 2026-11-08. El método de
+respaldo de este archivo escribe el dump **dentro del repo**, y el repo es PÚBLICO: sin
+esa línea, un `git add .` distraído publica la base entera del negocio.

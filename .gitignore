@@ -39,3 +39,9 @@ apps/api/prisma/hojas-excel.json
 # Lleva nombres de clientes escritos a mano (atribución de campañas) y el repo
 # es público: vive solo en la PC del dueño, como los JSON de arriba.
 apps/api/prisma/sincronizar-hojas.mjs
+
+# Respaldos de la base: NUNCA versionados. Este repo es PUBLICO, y el metodo de
+# respaldo (ver CLAUDE.md) escribe el dump dentro del repo por defecto: sin esta
+# linea, un `git add .` distraido publica la base entera del negocio.
+*.dump
+*.sql.gz
