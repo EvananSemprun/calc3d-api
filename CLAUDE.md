@@ -210,6 +210,34 @@ en el repo web: se sobrescribe al sincronizar.
       del `CalcInput` guardado contra el catálogo **por nombre** (el snapshot
       embebe precios, no ids). `list()` carga el catálogo UNA vez para todas las
       fichas; `recost` es null en las que no tienen costeo.
+    - ⚠️ **EL MARGEN SE MIDE EN USDT, NO EN LA ETIQUETA DE LA TIENDA** (2026-11-08,
+      shared 0.70.0). El costo se calcula en USDT —el dólar real con el que se
+      compra el filamento— y el precio se publica en **dólares BCV**, que valen
+      menos. Dividir uno por el otro INFLA el margen: ,50 con costo /usr/bin/bash,22 decía
+      582 % cuando el real es 498 %. Y peor: **apagaba la alerta**, porque un
+      producto bajo el piso lo seguía aparentando.
+      - `productStatus(precio, costoAlGuardar, costoHoy, piso, conversion?)` acepta
+        las dos tasas y devuelve `markupNow` (USDT, **el principal**),
+        `markupNominal` (BCV, solo referencia), `priceUsdt` y `converted`.
+      - ⚠️ **`converted: false` NO cae al nominal en silencio.** Si falta una tasa,
+        los márgenes son nominales y quien los muestre **tiene que decirlo**: un
+        margen inflado rotulado «real» es justo el error que esto vino a cerrar.
+      - ⚠️ **Las tasas son las de HOY, no las del día que se publicó** (decisión
+        del dueño). La alerta existe para cazar la erosión del margen, y que la
+        brecha BCV/Binance se abra ES esa erosión: congelarlas la escondería. Lo
+        que se esperaba ganar ya lo dice `markupAtSave`.
+      - El recosteo las carga él (hasta ese día **no leía ninguna**): la de los
+        precios por la etiqueta `RATE_LABELS.BCV_USD` —no hay configuración que
+        diga «los precios están en BCV», es una convención del negocio— y la de
+        referencia por `settings.protectionRateLabel`, la misma del cobro
+        protegido de la calculadora. ⚠️ `ExchangeRate` es un **historial**: la
+        vigente es la fila más nueva de esa etiqueta, no una fila por tasa.
+      - ⚠️ **El piso de la alerta (`productAlertMinMarginPct`) está en 0,15 y la
+        regla del dueño son 120 %**, así que la alerta prácticamente nunca salta.
+        Convertirla a USDT no sirve de mucho mientras ese valor siga tan abajo; se
+        le propuso 80 % y **queda pendiente de que él lo cambie** en Configuración.
+      - Regresión: `store/recost.service.spec.ts` (el cableado: que BUSQUE las dos
+        tasas, por qué etiqueta, y que tome la más nueva) + `calc/product.spec.ts`.
     - **El costo lo pone el SERVIDOR**: `costAtPublish` no está en el DTO. Se
       CALCULA corriendo el motor sobre el `input` que manda la calculadora, o se
       lee de la cotización enlazada (heredado). Si viajara en el cuerpo,
@@ -329,17 +357,48 @@ en el repo web: se sobrescribe al sincronizar.
         independiente: existe con la ventana cerrada. Son dos cosas que se ven
         parecidas y se encienden por caminos distintos — confundirlas lleva a
         "apagué la oferta y los precios siguen tachados", que no es un bug.
-    - **Precios por cantidad (shared 0.55.0, migración `store_price_tiers`)** —
-      `StoreProduct.priceTiers` (`[{minQty, discountPct}]`), expuesto en la
-      ficha pública y aplicado por **`precioConTramos(baseUnit, qty, tiers)`**
+    - **Precios por cantidad (shared 0.55.0, migración `store_price_tiers`;
+      **precio fijo desde shared 0.72.0**)** — `StoreProduct.priceTiers`, expuesto
+      en la ficha pública y aplicado por
+      **`precioConTramos(baseUnit, qty, tiers, recargos)`**
       (`shared/calc/store-pricing.ts`).
       - ⚠️ **El descuento lo aplica el SERVIDOR**, en `priceItems()`. Es la misma
         regla que sostiene toda la bandeja: el cuerpo trae `{slug, qty,
         options}` y nada más. Un tramo aplicado en el navegador sería un precio
         del cliente.
       - Gana el **mayor tramo cuyo `minQty <= qty`**; sin ninguno aplicable,
-        el unitario entra sin tocar. El descuento va **sobre el unitario YA con
-        los recargos de opción**, y **no toca** `compareAtUsd` ni la Flash Sale.
+        el unitario entra sin tocar, y **no toca** `compareAtUsd` ni la Flash Sale.
+      - ⚠️ **DOS FORMAS de decir el precio de un tramo, y hay que leer las dos**
+        (2026-11-08). `unitPriceUsd` es el precio unitario de LISTA de ese tramo,
+        escrito a mano: es la forma nueva y la única que permite un precio
+        redondo (de $1,50, un 27 % da $1,0950). `discountPct` es el descuento en
+        fracción, la forma vieja. **`discountPct` NO se puede retirar**: hay
+        fichas publicadas guardadas así —`identificadores-para-lapices` tiene
+        `[{10, 0.17}, {20, 0.266}]`— y dejar de leerla las deja sin mayoreo **sin
+        un solo error**. El contrato exige una de las dos; con las dos, gana el
+        precio fijo (es lo que el dueño escribió, no una cuenta).
+      - ⚠️ **No hubo migración de Prisma**: `priceTiers` es una columna **JSON**.
+        Agregar un campo al tramo no toca el esquema — y por eso tampoco hay red
+        de la base: lo único que separa un tramo válido de uno roto es el Zod.
+      - ⚠️ **Los RECARGOS de opción se suman al precio fijo**, y `recargos` es un
+        parámetro **OBLIGATORIO** desde el 2026-11-08 (lo pidió la revisión de
+        seguridad). Un precio fijo reemplaza al precio de LISTA, no a lo que el
+        cliente eligió encima: si reemplazara todo, a partir del tramo el tamaño
+        grande saldría **gratis**. Y con un default de 0 el servidor lo pasaba
+        pero la ficha y el carrito no, así que el visitante habría visto $1,25 y
+        pagado $2,75. Que el compilador obligue a decidir en cada llamada es la
+        protección; quien quiere el precio de lista pasa 0 y **se lee que lo
+        decidió**.
+      - ⚠️ **Hoy ninguna ficha tiene tramos Y recargos a la vez** (medido en
+        producción: el único con tramos no tiene recargos, y los dos que tienen
+        recargos no tienen tramos). O sea que este agujero habría quedado
+        **latente** y aparecido el día que el árbol de Navidad llevara mayoreo.
+      - **`descuentoDeTramo(precioLista, tramo)`** deriva el "−17 %" para mostrar.
+        Nunca para cobrar: hay **un** número guardado, no dos que mantener de
+        acuerdo.
+      - El editor del panel trabaja en **precios**, no en porcentajes, y traduce
+        un tramo viejo a su precio al abrir la ficha. Ver el `CLAUDE.md` de
+        `calc3d-web`.
       - ⚠️ **Es otra cosa que el mayoreo del motor de cálculo**
         (`calc/wholesale.ts`): aquel sugiere tramos respetando el piso de margen
         y vive en la calculadora; este es lo que la TIENDA cobra. Comparten la
