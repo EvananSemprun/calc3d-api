@@ -24,6 +24,12 @@ interface PublicOption {
   value: string;
   priceDeltaUsd: number;
   swatchHex: string | null;
+  /**
+   * Días de entrega PROPIOS de esta opción. `null` = no cambia el plazo y manda el del
+   * producto; NO es 0, que sería prometer entrega el mismo día. La ficha muestra el
+   * MAYOR de las opciones elegidas.
+   */
+  leadTimeDays: number | null;
   /** Fotos propias de este color (solo las tienen las opciones del grupo que
    *  define la foto). Vacío = la ficha usa la galería base. */
   images: PublicImage[];
@@ -451,7 +457,13 @@ export class StorePublicService {
         name: string;
         required: boolean;
         drivesPhoto: boolean;
-        options: { value: string; priceDeltaUsd: unknown; swatchHex: string | null; images: ImageRow[] }[];
+        options: {
+          value: string;
+          priceDeltaUsd: unknown;
+          swatchHex: string | null;
+          leadTimeDays?: number | null;
+          images: ImageRow[];
+        }[];
       }[];
     },
   ): PublicProductDetail {
@@ -474,6 +486,9 @@ export class StorePublicService {
         options: g.options.map((o) => ({
           value: o.value,
           priceDeltaUsd: Number(o.priceDeltaUsd),
+          // ?? null y no `Number(...)`: las opciones creadas antes de la migración
+          // llegan sin el campo, y un `Number(undefined)` sería NaN.
+          leadTimeDays: o.leadTimeDays ?? null,
           swatchHex: o.swatchHex,
           images: o.images.map((img) => this.image(img)),
         })),

@@ -1,0 +1,11 @@
+-- Dias de entrega por OPCION.
+--
+-- Hasta ahora el plazo era del producto entero, asi que el dueno lo venia escribiendo
+-- a mano DENTRO del nombre de la opcion ("20 cm - 3 dias"). Con la columna, la ficha
+-- puede calcularlo segun lo que el visitante elige.
+--
+-- Nullable y sin relleno A PROPOSITO: NULL significa "esta opcion no cambia el plazo",
+-- que es la verdad de todas las que existen hoy. Inventar un numero seria prometerle
+-- al cliente una fecha que nadie decidio.
+-- AlterTable
+ALTER TABLE "StoreOption" ADD COLUMN     "leadTimeDays" INTEGER;

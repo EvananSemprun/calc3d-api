@@ -69,7 +69,25 @@ export const StoreOptionSchema = z.object({
   /** Muestra de color para el selector, si el grupo es de color. */
   swatchHex: z
     .string()
-    .regex(/^#[0-9a-fA-F]{6}$/, 'Usá un color en formato #RRGGBB')
+    .regex(/^#[0-9a-fA-F]{6}$/, 'Usa un color en formato #RRGGBB')
+    .nullable()
+    .optional(),
+  /**
+   * Días de entrega PROPIOS de esta opción, para cuando elegirla cambia el plazo (un
+   * tamaño grande, un acabado que lleva otro proceso).
+   *
+   * ⚠️ Ausente o `null` significa **«esta opción no cambia el plazo»** y manda el del
+   * producto. NO es lo mismo que `0`, que sería prometer entrega el mismo día. Por eso
+   * es nullable y no tiene `.default(0)`.
+   *
+   * El tope de 365 no es burocracia: el error que de verdad pasa es un dedo de más
+   * (30 → 300) y nadie lo nota hasta que un cliente lee «listo en 300 días».
+   */
+  leadTimeDays: z
+    .number()
+    .int('Los días de entrega tienen que ser enteros')
+    .min(0, 'Los días de entrega no pueden ser negativos')
+    .max(365, 'Ese plazo parece un error: revisa los días')
     .nullable()
     .optional(),
 });

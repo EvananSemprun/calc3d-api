@@ -425,6 +425,7 @@ export class StoreService {
           value: o.value,
           priceDeltaUsd: o.priceDeltaUsd,
           swatchHex: o.swatchHex ?? null,
+          leadTimeDays: o.leadTimeDays ?? null,
           position: i,
         })),
       },
@@ -487,6 +488,7 @@ export class StoreService {
                 value: o.value,
                 priceDeltaUsd: o.priceDeltaUsd,
                 swatchHex: o.swatchHex ?? null,
+                leadTimeDays: o.leadTimeDays ?? null,
                 position: j,
               })),
             },
@@ -514,6 +516,7 @@ export class StoreService {
           value: o.value,
           priceDeltaUsd: o.priceDeltaUsd,
           swatchHex: o.swatchHex ?? null,
+          leadTimeDays: o.leadTimeDays ?? null,
           position: j,
         };
         if (opcionActual) {

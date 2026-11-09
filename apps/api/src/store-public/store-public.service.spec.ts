@@ -341,6 +341,49 @@ describe('Catálogo público', () => {
       });
     });
 
+    describe('días de entrega por opción (2026-11-09)', () => {
+      /**
+       * El plazo era del producto entero y el dueño lo escribía a mano DENTRO del
+       * nombre de la opción («20 cm · 3 días»): texto, que la ficha no puede comparar
+       * ni sumar. Ahora cada opción trae los suyos y la ficha muestra el mayor de las
+       * elegidas.
+       */
+      const conOpciones = (options: unknown[]) => {
+        const fila = { ...PRODUCTO, optionGroups: [{ ...PRODUCTO.optionGroups[0], options }] };
+        return { findFirst: jest.fn().mockResolvedValue(fila) };
+      };
+
+      it('la ficha publica los días propios de cada opción', async () => {
+        const { service } = makeService(
+          conOpciones([
+            { value: '15 cm', priceDeltaUsd: '0', swatchHex: null, position: 0, images: [], leadTimeDays: null },
+            { value: '30 cm', priceDeltaUsd: '14.0000', swatchHex: null, position: 1, images: [], leadTimeDays: 3 },
+          ]),
+        );
+        const ficha = await service.bySlug('llavero-mundial');
+        expect(ficha.optionGroups[0].options.map((o) => o.leadTimeDays)).toEqual([null, 3]);
+      });
+
+      it('la opción que no cambia el plazo viaja en null, NO en 0', async () => {
+        // ⚠️ Un 0 sería prometer entrega el mismo día. La ficha necesita distinguir
+        // «no cambia el plazo» de «sale hoy».
+        const { service } = makeService(
+          conOpciones([{ value: 'Liso', priceDeltaUsd: '0', swatchHex: null, position: 0, images: [], leadTimeDays: null }]),
+        );
+        const ficha = await service.bySlug('llavero-mundial');
+        expect(ficha.optionGroups[0].options[0].leadTimeDays).toBeNull();
+      });
+
+      it('una fila vieja, sin la columna, no rompe la ficha', async () => {
+        // Las opciones creadas antes de la migración llegan sin el campo.
+        const { service } = makeService(
+          conOpciones([{ value: 'Rojo', priceDeltaUsd: '0', swatchHex: '#FF0000', position: 0, images: [] }]),
+        );
+        const ficha = await service.bySlug('llavero-mundial');
+        expect(ficha.optionGroups[0].options[0].leadTimeDays).toBeNull();
+      });
+    });
+
     it('la vitrina recibe los colores para el filtro y las muestras', async () => {
       const { service } = makeService();
       const { products } = await service.list();
@@ -365,6 +408,7 @@ describe('Catálogo público', () => {
         value: 'Grande',
         priceDeltaUsd: 3,
         swatchHex: null,
+        leadTimeDays: null,
         images: [],
       });
     });
@@ -667,9 +711,10 @@ describe('Listado público en modo completo (?detail=full)', () => {
             value: 'Rojo',
             priceDeltaUsd: 1.5,
             swatchHex: '#FF0000',
+            leadTimeDays: null,
             images: [{ url: `https://cdn.example/${ORG}/store/sp1/rojo.jpg`, alt: 'Rojo', width: 500, height: 500 }],
           },
-          { value: 'Azul', priceDeltaUsd: 0, swatchHex: null, images: [] },
+          { value: 'Azul', priceDeltaUsd: 0, swatchHex: null, leadTimeDays: null, images: [] },
         ],
       },
     ]);

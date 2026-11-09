@@ -965,6 +965,12 @@ model StoreOption {
    * Muestra de color para el selector (#RRGGBB). Solo si el grupo es de color.
    */
   swatchHex     String?
+  /**
+   * Dias de entrega PROPIOS de esta opcion, cuando elegirla cambia el plazo (un tamano
+   * grande, un acabado que lleva otro proceso). NULL = no lo cambia y manda el del
+   * producto. La ficha muestra el MAYOR de las opciones elegidas.
+   */
+  leadTimeDays  Int?
   position      Int              @default(0)
 
   images StoreImage[]
