@@ -63,3 +63,53 @@ describe('productStatus', () => {
     expect(s.belowMin).toBe(false);
   });
 });
+
+describe('productStatus — el precio está en BCV y el costo en USDT', () => {
+  // Las tasas medidas el 2026-11-08: el dólar BCV vale menos que el USDT.
+  const tasas = { tasaBcv: 900, tasaUsdt: 1026 };
+
+  it('el caso real: $1,50 BCV con costo $0,22 NO son 582 % de margen', () => {
+    // 1.50 × 900 / 1026 = 1.32 USDT de verdad.
+    const s = productStatus(1.5, 0.22, 0.22, 0.8, tasas);
+    expect(s.priceUsdt).toBe(1.32);
+    expect(s.converted).toBe(true);
+    // El real: (1.32 − 0.22) / 0.22 = 5.0
+    expect(s.markupNow).toBe(5);
+    // El nominal, que es lo que la app decía antes: (1.50 − 0.22) / 0.22 = 5.8182
+    expect(s.markupNominal).toBeCloseTo(5.8182, 4);
+    expect(s.markupNow).toBeLessThan(s.markupNominal);
+  });
+
+  it('la ALERTA mira el margen en USDT, no el de etiqueta', () => {
+    // Precio 1 BCV = 0.88 USDT, costo 0.80. Real: 10 %. Nominal: 25 %.
+    // Con un piso de 15 %, el nominal NO alertaría y el real SÍ.
+    const s = productStatus(1, 0.8, 0.8, 0.15, tasas);
+    expect(s.markupNominal).toBe(0.25);
+    expect(s.markupNow).toBeCloseTo(0.1, 2);
+    expect(s.belowMin).toBe(true);
+  });
+
+  it('sin conversión se comporta como siempre: el nominal ES el de hoy', () => {
+    const s = productStatus(13, 10, 10, 0.15);
+    expect(s.converted).toBe(false);
+    expect(s.priceUsdt).toBe(13);
+    expect(s.markupNow).toBe(0.3);
+    expect(s.markupNominal).toBe(0.3);
+  });
+
+  it('con una tasa en 0 NO inventa la conversión: avisa que no convirtió', () => {
+    const s = productStatus(1.5, 0.22, 0.22, 0.8, { tasaBcv: 0, tasaUsdt: 1026 });
+    expect(s.converted).toBe(false);
+    expect(s.priceUsdt).toBe(1.5);
+    // Cae al nominal, pero `converted` lo delata: la pantalla no puede llamarlo "real".
+    expect(s.markupNow).toBe(s.markupNominal);
+  });
+
+  it('el markup al guardar también se mide en USDT (las dos cifras comparables)', () => {
+    // Costo al guardar 0.22, hoy 0.30. El precio en USDT es el mismo para las dos.
+    const s = productStatus(1.5, 0.22, 0.3, 0.8, tasas);
+    expect(s.markupAtSave).toBe(5);
+    expect(s.markupNow).toBeCloseTo(3.4, 4);
+    expect(s.costDeltaPct).toBeCloseTo(0.3636, 4);
+  });
+});

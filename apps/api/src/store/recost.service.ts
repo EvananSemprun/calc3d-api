@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { calculateQuote, productStatus, type CalcInput } from '@calc3d/shared';
+import {
+  DEFAULT_PROTECTION_LABEL,
+  RATE_LABELS,
+  calculateQuote,
+  productStatus,
+  type CalcInput,
+  type MarkupConversion,
+} from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { derivedMaintenance, effectiveMaintPerHour } from '../printers/printers.module';
 
@@ -21,6 +28,12 @@ interface CatalogContext {
   components: Map<string, { packagePrice: number; unitsPerPackage: number }>;
   kwhPrice: number;
   minMarginPct: number;
+  /**
+   * Las dos tasas con las que se traduce el precio publicado (en dólares BCV) a lo que
+   * realmente entra (USDT). `null` si falta alguna: ahí el margen se informa nominal y
+   * `status.converted` lo dice.
+   */
+  conversion: MarkupConversion | null;
 }
 
 @Injectable()
@@ -59,7 +72,41 @@ export class RecostService {
       ),
       kwhPrice: settings ? Number(settings.kwhPrice) : 0,
       minMarginPct: settings ? settings.productAlertMinMarginPct : 0.15,
+      conversion: await this.loadConversion(organizationId, settings?.protectionRateLabel ?? null),
     };
+  }
+
+  /**
+   * Las dos tasas de HOY para medir el margen real.
+   *
+   * ⚠️ La de los precios se resuelve por su ETIQUETA (`RATE_LABELS.BCV_USD`) y no por una
+   * configuración, porque no existe una que diga «los precios de la tienda están en BCV»:
+   * es una convención del negocio. La de referencia sí sale de `protectionRateLabel`, que
+   * es la misma «tasa real» del cobro protegido de la calculadora — una definición, dos
+   * usos.
+   *
+   * ⚠️ `ExchangeRate` es un HISTORIAL: la tasa vigente es la fila más nueva de esa
+   * etiqueta, no una fila única. Sin alguna de las dos devuelve `null` y el margen se
+   * informa nominal, nunca convertido con una tasa inventada.
+   */
+  private async loadConversion(
+    organizationId: string,
+    protectionRateLabel: string | null,
+  ): Promise<MarkupConversion | null> {
+    const ultima = (label: string) =>
+      this.prisma.exchangeRate.findFirst({
+        where: { organizationId, label },
+        orderBy: { createdAt: 'desc' },
+        select: { rate: true },
+      });
+    const [bcv, usdt] = await Promise.all([
+      ultima(RATE_LABELS.BCV_USD),
+      ultima(protectionRateLabel || DEFAULT_PROTECTION_LABEL),
+    ]);
+    const tasaBcv = Number(bcv?.rate ?? 0);
+    const tasaUsdt = Number(usdt?.rate ?? 0);
+    if (!(tasaBcv > 0) || !(tasaUsdt > 0)) return null;
+    return { tasaBcv, tasaUsdt };
   }
 
   /**
@@ -143,7 +190,13 @@ export class RecostService {
       price,
       costAtPublish,
       costNow,
-      status: productStatus(price, costAtPublish, costNow, contexto.minMarginPct),
+      status: productStatus(
+        price,
+        costAtPublish,
+        costNow,
+        contexto.minMarginPct,
+        contexto.conversion,
+      ),
       /** Items del costeo que ya no existen en el catálogo: conservan su precio viejo. */
       unmatched,
     };
