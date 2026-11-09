@@ -95,12 +95,32 @@ export const StoreSpecSchema = z.object({
 });
 export type StoreSpecDto = z.infer<typeof StoreSpecSchema>;
 
-/** Un tramo de precio por cantidad: desde `minQty` unidades, `discountPct` de
- *  descuento (fracción, 0.10 = 10 %) sobre el precio unitario. */
-export const StorePriceTierSchema = z.object({
-  minQty: z.number().int().min(2, 'El tramo empieza desde 2 unidades'),
-  discountPct: z.number().min(0).lt(1, 'El descuento va entre 0 y menos de 1'),
-});
+/**
+ * Un tramo de precio por cantidad: desde `minQty` unidades.
+ *
+ * **DOS formas de decir el precio del tramo**, y hay que aceptar las dos:
+ *
+ * - `unitPriceUsd` — el precio unitario de LISTA para ese tramo, escrito a mano. Es la
+ *   forma nueva (2026-11-08) y la preferida: con el descuento en porcentaje no se puede
+ *   llegar a un precio redondo (de $1,50 un 27 % da $1,0950), que es justo lo que el
+ *   dueño necesita para la vitrina.
+ * - `discountPct` — descuento sobre el unitario (fracción, 0.10 = 10 %). Es la forma
+ *   vieja. ⚠️ **NO se puede retirar**: hay fichas publicadas guardadas así, y dejar de
+ *   leerla las deja sin mayoreo sin un solo error.
+ *
+ * Tiene que venir **exactamente una**. Las dos a la vez no se rechazan por el tipo
+ * —un dato viejo migrado podría traerlas—, pero el motor le da prioridad al precio
+ * fijo: es lo que el dueño escribió.
+ */
+export const StorePriceTierSchema = z
+  .object({
+    minQty: z.number().int().min(2, 'El tramo empieza desde 2 unidades'),
+    discountPct: z.number().min(0).lt(1, 'El descuento va entre 0 y menos de 1').optional(),
+    unitPriceUsd: z.number().positive('El precio del tramo tiene que ser mayor que 0').optional(),
+  })
+  .refine((t) => t.discountPct !== undefined || t.unitPriceUsd !== undefined, {
+    message: 'El tramo necesita un precio o un descuento',
+  });
 export type StorePriceTier = z.infer<typeof StorePriceTierSchema>;
 
 /** Valida los tramos: crecientes por `minQty`, sin duplicados, y el primero por

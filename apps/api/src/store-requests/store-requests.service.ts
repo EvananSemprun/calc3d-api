@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import {
   normalizePhone,
   precioConTramos,
+  type StorePriceTier,
   STORE_IMAGE_MAX_BYTES,
   STORE_IMAGE_MIME_TYPES,
   type StoreCustomRequestDto,
@@ -188,6 +189,10 @@ export class StoreRequestsService {
       }
 
       let unitPrice = Number(product.priceUsd);
+      // Los recargos se llevan APARTE, además de sumarse al unitario: un tramo por
+      // precio fijo reemplaza al precio de lista y los recargos se cobran encima. Sin
+      // separarlos, a partir del tramo el tamaño grande saldría gratis.
+      let recargos = 0;
       const chosen: Record<string, string> = {};
 
       // Un grupo que la ficha NO tiene se rechaza, no se ignora. Ignorarlo
@@ -220,15 +225,17 @@ export class StoreRequestsService {
           );
         }
         chosen[group.name] = option.value;
+        recargos += Number(option.priceDeltaUsd);
         unitPrice += Number(option.priceDeltaUsd);
       }
 
-      // Tramos de precio por cantidad (mayoreo): el descuento lo decide el
-      // SERVIDOR sobre el unitario ya con recargos, nunca el cliente.
+      // Tramos de precio por cantidad (mayoreo): el precio del tramo lo decide el
+      // SERVIDOR, nunca el cliente. Un tramo puede venir por porcentaje (la forma vieja,
+      // que sigue viva en fichas publicadas) o por precio unitario fijo.
       const tiers = Array.isArray(product.priceTiers)
-        ? (product.priceTiers as { minQty: number; discountPct: number }[])
+        ? (product.priceTiers as StorePriceTier[])
         : [];
-      unitPrice = precioConTramos(unitPrice, item.qty, tiers);
+      unitPrice = precioConTramos(unitPrice, item.qty, tiers, recargos);
 
       return {
         slug: product.slug,

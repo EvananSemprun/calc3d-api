@@ -140,6 +140,59 @@ describe('StoreRequestsService — escritura pública', () => {
     expect(guardado.lines[0].unitPrice).toBe(8);
   });
 
+  it('un tramo por PRECIO FIJO cobra ese precio exacto', async () => {
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([
+      {
+        slug: 'identificadores',
+        name: 'Identificadores',
+        priceUsd: 1.5,
+        minQty: 1,
+        priceTiers: [{ minQty: 10, unitPriceUsd: 1.25 }],
+        optionGroups: [],
+      },
+    ]);
+    const service = hacerServicio(prisma);
+    const dto = StoreOrderRequestSchema.parse({
+      customer: { name: 'Ana', phone: '04121234567' },
+      items: [{ slug: 'identificadores', qty: 10, options: {} }],
+    });
+    const res = await service.submitOrder(dto);
+    // Con porcentaje no se puede llegar a $1,25 exacto; con precio fijo sí.
+    expect(res.totalUsd).toBe(12.5);
+    expect(prisma.storeRequest.create.mock.calls[0][0].data.lines[0].unitPrice).toBe(1.25);
+  });
+
+  it('⚠️ el precio fijo NO se come el recargo de la opción', async () => {
+    // Si lo reemplazara todo, a partir del tramo el tamaño grande saldría gratis.
+    const prisma = hacerPrisma();
+    prisma.storeProduct.findMany.mockResolvedValue([
+      {
+        slug: 'con-opcion',
+        name: 'Con opción',
+        priceUsd: 1.5,
+        minQty: 1,
+        priceTiers: [{ minQty: 10, unitPriceUsd: 1.25 }],
+        optionGroups: [
+          {
+            name: 'Tamaño',
+            required: false,
+            options: [{ value: 'Grande', priceDeltaUsd: 1.5 }],
+          },
+        ],
+      },
+    ]);
+    const service = hacerServicio(prisma);
+    const dto = StoreOrderRequestSchema.parse({
+      customer: { name: 'Ana', phone: '04121234567' },
+      items: [{ slug: 'con-opcion', qty: 10, options: { 'Tamaño': 'Grande' } }],
+    });
+    const res = await service.submitOrder(dto);
+    // 1.25 del tramo + 1.50 del recargo = 2.75 cada uno.
+    expect(prisma.storeRequest.create.mock.calls[0][0].data.lines[0].unitPrice).toBe(2.75);
+    expect(res.totalUsd).toBe(27.5);
+  });
+
   it('nace siempre en NEW: el estado no sale del cuerpo', async () => {
     const prisma = hacerPrisma();
     prisma.storeProduct.findMany.mockResolvedValue([LLAVERO]);
