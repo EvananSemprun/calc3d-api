@@ -290,6 +290,57 @@ describe('Catálogo público', () => {
       expect(products[0].priceTiers).toEqual([{ minQty: 10, discountPct: 0.1 }]);
     });
 
+    describe('tramos por PRECIO FIJO (regresión del 2026-11-09)', () => {
+      /**
+       * El panel aprendió a guardar `unitPriceUsd` el 2026-11-08 y esta proyección
+       * nunca aprendió a enviarlo: mapeaba `{ minQty, discountPct }` a mano, así que
+       * `Number(undefined)` daba NaN y viajaba como `null`. La tienda mostraba el
+       * precio de lista en todos los tramos MIENTRAS el servidor cobraba el del tramo
+       * (lee de la base, no de acá): la ficha decía $15,00 por 10 identificadores y el
+       * pedido se cobraba $12,50.
+       */
+      const conTramos = (priceTiers: unknown) => ({
+        findMany: jest.fn().mockResolvedValue([{ ...PRODUCTO, priceTiers }]),
+        findFirst: jest.fn().mockResolvedValue({ ...PRODUCTO, priceTiers }),
+      });
+
+      it('la vitrina manda el PRECIO del tramo', async () => {
+        const { service } = makeService(conTramos([{ minQty: 10, unitPriceUsd: 1.25 }]));
+        const { products } = await service.list();
+        expect(products[0].priceTiers).toEqual([{ minQty: 10, unitPriceUsd: 1.25 }]);
+      });
+
+      it('la ficha también: es la misma proyección', async () => {
+        const { service } = makeService(conTramos([{ minQty: 5, unitPriceUsd: 2.4 }]));
+        const ficha = await service.bySlug('llavero-mundial');
+        expect(ficha.priceTiers).toEqual([{ minQty: 5, unitPriceUsd: 2.4 }]);
+      });
+
+      it('el tramo viejo por porcentaje sigue viajando igual', async () => {
+        const { service } = makeService(conTramos([{ minQty: 10, discountPct: 0.17 }]));
+        const { products } = await service.list();
+        expect(products[0].priceTiers).toEqual([{ minQty: 10, discountPct: 0.17 }]);
+      });
+
+      it('NUNCA manda una clave en null: la tienda la leería como precio 0', async () => {
+        // ⚠️ `precioConTramos` pregunta `unitPriceUsd !== undefined`, acá y en la
+        // tienda. Un `null` pasa esa guarda y el precio del tramo se vuelve 0.
+        const { service } = makeService(conTramos([{ minQty: 10, unitPriceUsd: 1.25 }]));
+        const { products } = await service.list();
+        const tramo = products[0].priceTiers[0] as Record<string, unknown>;
+        expect('discountPct' in tramo).toBe(false);
+        expect(Object.values(tramo)).not.toContain(null);
+      });
+
+      it('tampoco manda NaN, que es como se rompió', async () => {
+        const { service } = makeService(conTramos([{ minQty: 10, unitPriceUsd: 1.25 }]));
+        const { products } = await service.list();
+        for (const valor of Object.values(products[0].priceTiers[0])) {
+          expect(Number.isNaN(valor as number)).toBe(false);
+        }
+      });
+    });
+
     it('la vitrina recibe los colores para el filtro y las muestras', async () => {
       const { service } = makeService();
       const { products } = await service.list();

@@ -77,8 +77,11 @@ interface PublicProductCard {
   summary: string | null;
   priceUsd: number;
   compareAtUsd: number | null;
-  /** Tramos de precio por cantidad (mayoreo), para mostrar y recalcular en la tienda. */
-  priceTiers: { minQty: number; discountPct: number }[];
+  /**
+   * Tramos de precio por cantidad (mayoreo), para mostrar y recalcular en la tienda.
+   * DOS formas, y viaja SOLO la que el tramo tiene (ver `tramoPublico`).
+   */
+  priceTiers: ({ minQty: number } & ({ unitPriceUsd: number } | { discountPct: number }))[];
   leadTimeDays: number | null;
   minQty: number;
   material: string | null;
@@ -181,6 +184,32 @@ function includeFicha() {
       },
     },
   };
+}
+
+type TramoGuardado = { minQty?: unknown; discountPct?: unknown; unitPriceUsd?: unknown };
+
+/**
+ * Un tramo de mayoreo, saneado para la tienda.
+ *
+ * **DOS formas y hay que respetar las dos**: `unitPriceUsd` es el precio unitario fijo
+ * (la nueva, la única que permite un precio redondo) y `discountPct` el descuento (la
+ * vieja, que NO se puede retirar porque hay fichas publicadas guardadas así).
+ *
+ * ⚠️ **La clave que no corresponde se OMITE; nunca viaja en `null`.** `precioConTramos`
+ * —acá en shared y reimplementado en la tienda— pregunta `unitPriceUsd !== undefined`:
+ * un `null` PASA esa guarda y el tramo pasaría a valer 0.
+ *
+ * ⚠️ **Y nunca sale un `NaN`.** Así se rompió el 2026-11-08: este mapeo armaba
+ * `{ minQty, discountPct }` a mano, `Number(undefined)` daba NaN y en JSON viajaba como
+ * `null`, así que la tienda mostraba el precio de lista en todos los tramos mientras el
+ * servidor cobraba el del tramo (lo lee de la base, no de acá).
+ */
+function tramoPublico(t: TramoGuardado) {
+  const minQty = Number(t.minQty);
+  if (t.unitPriceUsd != null) return { minQty, unitPriceUsd: Number(t.unitPriceUsd) };
+  // Un tramo sin ninguna de las dos está corrupto: degrada a "sin descuento", que es
+  // el lado seguro, en vez de publicar un NaN.
+  return { minQty, discountPct: Number(t.discountPct ?? 0) };
 }
 
 @Injectable()
@@ -460,12 +489,7 @@ export class StorePublicService {
       summary: p.summary,
       priceUsd: Number(p.priceUsd),
       compareAtUsd: p.compareAtUsd == null ? null : Number(p.compareAtUsd),
-      priceTiers: Array.isArray(p.priceTiers)
-        ? (p.priceTiers as { minQty: unknown; discountPct: unknown }[]).map((t) => ({
-            minQty: Number(t.minQty),
-            discountPct: Number(t.discountPct),
-          }))
-        : [],
+      priceTiers: Array.isArray(p.priceTiers) ? (p.priceTiers as TramoGuardado[]).map(tramoPublico) : [],
       leadTimeDays: p.leadTimeDays,
       minQty: p.minQty,
       material: p.material,

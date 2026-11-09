@@ -380,6 +380,22 @@ en el repo web: se sobrescribe al sincronizar.
       - ⚠️ **No hubo migración de Prisma**: `priceTiers` es una columna **JSON**.
         Agregar un campo al tramo no toca el esquema — y por eso tampoco hay red
         de la base: lo único que separa un tramo válido de uno roto es el Zod.
+      - ⚠️ **LA API PÚBLICA SE OLVIDÓ DE ENVIARLO, Y TARDÓ UN DÍA EN NOTARSE**
+        (2026-11-09). `store-public.service.ts` armaba cada tramo a mano como
+        `{ minQty, discountPct }`, así que un tramo por precio fijo salía con
+        `Number(undefined)` = **NaN**, que en JSON viaja como `null`: la tienda
+        mostraba el precio de LISTA en todos los tramos mientras el servidor
+        cobraba el del tramo (lo lee de la base, no de esa proyección). Medido
+        ese día en producción: la ficha decía **$15,00** por 10 identificadores
+        y el pedido se cobraba **$12,50**. Ahora lo arma `tramoPublico`.
+        - ⚠️ **La clave que no corresponde se OMITE, jamás viaja en `null`.**
+          `precioConTramos` pregunta `unitPriceUsd !== undefined`: un `null`
+          pasa esa guarda y el tramo pasa a valer **0**. Hay un test que lo fija.
+        - ⚠️ **La lección**: guardar un campo nuevo y exponerlo son DOS cambios.
+          El panel aprendió a guardarlo el 08/11, los tests de `shared` y del
+          servicio de pedidos quedaron en verde, y la superficie que lo tenía
+          que publicar nunca se tocó. Al agregar un campo a `priceTiers` —o a
+          cualquier JSON que la tienda lea— pasá también por `tramoPublico`.
       - ⚠️ **Los RECARGOS de opción se suman al precio fijo**, y `recargos` es un
         parámetro **OBLIGATORIO** desde el 2026-11-08 (lo pidió la revisión de
         seguridad). Un precio fijo reemplaza al precio de LISTA, no a lo que el
