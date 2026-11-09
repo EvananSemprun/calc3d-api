@@ -14,16 +14,17 @@ import type { StorePriceTier } from '../schemas/store';
  *   suman encima (`recargos`). ⚠️ Si reemplazara todo, a partir del tramo el tamaño
  *   grande saldría **gratis** — un agujero de plata silencioso.
  *
- * ⚠️ `recargos` es opcional y vale 0 por defecto, porque hay un llamador que no puede
- * separarlos: el carrito congela `unit` ya sumado al agregar. Hoy eso no cobra de menos
- * —ninguna ficha con tramos tiene recargos— pero el día que una los tenga, ese llamador
- * tiene que pasar la parte del recargo.
+ * ⚠️ `recargos` es OBLIGATORIO a propósito (2026-11-08, a pedido de la revisión de
+ * seguridad): con un default de 0, un llamador que se olvide muestra el precio del tramo
+ * pelado mientras el servidor cobra el tramo MÁS el recargo, y el cliente ve menos de lo
+ * que se le cobra. Que el compilador obligue a decidir en cada llamada es la protección;
+ * quien de verdad quiera el precio de lista pasa 0 y se lee que lo decidió.
  */
 export function precioConTramos(
   baseUnit: number,
   qty: number,
   tiers: StorePriceTier[],
-  recargos = 0,
+  recargos: number,
 ): number {
   const aplicable = [...tiers]
     .filter((t) => qty >= t.minQty)

@@ -8,22 +8,22 @@ const tiers = [
 
 describe('precioConTramos', () => {
   it('sin tramos devuelve el precio base', () => {
-    expect(precioConTramos(5, 100, [])).toBe(5);
+    expect(precioConTramos(5, 100, [], 0)).toBe(5);
   });
   it('qty por debajo del primer tramo = precio base', () => {
-    expect(precioConTramos(5, 9, tiers)).toBe(5);
+    expect(precioConTramos(5, 9, tiers, 0)).toBe(5);
   });
   it('borde inclusivo: en el minQty del tramo aplica', () => {
-    expect(precioConTramos(10, 10, tiers)).toBeCloseTo(9, 10); // 10 % off
+    expect(precioConTramos(10, 10, tiers, 0)).toBeCloseTo(9, 10); // 10 % off
   });
   it('toma el MAYOR tramo aplicable', () => {
-    expect(precioConTramos(10, 30, tiers)).toBeCloseTo(8, 10); // 20 % off
+    expect(precioConTramos(10, 30, tiers, 0)).toBeCloseTo(8, 10); // 20 % off
   });
   it('entre tramos usa el de abajo', () => {
-    expect(precioConTramos(10, 24, tiers)).toBeCloseTo(9, 10);
+    expect(precioConTramos(10, 24, tiers, 0)).toBeCloseTo(9, 10);
   });
   it('no toca compareAt ni nada: solo descuenta el baseUnit que recibe', () => {
-    expect(precioConTramos(12, 100, [{ minQty: 2, discountPct: 0.5 }])).toBeCloseTo(6, 10);
+    expect(precioConTramos(12, 100, [{ minQty: 2, discountPct: 0.5 }], 0)).toBeCloseTo(6, 10);
   });
 });
 
@@ -180,9 +180,9 @@ describe('tramos por precio fijo', () => {
     ];
 
     it('el producto real, con los números que se ven hoy en la tienda', () => {
-      expect(precioConTramos(1.5, 1, viejos)).toBe(1.5);
-      expect(precioConTramos(1.5, 10, viejos)).toBe(1.245);
-      expect(precioConTramos(1.5, 20, viejos)).toBe(1.101);
+      expect(precioConTramos(1.5, 1, viejos, 0)).toBe(1.5);
+      expect(precioConTramos(1.5, 10, viejos, 0)).toBe(1.245);
+      expect(precioConTramos(1.5, 20, viejos, 0)).toBe(1.101);
     });
   });
 
@@ -193,13 +193,13 @@ describe('tramos por precio fijo', () => {
     ];
 
     it('cobra el precio EXACTO, sin arrastrar decimales', () => {
-      expect(precioConTramos(1.5, 9, nuevos)).toBe(1.5);
-      expect(precioConTramos(1.5, 10, nuevos)).toBe(1.25);
-      expect(precioConTramos(1.5, 20, nuevos)).toBe(1.1);
+      expect(precioConTramos(1.5, 9, nuevos, 0)).toBe(1.5);
+      expect(precioConTramos(1.5, 10, nuevos, 0)).toBe(1.25);
+      expect(precioConTramos(1.5, 20, nuevos, 0)).toBe(1.1);
     });
 
     it('gana el MAYOR tramo aplicable, igual que con el porcentaje', () => {
-      expect(precioConTramos(1.5, 50, nuevos)).toBe(1.1);
+      expect(precioConTramos(1.5, 50, nuevos, 0)).toBe(1.1);
     });
 
     it('los dos estilos conviven en la misma ficha', () => {
@@ -207,13 +207,13 @@ describe('tramos por precio fijo', () => {
         { minQty: 10, discountPct: 0.17 },
         { minQty: 20, unitPriceUsd: 1.1 },
       ];
-      expect(precioConTramos(1.5, 10, mezclados)).toBe(1.245);
-      expect(precioConTramos(1.5, 20, mezclados)).toBe(1.1);
+      expect(precioConTramos(1.5, 10, mezclados, 0)).toBe(1.245);
+      expect(precioConTramos(1.5, 20, mezclados, 0)).toBe(1.1);
     });
 
     it('con los dos campos manda el precio fijo: es lo que el dueño escribió', () => {
       const ambos: StorePriceTier[] = [{ minQty: 10, discountPct: 0.5, unitPriceUsd: 1.25 }];
-      expect(precioConTramos(1.5, 10, ambos)).toBe(1.25);
+      expect(precioConTramos(1.5, 10, ambos, 0)).toBe(1.25);
     });
   });
 
