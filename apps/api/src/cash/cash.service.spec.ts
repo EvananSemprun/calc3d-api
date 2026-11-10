@@ -976,7 +976,11 @@ function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
 
 type Tablas = Record<string, Record<string, unknown>[]>;
 
-/** Un negocio con las NUEVE líneas del saldo pobladas. */
+/**
+ * Un negocio con todas las líneas del saldo pobladas, salvo «Servicios
+ * pagados»: hoy nada puede producirla (ver el comentario de
+ * `purchaseInvoicePayment`).
+ */
 function tablasCompletas(org = ORG): Tablas {
   return {
     counterparty: [
@@ -1012,6 +1016,50 @@ function tablasCompletas(org = ORG): Tablas {
     ownerMovement: [
       { id: 'mv1', organizationId: org, date: new Date('2026-09-10'), kind: 'CONTRIBUTION', amount: '200', concept: 'Capital inicial', note: null, counterpartyId: 'cp1', refundable: false, source: 'MANUAL', cashReconciliationId: null },
       { id: 'mv2', organizationId: org, date: new Date('2026-09-12'), kind: 'WITHDRAWAL', amount: '70', concept: 'Retiro de septiembre', note: null, counterpartyId: 'cp1', refundable: true, source: 'MANUAL', cashReconciliationId: null },
+    ],
+    /**
+     * Los abonos a facturas de compra: las DOS líneas del saldo que solo ellos
+     * pueden poblar. Van después del 12/09, así que el saldo recortado a
+     * principios de mes no se mueve.
+     *
+     * ⚠️ «Servicios pagados» queda en cero y no se puede poblar desde acá: una
+     * línea de factura todavía no sabe ser un servicio (el contrato pide una de
+     * `materialId`/`printerId`/`componentId`/`nombreNuevo`, y `nuevoTipo` solo
+     * tiene MATERIAL, PRINTER y COMPONENT). Está anotado en el barrido de abajo.
+     */
+    purchaseInvoicePayment: [
+      {
+        id: 'pp-insumos', organizationId: org, date: new Date('2026-09-13'),
+        amount: '80', counterpartyId: null, tomadoDeFacturaId: null, voidedAt: null,
+        // Insumos, recibidos y pagados: todo a «Insumos comprados».
+        invoice: {
+          code: 5,
+          supplier: { name: 'Strato' },
+          lines: [
+            {
+              quantity: 1, unitPrice: '80', materialId: null, printerId: null,
+              componentId: 'ins-1', nuevoTipo: null, received: 1, expenses: [],
+            },
+          ],
+          payments: [{ amount: '80', voidedAt: null }],
+        },
+      },
+      {
+        id: 'pp-anticipo', organizationId: org, date: new Date('2026-09-15'),
+        amount: '90', counterpartyId: null, tomadoDeFacturaId: null, voidedAt: null,
+        // Pagado y SIN recibir: todo a «Anticipos a proveedores».
+        invoice: {
+          code: 6,
+          supplier: { name: 'Strato' },
+          lines: [
+            {
+              quantity: 1, unitPrice: '90', materialId: 'mat-1', printerId: null,
+              componentId: null, nuevoTipo: null, received: 0, expenses: [],
+            },
+          ],
+          payments: [{ amount: '90', voidedAt: null }],
+        },
+      },
     ],
     // De los 70 del retiro, 20 cancelaron la deuda del gasto g4.
     debtApplication: [
@@ -1093,7 +1141,7 @@ describe('GET /cash/breakdown/:category — la categoría es un valor cerrado', 
     }
   });
 
-  it('las nueve categorías de verdad pasan', () => {
+  it('todas las categorías de verdad pasan', () => {
     for (const k of Object.keys(CASH_SIGN)) expect(pipe.transform(k)).toBe(k);
   });
 
@@ -1126,15 +1174,26 @@ describe('CashService.breakdown', () => {
    * (un `find` que se queda con el primero, un `Map` que pisa claves entre
    * tablas) rompe acá y en ningún otro lado.
    */
-  it('el total de cada desplegable es igual a la línea de summary(), en las nueve', async () => {
+  it('el total de cada desplegable es igual a la línea de summary(), en todas', async () => {
     const t = tablasCompletas();
     const resumen = await servicioFalso(t).summary(ORG);
 
     for (const k of Object.keys(CASH_SIGN) as (keyof typeof CASH_SIGN)[]) {
       const d = await servicioFalso(t).breakdown(ORG, k);
       expect({ [k]: d.total }).toEqual({ [k]: resumen.balance[k] });
-      // Y ninguna de las nueve viene vacía: el fixture las puebla a todas, así
-      // que un desplegable sin filas sería un asiento perdido, no un cero real.
+      // Y ninguna viene vacía: el fixture las puebla a todas, así que un
+      // desplegable sin filas sería un asiento perdido, no un cero real.
+      //
+      // ⚠️ `services` es la ÚNICA excepción, y está acá escrita en vez de
+      // escondida: **nada puede producirla todavía**. Una línea de factura no
+      // sabe ser un servicio hasta que Compras gane ese tipo de línea (§5.2 del
+      // diseño de compras); la categoría existe para que el día que llegue
+      // tenga destino, en vez de caer en «filamento», que es el respaldo
+      // histórico. El día que se alimente, este `if` se borra.
+      if (k === 'services') {
+        expect(d.entries).toEqual([]);
+        continue;
+      }
       expect(d.entries.length).toBeGreaterThan(0);
     }
   });
@@ -1642,7 +1701,8 @@ describe('CashService — a quién se le debe', () => {
  * Los números son los de `tablasCompletas()`, a mano:
  *   hasta el 04/09 → 100 + 30 cobrado − 10 gasto − 25 filamento = 95
  *   hasta el 05/09 → entra la venta de 50 del día 5 = 145
- *   toda la historia = −340 (el resto de los asientos son del 06 al 12)
+ *   toda la historia = −510 (el resto de los asientos son del 06 al 15, e
+ *   incluyen los dos abonos a facturas: 80 de insumos y 90 de anticipo)
  */
 describe('CashService.balanceAt — el saldo HASTA una fecha', () => {
   it('cuenta hasta ese día INCLUSIVE y no mira lo que viene después', async () => {
@@ -1653,7 +1713,7 @@ describe('CashService.balanceAt — el saldo HASTA una fecha', () => {
 
   /**
    * ⚠️ Este es el que le da dientes al de arriba: si `balanceAt` ignorara la
-   * fecha devolvería −340 y los 145 serían una coincidencia imposible de notar.
+   * fecha devolvería −510 y los 145 serían una coincidencia imposible de notar.
    * Clavar los dos números deja ver que son distintos a propósito.
    */
   it('el saldo de TODA la historia es otro número: la fecha recorta de verdad', async () => {
@@ -1663,7 +1723,7 @@ describe('CashService.balanceAt — el saldo HASTA una fecha', () => {
       servicioFalso(t).summary(ORG),
     ]);
 
-    expect(todo.balance.balance).toBe(-340);
+    expect(todo.balance.balance).toBe(-510);
     expect(hasta.balance.balance).not.toBe(todo.balance.balance);
   });
 
@@ -1701,7 +1761,7 @@ describe('CashService.balanceAt — el saldo HASTA una fecha', () => {
     const final = (await servicioFalso(t).summary(ORG)).balance.balance;
 
     expect(antes).toBe(95);
-    expect(final).toBe(-340);
+    expect(final).toBe(-510);
     expect(antes + (final - antes)).toBe(final);
   });
 });
@@ -1933,14 +1993,32 @@ describe('CashService.summary — el abono tomado del saldo a favor', () => {
     counterpartyId: null,
     tomadoDeFacturaId,
     voidedAt: null,
-    // Todo filamento: así el prorrateo no reparte nada y el número es limpio.
-    invoice: { lines: [{ quantity: 1, unitPrice: '85', printerId: null }] },
+    /**
+     * Todo filamento y RECIBIDO: así el prorrateo no reparte nada, la plata no
+     * es un anticipo y el número queda limpio.
+     *
+     * ⚠️ La factura viaja con lo que trae su `include`: sus líneas con lo
+     * recibido y sus recepciones, y sus abonos. Un mock que no modela lo que
+     * trae la consulta rompe en cuanto la consulta crece.
+     */
+    invoice: {
+      lines: [
+        {
+          quantity: 1, unitPrice: '85', printerId: null, materialId: 'mat-1',
+          componentId: null, nuevoTipo: null, received: 1, expenses: [],
+        },
+      ],
+      payments: [{ amount, voidedAt: null }],
+    },
   });
 
   it('el abono de verdad baja el saldo: 175 − 100 = 75', async () => {
     const r = await servicioFalso(tablas([abono('ab-real', '100', null)])).summary(ORG);
 
-    expect(r.balance.filament).toBe(100);
+    // 85 de filamento recibido + los 15 pagados de más, que NO son filamento
+    // que hayas comprado: son plata en manos del proveedor.
+    expect(r.balance.filament).toBe(85);
+    expect(r.balance.supplierAdvances).toBe(15);
     expect(r.balance.balance).toBe(75);
   });
 
@@ -1949,7 +2027,9 @@ describe('CashService.summary — el abono tomado del saldo a favor', () => {
       tablas([abono('ab-real', '100', null), abono('ab-saldo', '15', 'f-vieja')]),
     ).summary(ORG);
 
-    expect(r.balance.filament).toBe(100); // el abono de verdad, no 115
+    // El abono de verdad y nada más: 85 + 15, no 115.
+    expect(r.balance.filament).toBe(85);
+    expect(r.balance.supplierAdvances).toBe(15);
     expect(r.balance.balance).toBe(75); // ⚠️ si fueran 60, es la doble carga
   });
 
@@ -2126,7 +2206,19 @@ describe('CashService.breakdown — los abonos a facturas de compra', () => {
     tomadoDeFacturaId: null,
     voidedAt: null,
     source: 'MANUAL',
-    invoice: { code, supplier, lines: [{ quantity: 1, unitPrice: '40', printerId: null }] },
+    // Filamento, recibido y pagado entero: la etiqueta es lo que se mide acá,
+    // así que el reparto no tiene que repartir ni dejar anticipo.
+    invoice: {
+      code,
+      supplier,
+      lines: [
+        {
+          quantity: 1, unitPrice: '40', printerId: null, materialId: 'mat-1',
+          componentId: null, nuevoTipo: null, received: 1, expenses: [],
+        },
+      ],
+      payments: [{ amount: '40', voidedAt: null }],
+    },
     ...extra,
   });
 
@@ -2186,5 +2278,152 @@ describe('CashService.breakdown — los abonos a facturas de compra', () => {
     // El barrido no puede ser vacío: tiene que haber mirado los abonos.
     expect(vistas).toBeGreaterThan(9);
     expect(deFactura).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * EL REPARTO DE UN ABONO, DE PUNTA A PUNTA (fase B, tarea 4).
+ *
+ * Hasta acá el abono se partía con UNA fracción binaria: «impresora o
+ * filamento». Las líneas de factura pasaron a tener más clases (el insumo entró
+ * el 2026-10-20) y el reparto no se enteró, así que **la placa de impresión de
+ * $40 de C-0001 se contaba como filamento**.
+ *
+ * ⚠️ Lo que se prueba acá, y no en el motor, es la **traducción**: las columnas
+ * de la línea (`materialId`, `printerId`, `componentId`, `nuevoTipo`) y los
+ * totales de la factura → el `reparto` que el motor entiende. El motor tiene sus
+ * propios tests; lo que se puede perder es el mapeo.
+ *
+ * Los números son los de PRODUCCIÓN: C-0001 son $260 ($220 de filamento + $40
+ * de insumo) con $140 abonados y nada recibido.
+ *
+ * ⚠️ Se escribieron leyendo las líneas nuevas POR SU NOMBRE (`b[category]`,
+ * como hace el panel) para que pudieran correr —y fallar de verdad— contra el
+ * motor que todavía no las tenía, en vez de romper la compilación del archivo y
+ * reportar «0 tests», que parece verde. Ya con el tipo, van directo.
+ */
+describe('CashService.summary — el abono se reparte por el tipo REAL de cada línea', () => {
+  /** Una línea de factura, con lo único que decide su categoría. */
+  const lineaDe = (over: Record<string, unknown>) => ({
+    quantity: 1,
+    unitPrice: '0',
+    materialId: null,
+    printerId: null,
+    componentId: null,
+    nuevoTipo: null,
+    received: 0,
+    // Las recepciones SON los gastos de la línea: sin ninguna, lo recibido vale
+    // lo que se pidió.
+    expenses: [] as Record<string, unknown>[],
+    ...over,
+  });
+
+  /** Las dos líneas de C-0001: el filamento y la placa. */
+  const lineasDeC0001 = (recibido: number) => [
+    lineaDe({ unitPrice: '220', materialId: 'mat-1', received: recibido }),
+    lineaDe({ unitPrice: '40', componentId: 'ins-1', received: recibido }),
+  ];
+
+  const tablas = (lines: Record<string, unknown>[], abonado = '140'): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [],
+    cashReconciliation: [],
+    loan: [],
+    expense: [],
+    loanPayment: [],
+    ownerMovement: [],
+    debtApplication: [],
+    payment: [],
+    sale: [
+      {
+        id: 'v1', organizationId: ORG, date: new Date('2026-10-01'),
+        amount: '200', kind: 'COUNTER', note: null, source: 'MANUAL',
+      },
+    ],
+    purchaseInvoicePayment: [
+      {
+        id: 'pp1',
+        organizationId: ORG,
+        date: new Date('2026-10-05'),
+        amount: abonado,
+        counterpartyId: null,
+        tomadoDeFacturaId: null,
+        voidedAt: null,
+        invoice: {
+          code: 1,
+          supplier: { name: 'Strato' },
+          lines,
+          // Los abonos de la factura: de acá sale cuánto de lo pagado es
+          // anticipo. Es el MISMO abono de arriba, como en la base.
+          payments: [{ amount: abonado, voidedAt: null }],
+        },
+      },
+    ],
+  });
+
+  it('con la mercadería recibida, la placa (insumo, $40 de $260) NO cuenta como filamento', async () => {
+    const r = await servicioFalso(tablas(lineasDeC0001(1))).summary(ORG);
+
+    // 220/260 y 40/260 de los $140 abonados.
+    expect(r.balance.filament).toBe(118.46);
+    expect(r.balance.consumables).toBe(21.54);
+    // Antes del arreglo los $140 enteros eran «filamento».
+    expect(r.balance.filament).not.toBe(140);
+  });
+
+  it('el abono de C-0001 (nada recibido) es un ANTICIPO, no filamento comprado', async () => {
+    const r = await servicioFalso(tablas(lineasDeC0001(0))).summary(ORG);
+
+    expect(r.balance.supplierAdvances).toBe(140);
+    expect(r.balance.filament).toBe(0);
+    expect(r.balance.consumables).toBe(0);
+    // Mudar la plata de fila no mueve el saldo: salió una vez. 200 − 140.
+    expect(r.balance.balance).toBe(60);
+  });
+
+  it('una impresora sigue siendo equipo, y una ficha que NACE al recibir también', async () => {
+    const delCatalogo = await servicioFalso(
+      tablas([lineaDe({ unitPrice: '140', printerId: 'imp-1', received: 1 })]),
+    ).summary(ORG);
+    const queNace = await servicioFalso(
+      tablas([lineaDe({ unitPrice: '140', nombreNuevo: 'Impresora A2', nuevoTipo: 'PRINTER', received: 1 })]),
+    ).summary(ORG);
+
+    expect(delCatalogo.balance.equipment).toBe(140);
+    expect(queNace.balance.equipment).toBe(140);
+  });
+
+  it('un insumo que NACE al recibir también es insumo, no filamento', async () => {
+    const r = await servicioFalso(
+      tablas([lineaDe({ unitPrice: '140', nombreNuevo: 'Placa lisa', nuevoTipo: 'COMPONENT', received: 1 })]),
+    ).summary(ORG);
+
+    expect(r.balance.consumables).toBe(140);
+    expect(r.balance.filament).toBe(0);
+  });
+
+  it('la suma de las categorías sigue dando el mismo saldo', async () => {
+    for (const lines of [lineasDeC0001(0), lineasDeC0001(1), []]) {
+      const r = await servicioFalso(tablas(lines)).summary(ORG);
+      const firmada = (Object.keys(CASH_SIGN) as (keyof typeof CASH_SIGN)[]).reduce(
+        (s, k) => s + CASH_SIGN[k] * r.balance[k],
+        0,
+      );
+
+      expect({ n: lines.length, firmada: Math.round(firmada * 100) / 100 }).toEqual({
+        n: lines.length,
+        firmada: 60,
+      });
+    }
+  });
+
+  it('el detalle del anticipo dice DE QUÉ FACTURA es: la atribución no se pierde', async () => {
+    const r = await servicioFalso(tablas(lineasDeC0001(0))).breakdown(ORG, 'supplierAdvances');
+
+    expect(r.total).toBe(140);
+    expect(r.entries[0]).toMatchObject({ label: 'Factura C-0001 · Strato', amount: 140 });
   });
 });

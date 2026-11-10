@@ -1,11 +1,13 @@
 import {
   businessCash,
+  type BusinessCash,
   cashChain,
   cashChainCuts,
   cashEntries,
   CASH_SIGN,
   type CashCategory,
   type CashLedger,
+  type RepartoDeCompra,
 } from './cash';
 
 /** Lo mínimo para que cada test solo escriba lo que le importa. */
@@ -209,7 +211,7 @@ describe('businessCash', () => {
 });
 
 /**
- * Un ledger con las NUEVE categorías pobladas y todas distintas de cero, para
+ * Un ledger con TODAS las categorías pobladas y todas distintas de cero, para
  * que el invariante "el detalle suma la línea" tenga algo que comparar en cada
  * una. Los montos están elegidos para que ninguna coincida con otra: si el
  * refactor mezclara dos categorías, los números lo dirían.
@@ -225,14 +227,23 @@ const completo = (): CashLedger => ({
     { id: 'gasto-4', date: '2026-09-06', amount: 40, payer: 'OWNER', isInvestment: false, isFilament: true, refundable: true },
     // Gasto general que puso la contraparte a fondo perdido: gasto Y capital.
     { id: 'gasto-5', date: '2026-09-07', amount: 15, payer: 'OWNER', isInvestment: false, isFilament: false, refundable: false },
-    // Pagado con el préstamo: no toca la caja por ninguna de las nueve líneas.
+    // Pagado con el préstamo: no toca la caja por ninguna de las líneas.
     { id: 'gasto-6', date: '2026-09-07', amount: 917, payer: 'EXTERNAL_LENDER', isInvestment: false, isFilament: false, refundable: true },
   ],
   loanPayments: [
     { id: 'cuota-1', date: '2026-09-08', amount: 50, payer: null, refundable: true },
     { id: 'cuota-2', date: '2026-09-09', amount: 60, payer: 'OWNER', refundable: true },
   ],
-  purchasePayments: [],
+  // Los abonos a facturas de compra, uno por cada categoría que SOLO ellos
+  // pueden poblar. El de servicios no lo puede producir la API todavía (una
+  // línea de factura no sabe ser un servicio), pero el motor sí lo clasifica:
+  // acá está para que el invariante "el detalle suma la línea" tenga algo que
+  // comparar también en esa línea.
+  purchasePayments: [
+    { id: 'abono-c1', date: '2026-09-13', amount: 80, payer: null, refundable: true, reparto: { consumables: 1 } },
+    { id: 'abono-c2', date: '2026-09-14', amount: 45, payer: null, refundable: true, reparto: { services: 1 } },
+    { id: 'abono-c3', date: '2026-09-15', amount: 90, payer: null, refundable: true, reparto: { supplierAdvances: 1 } },
+  ],
   movements: [
     { id: 'mov-1', date: '2026-09-10', amount: 200, kind: 'CONTRIBUTION', refundable: true },
     { id: 'mov-2', date: '2026-09-11', amount: 500, kind: 'CONTRIBUTION', refundable: false },
@@ -241,6 +252,14 @@ const completo = (): CashLedger => ({
 });
 
 const redondear = (n: number) => Math.round(n * 100) / 100;
+/**
+ * Una línea del saldo leída POR SU NOMBRE, igual que el panel con
+ * `b[category]`. Se escribió así a propósito: los tests de las categorías
+ * nuevas tenían que poder correr —y fallar de verdad— contra el motor que
+ * todavía no las tenía, en vez de romper la compilación del archivo entero y
+ * reportar "0 tests", que parece verde.
+ */
+const linea = (b: BusinessCash, k: CashCategory) => b[k];
 const sumaDe = (l: CashLedger, k: CashCategory, until?: string) =>
   redondear(
     cashEntries(l, until)
@@ -257,21 +276,24 @@ describe('cashEntries', () => {
    * el invariante se cumple aunque la clasificación esté mal. Verificado por
    * mutación: romper `operativo` deja el invariante en verde.
    *
-   * Por eso las nueve líneas van clavadas a mano contra el ledger de arriba.
+   * Por eso las doce líneas van clavadas a mano contra el ledger de arriba.
    * Esto es lo que de verdad caza un filtro cambiado.
    */
-  it('las nueve líneas dan estos números y no otros', () => {
+  it('las doce líneas dan estos números y no otros', () => {
     expect(businessCash(completo())).toEqual({
       collected: 130.55, // 100 de venta + 30,55 de abono
       expenses: 35, // 20 de la caja + 15 de la contraparte (el de 917 es del préstamo)
       filament: 65.25, // 25,25 de la caja + 40 de la contraparte
       equipment: 300, // solo el que pagó la caja
+      consumables: 80, // el abono de la factura de insumos
+      services: 45, // el abono de la factura de servicio
+      supplierAdvances: 90, // lo abonado de mercadería que no llegó
       contributionsRefundable: 240, // 40 en filamento + 200 de plata pura
       contributionsCapital: 515, // 15 en gasto + 500 de plata pura
       debtRepayments: 70,
       ownerDraws: 30,
       loanPayments: 50, // la cuota que pagó la contraparte no sale de la caja
-      balance: 335.3, // 130,55 − 35 − 65,25 − 300 + 240 + 515 − 70 − 30 − 50
+      balance: 120.3, // los 335,30 de antes − 80 − 45 − 90 de los tres abonos
     });
   });
 
@@ -293,7 +315,7 @@ describe('cashEntries', () => {
     expect(redondear(firmada)).toBe(businessCash(l).balance);
   });
 
-  it('no clasifica nada fuera de las nueve categorías', () => {
+  it('no clasifica nada fuera de las categorías declaradas', () => {
     for (const e of cashEntries(completo())) expect(CATEGORIAS).toContain(e.category);
   });
 
@@ -467,7 +489,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
     const l = vacio();
     l.sales = [{ date: '2026-10-01', amount: 200 }];
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 50, payer: null, refundable: true, filamentShare: 1 },
+      { date: '2026-10-02', amount: 50, payer: null, refundable: true, reparto: { filament: 1 } },
     ];
 
     const c = businessCash(l);
@@ -480,7 +502,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
     const l = vacio();
     l.sales = [{ date: '2026-10-01', amount: 200 }];
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 50, payer: null, refundable: true, filamentShare: 1 },
+      { date: '2026-10-02', amount: 50, payer: null, refundable: true, reparto: { filament: 1 } },
     ];
     // La mercadería llega: nace el gasto, marcado como nacido de la factura.
     l.expenses = [
@@ -517,7 +539,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
     const l = vacio();
     l.sales = [{ date: '2026-10-01', amount: 900 }];
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 400, payer: null, refundable: true, filamentShare: 0 },
+      { date: '2026-10-02', amount: 400, payer: null, refundable: true, reparto: { equipment: 1 } },
     ];
     l.expenses = [
       {
@@ -541,7 +563,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
   it('una factura mixta reparte el abono entre filamento y equipo', () => {
     const l = vacio();
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 100, payer: null, refundable: true, filamentShare: 0.25 },
+      { date: '2026-10-02', amount: 100, payer: null, refundable: true, reparto: { filament: 0.25, equipment: 0.75 } },
     ];
 
     const c = businessCash(l);
@@ -559,7 +581,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
     const l = vacio();
     l.sales = [{ date: '2026-10-01', amount: 200 }];
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 50, payer: 'OWNER', refundable: true, filamentShare: 1 },
+      { date: '2026-10-02', amount: 50, payer: 'OWNER', refundable: true, reparto: { filament: 1 } },
     ];
 
     const c = businessCash(l);
@@ -573,7 +595,7 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
     const l = vacio();
     l.sales = [{ date: '2026-10-01', amount: 200 }];
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 50, payer: 'EXTERNAL_LENDER', refundable: true, filamentShare: 1 },
+      { date: '2026-10-02', amount: 50, payer: 'EXTERNAL_LENDER', refundable: true, reparto: { filament: 1 } },
     ];
 
     expect(businessCash(l).balance).toBe(200);
@@ -582,13 +604,165 @@ describe('facturas de compra: la plata se cuenta UNA vez', () => {
   it('el desglose de una línea suma lo mismo que la línea', () => {
     const l = vacio();
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 30, payer: null, refundable: true, filamentShare: 1, id: 'ab-1' },
+      { date: '2026-10-02', amount: 30, payer: null, refundable: true, reparto: { filament: 1 }, id: 'ab-1' },
     ];
 
     const detalle = cashEntries(l).filter((e) => e.category === 'filament');
 
     expect(detalle.map((e) => e.amount)).toEqual([30]);
     expect(detalle[0].id).toBe('ab-1');
+  });
+});
+
+/**
+ * EL REPARTO DE UN ABONO YA NO ES BINARIO (fase B, tarea 4).
+ *
+ * Hasta acá el abono se partía en dos con una sola fracción —`filamentShare`—:
+ * filamento o equipo. Las líneas de factura pasaron a tener más clases (el
+ * insumo entró el 2026-10-20) y el reparto no se enteró, así que **una placa de
+ * impresión se contaba como filamento**.
+ *
+ * ⚠️ El prorrateo sigue siendo una **CONVENCIÓN declarada, no un hecho**: un
+ * abono no fue a una línea concreta. Lo que estaba viejo no era repartir: era
+ * repartir entre dos clases cuando hay más.
+ *
+ * Números PUESTOS A MANO: derivarlos del mismo motor haría pasar el test con y
+ * sin el reparto.
+ */
+describe('abonos de compra: el reparto conoce todas las clases de línea', () => {
+  /** El abono de $140 de C-0001, cuya factura es $220 de filamento + $40 de insumo. */
+  const deC0001 = (reparto: RepartoDeCompra): CashLedger => {
+    const l = vacio();
+    l.purchasePayments = [
+      {
+        id: 'ab-c1',
+        date: '2026-10-05',
+        amount: 140,
+        payer: null,
+        refundable: true,
+        reparto,
+      },
+    ];
+    return l;
+  };
+
+  it('la placa de C-0001 (insumo, $40 de $260) NO cuenta como filamento', () => {
+    // 220/260 y 40/260 de los $140 abonados = 118,46 + 21,54.
+    const c = businessCash(deC0001({ filament: 220 / 260, consumables: 40 / 260 }));
+
+    expect(c.filament).toBe(118.46);
+    expect(linea(c, 'consumables')).toBe(21.54);
+  });
+
+  it('un abono a una factura con filamento e insumo se reparte entre las DOS', () => {
+    const detalle = cashEntries(deC0001({ filament: 0.5, consumables: 0.5 }));
+
+    expect(detalle.map((e) => [e.category, e.amount])).toEqual([
+      ['filament', 70],
+      ['consumables', 70],
+    ]);
+    // Las dos mitades llevan el id del MISMO abono: es un pago visto por partes.
+    expect(detalle.every((e) => e.id === 'ab-c1')).toBe(true);
+  });
+
+  it('una factura sin líneas sigue contando como filamento', () => {
+    // Es el caso de lejos más común (una factura recién creada) y el que hay
+    // hoy: deja el abono en una línea con sentido en vez de en «equipos».
+    expect(businessCash(deC0001({})).filament).toBe(140);
+  });
+
+  it('la suma de las categorías sigue dando el mismo saldo, reparta como reparta', () => {
+    const repartos: RepartoDeCompra[] = [
+      { filament: 1 },
+      { filament: 220 / 260, consumables: 40 / 260 },
+      { equipment: 1 / 3, consumables: 1 / 3, services: 1 / 3 },
+      { supplierAdvances: 1 },
+      {},
+    ];
+
+    for (const r of repartos) {
+      const l = deC0001(r);
+      // Lo que sale de la caja es el abono, no lo que diga el reparto.
+      expect({ r, balance: businessCash(l).balance }).toEqual({ r, balance: -140 });
+      // Y los asientos suman el abono al centavo: ni un centavo se pierde ni se
+      // inventa al partirlo. Con tercios, el último se lleva el residuo.
+      expect({ r, suma: redondear(cashEntries(l).reduce((s, e) => s + e.amount, 0)) }).toEqual({
+        r,
+        suma: 140,
+      });
+    }
+  });
+
+  it('un reparto que no suma 1 se normaliza, no mueve plata de más', () => {
+    // El servidor manda fracciones que suman 1; esto es la red por si no.
+    const c = businessCash(deC0001({ filament: 2, consumables: 2 }));
+
+    expect(c.filament).toBe(70);
+    expect(linea(c, 'consumables')).toBe(70);
+    expect(c.balance).toBe(-140);
+  });
+
+  it('un abono tomado del saldo a favor no deja asiento en ninguna categoría nueva', () => {
+    const l = deC0001({ consumables: 1 });
+    l.purchasePayments[0].fromCredit = true;
+
+    expect(cashEntries(l)).toEqual([]);
+  });
+});
+
+/**
+ * «ANTICIPOS A PROVEEDORES»: la plata que ya salió por mercadería que NO llegó.
+ *
+ * ⚠️ **Es UNA fila, no un reparto por categoría.** Con el dinero mudado a su
+ * propia línea, el problema que la tarea vino a cerrar —que $21,54 de un insumo
+ * estuvieran etiquetados «filamento»— desaparece solo: ya no está etiquetado
+ * filamento. A qué apuntaba el anticipo lo responde el DETALLE del asiento
+ * (`GET /cash/breakdown/supplierAdvances`), que dice de qué factura es.
+ */
+describe('anticipos a proveedores', () => {
+  it('lo pagado y no recibido sale de «filamento» y entra en su propia fila', () => {
+    const l = vacio();
+    l.sales = [{ date: '2026-10-01', amount: 200 }];
+    // C-0001: pagaste $140 y no llegó nada, así que los $140 son anticipo.
+    l.purchasePayments = [
+      {
+        id: 'ab-c1',
+        date: '2026-10-05',
+        amount: 140,
+        payer: null,
+        refundable: true,
+        reparto: { supplierAdvances: 1 },
+      },
+    ];
+
+    const c = businessCash(l);
+
+    expect(linea(c, 'supplierAdvances')).toBe(140);
+    expect(c.filament).toBe(0);
+    // El saldo no cambia por mudar la plata de fila: salió una vez.
+    expect(c.balance).toBe(60);
+  });
+
+  it('con media factura recibida, el anticipo convive con la mercadería', () => {
+    const l = vacio();
+    // Pagaste 100 de una factura de filamento y llegó la mitad: 50 de
+    // mercadería y 50 de anticipo.
+    l.purchasePayments = [
+      {
+        id: 'ab-mixto',
+        date: '2026-10-05',
+        amount: 100,
+        payer: null,
+        refundable: true,
+        reparto: { filament: 0.5, supplierAdvances: 0.5 },
+      },
+    ];
+
+    const c = businessCash(l);
+
+    expect(c.filament).toBe(50);
+    expect(linea(c, 'supplierAdvances')).toBe(50);
+    expect(c.balance).toBe(-100);
   });
 });
 
@@ -610,7 +784,7 @@ describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
     l.sales = [{ date: '2026-10-01', amount: 175 }];
     // El abono que pagó $100 por una factura de $85: la plata salió ACÁ.
     l.purchasePayments = [
-      { date: '2026-10-02', amount: 100, payer: null, refundable: true, filamentShare: 1 },
+      { date: '2026-10-02', amount: 100, payer: null, refundable: true, reparto: { filament: 1 } },
     ];
     return l;
   };
@@ -626,7 +800,7 @@ describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
       amount: 15,
       payer: null,
       refundable: true,
-      filamentShare: 1,
+      reparto: { filament: 1 },
       // ⚠️ Esto es lo que le dice a la caja que esa plata ya se contó.
       fromCredit: true,
     });
@@ -649,7 +823,7 @@ describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
       amount: 15,
       payer: null,
       refundable: true,
-      filamentShare: 1,
+      reparto: { filament: 1 },
     });
 
     expect(businessCash(l).balance).toBe(60);
@@ -668,7 +842,7 @@ describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
         amount: 15,
         payer: 'OWNER',
         refundable: true,
-        filamentShare: 1,
+        reparto: { filament: 1 },
         fromCredit: true,
       },
     ];
@@ -688,7 +862,7 @@ describe('saldo a favor: la plata ya salió, no sale dos veces', () => {
         amount: 15,
         payer: null,
         refundable: true,
-        filamentShare: 1,
+        reparto: { filament: 1 },
         fromCredit: true,
         id: 'ab-saldo',
       },

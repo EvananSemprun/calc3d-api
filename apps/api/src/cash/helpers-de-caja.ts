@@ -1,5 +1,11 @@
-import type { ObligationRef, ObligationSource, PayerKind } from '@calc3d/shared';
-import type { RecordSource } from '@prisma/client';
+import type {
+  CashCategory,
+  ObligationRef,
+  ObligationSource,
+  PayerKind,
+  RepartoDeCompra,
+} from '@calc3d/shared';
+import type { PurchaseLineNuevoTipo, RecordSource } from '@prisma/client';
 
 /**
  * LOS AYUDANTES DE CAJA: traducciones de la base al motor, sin estado.
@@ -60,28 +66,110 @@ export const vigentes = <T extends { voidedAt: Date | null }>(filas: T[]) =>
   filas.filter((f) => f.voidedAt == null);
 
 /**
- * Qué fracción de una factura es filamento. El resto es equipo.
- *
- * ⚠️ Es una **convención de prorrateo**: un abono no "fue" a una línea
- * concreta. Se reparte así para que "Filamento comprado" siga queriendo decir
- * todo el filamento que compraste, venga de una factura o de una compra
- * directa. Con facturas de una sola cosa —lo normal— es exacto.
- *
- * Una factura sin líneas (recién creada) cuenta como filamento: es el caso de
- * lejos más común y deja el abono en una línea con sentido en vez de en
- * "equipos".
+ * Una línea de factura, vista por lo ÚNICO que decide en qué línea del saldo
+ * cae su plata.
  */
-export function proporcionDeFilamento(
-  lineas: { quantity: number; unitPrice: unknown; printerId: string | null }[],
-): number {
+export interface LineaParaReparto {
+  quantity: number;
+  unitPrice: unknown;
+  materialId?: string | null;
+  printerId?: string | null;
+  componentId?: string | null;
+  /** Qué ficha NACE al recibir, cuando la línea todavía no apunta a ninguna. */
+  nuevoTipo?: PurchaseLineNuevoTipo | null;
+}
+
+/**
+ * EN QUÉ LÍNEA DEL SALDO CAE UNA LÍNEA DE FACTURA.
+ *
+ * ⚠️ **Hay que mirar las DOS formas de decir qué es.** Una línea apunta a una
+ * ficha del catálogo (`materialId` / `printerId` / `componentId`) **o** pide
+ * algo que todavía no existe, y entonces lo dice con `nuevoTipo` y la ficha nace
+ * al recibir. Mirando solo los ids, una impresora encargada por primera vez
+ * —el caso normal: una máquina nueva no está en el catálogo— caería en el
+ * respaldo.
+ *
+ * ⚠️ **El respaldo es `filament`, y es el comportamiento de siempre**: hasta hoy
+ * el reparto era `if (l.printerId == null) deFilamento += monto`, o sea que
+ * todo lo que no era impresora se contaba como filamento. Mantenerlo deja una
+ * factura vieja —o una línea con un dato incompleto— dando el mismo número que
+ * daba ayer, en una línea con sentido en vez de en "equipos".
+ *
+ * ⚠️ **El día que Compras gane el tipo SERVICIO** (§5.2 del diseño de compras),
+ * va acá y devuelve `services`: la categoría ya existe esperándolo. Dejarlo
+ * caer en el respaldo contaría un alquiler como filamento.
+ */
+export function categoriaDeLinea(l: LineaParaReparto): CashCategory {
+  if (l.printerId != null || l.nuevoTipo === 'PRINTER') return 'equipment';
+  if (l.componentId != null || l.nuevoTipo === 'COMPONENT') return 'consumables';
+  return 'filament';
+}
+
+/**
+ * CÓMO SE REPARTE UNA FACTURA entre las líneas del saldo: categoría → fracción,
+ * a prorrata de lo que vale cada línea.
+ *
+ * ⚠️ Es una **convención de prorrateo declarada, no un descuido**: un abono no
+ * "fue" a una línea concreta. Se reparte así para que "Filamento comprado" siga
+ * queriendo decir todo el filamento que compraste, venga de una factura o de una
+ * compra directa. Con facturas de una sola cosa —lo normal— es exacto.
+ *
+ * ⚠️ Lo que estaba viejo era que el reparto conociera **dos** clases (impresora
+ * o filamento) cuando una línea ya podía ser un insumo desde el 2026-10-20: la
+ * placa de impresión de $40 de C-0001 se contaba como filamento.
+ *
+ * Una factura sin líneas (recién creada) devuelve el mapa vacío, y el motor lo
+ * lee como filamento: es el caso de lejos más común.
+ */
+export function proporcionPorCategoria(lineas: LineaParaReparto[]): RepartoDeCompra {
+  const porCategoria = new Map<CashCategory, number>();
   let total = 0;
-  let deFilamento = 0;
   for (const l of lineas) {
     const monto = Math.max(l.quantity, 0) * Math.max(n(l.unitPrice), 0);
+    if (monto <= 0) continue;
+    const c = categoriaDeLinea(l);
+    porCategoria.set(c, (porCategoria.get(c) ?? 0) + monto);
     total += monto;
-    if (l.printerId == null) deFilamento += monto;
   }
-  return total > 0 ? deFilamento / total : 1;
+  if (total <= 0) return {};
+
+  const reparto: RepartoDeCompra = {};
+  for (const [c, monto] of porCategoria) reparto[c] = monto / total;
+  return reparto;
+}
+
+/**
+ * EL REPARTO DE UN ABONO, con los anticipos separados.
+ *
+ * ⚠️ **Lo pagado y todavía no recibido NO es filamento ni insumo: es plata en
+ * manos del proveedor.** Va a su propia línea, «Anticipos a proveedores», y por
+ * eso el problema que esta tarea vino a cerrar —que $21,54 de un insumo
+ * estuvieran etiquetados «filamento»— desaparece solo en el caso de C-0001: con
+ * la plata en su propia fila, ya no está etiquetada filamento. A qué apuntaba lo
+ * responde el DETALLE del asiento, que dice de qué factura es.
+ *
+ * ⚠️ **El anticipo es de la FACTURA y se reparte entre SUS abonos**, a prorrata
+ * de lo pagado: `anticipo / pagado`. Es la misma convención que el resto —un
+ * abono no fue a una línea concreta, y tampoco "fue" a la parte recibida o a la
+ * pendiente—. Con un solo abono por factura —lo normal— es exacto. El
+ * denominador es lo pagado de la factura y no su total: lo pagado de más es
+ * `aFavor` y no corresponde a esta compra.
+ */
+export function repartoDeAbono(
+  lineas: LineaParaReparto[],
+  totales: { pagado: number; anticipo: number },
+): RepartoDeCompra {
+  const deAnticipo =
+    totales.pagado > 0 ? Math.min(Math.max(totales.anticipo / totales.pagado, 0), 1) : 0;
+  if (deAnticipo >= 1) return { supplierAdvances: 1 };
+
+  const mercaderia = proporcionPorCategoria(lineas);
+  const reparto: RepartoDeCompra = {};
+  for (const [c, f] of Object.entries(mercaderia) as [CashCategory, number][]) {
+    reparto[c] = f * (1 - deAnticipo);
+  }
+  if (deAnticipo > 0) reparto.supplierAdvances = deAnticipo;
+  return reparto;
 }
 
 /** Lo que la pantalla muestra de cada asiento, además de la fecha y el monto. */

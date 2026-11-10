@@ -1394,10 +1394,44 @@ en el repo web: se sobrescribe al sincronizar.
     Sin eso, abonar $50 y recibir esa compra de $50 bajaría el saldo $100 — la
     doble carga que descuadraba la hoja del Excel. Test con número clavado en
     `cash.spec.ts`; las tres mutaciones lo tumban.
-    - El abono se reparte entre `filament` y `equipment` **a prorrata de su
-      factura**. Es una CONVENCIÓN, no un hecho: un abono no fue a una línea
-      concreta. Se hace así para que "Filamento comprado" siga queriendo decir
-      *todo el filamento que compraste*. Con facturas de una sola cosa es exacto.
+    - El abono se reparte entre las LÍNEAS DEL SALDO **a prorrata de su
+      factura**, mirando el tipo REAL de cada línea. Es una CONVENCIÓN, no un
+      hecho: un abono no fue a una línea concreta. Se hace así para que
+      "Filamento comprado" siga queriendo decir *todo el filamento que
+      compraste*. Con facturas de una sola cosa es exacto.
+      - ⚠️ **Hasta la fase B el reparto era BINARIO** (`filamentShare`:
+        `if (l.printerId == null) deFilamento += monto`, o sea impresora o
+        filamento) y una línea podía ser un insumo desde el 2026-10-20: **la
+        placa de impresión de $40 de C-0001 se contaba como filamento**. Hoy
+        `CashLedger.purchasePayments[].reparto` es un **mapa categoría →
+        fracción** (`RepartoDeCompra`) que arma `repartoDeAbono` en
+        `cash/helpers-de-caja.ts` mirando `materialId`, `printerId`,
+        `componentId` y `nuevoTipo`.
+      - ⚠️ **El respaldo sigue siendo `filament`** (factura sin líneas, o línea
+        con el dato incompleto): es el comportamiento histórico y deja el abono
+        en una línea con sentido en vez de en «equipos». **El día que Compras
+        gane el tipo SERVICIO va en `categoriaDeLinea`**, o un alquiler se
+        contaría como filamento.
+      - ⚠️ **`CashCategory` ganó `consumables`, `services` y `supplierAdvances`**
+        (12 líneas, no nueve). `advertising` **NO entró**: se agrega en la fase
+        (c), junto con lo que la llena. Y **`services` todavía no tiene quién la
+        alimente**: una línea de factura no sabe ser un servicio (el contrato
+        pide una de `materialId`/`printerId`/`componentId`/`nombreNuevo` y
+        `nuevoTipo` solo tiene MATERIAL, PRINTER y COMPONENT). Está anotado en
+        el barrido de `cash.service.spec.ts`, que la exime a mano.
+      - ⚠️ **«Anticipos a proveedores» es UNA fila, no un reparto por
+        categoría.** Lo pagado y no recibido (`anticipo` de `invoiceTotals`) no
+        es filamento ni insumo: es plata en manos del proveedor. Se reparte
+        entre los abonos de SU factura a prorrata de lo pagado
+        (`anticipo / pagado`) y **la atribución por categoría se conserva en el
+        detalle del asiento** (`GET /cash/breakdown/supplierAdvances` dice de
+        qué factura es). Con C-0001, «Filamento comprado» pasó de −$1.803,91 a
+        −$1.663,91 y nació «Anticipos a proveedores» en −$140,00.
+      - ⚠️ **La hoja Caja del Excel ya NO escribe sus filas a mano**: las
+        recorre desde `CASH_SIGN` con un `Record<CashCategory, string>` de
+        etiquetas, así que una categoría nueva **no compila** sin su texto. Con
+        la lista a mano, una olvidada dejaba la hoja sumando menos de lo que
+        dice su propio SALDO.
     - Total, pagado, saldo, recibido y estado **se DERIVAN** (`invoiceTotals`,
       `invoiceStatus` en shared). Lo único guardado es `voidedAt`.
     - **El estado son DOS ejes.** Pagada y sin recibir es lo normal al encargar.

@@ -174,7 +174,7 @@ export interface RepartoDePagadores {
  * dejaría peleadas.
  *
  * ⚠️ **EL SALDO DE UNA FACTURA SE PRORRATEA, Y ESO ES UNA CONVENCIÓN, NO UN
- * HECHO** — la misma de `filamentShare` en `cash.ts`. Un abono de $60 contra
+ * HECHO** — la misma de `RepartoDeCompra` en `cash.ts`. Un abono de $60 contra
  * una factura de cuatro líneas no "fue" a una línea concreta: para poder decir
  * qué parte de los gastos de ESTE periodo quedó sin pagar, a cada factura se le
  * imputa `lo suyo en el periodo × (saldo ÷ total de la factura)`. Con facturas

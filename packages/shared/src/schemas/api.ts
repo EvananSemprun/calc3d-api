@@ -974,7 +974,7 @@ export const CashAccountUpsertSchema = z
 export type CashAccountUpsertDto = z.infer<typeof CashAccountUpsertSchema>;
 
 /**
- * Las nueve líneas de "De dónde sale el saldo", como parámetro de ruta de
+ * Las líneas de "De dónde sale el saldo", como parámetro de ruta de
  * `GET /cash/breakdown/:category`.
  *
  * ⚠️ Tiene que coincidir EXACTAMENTE con `CashCategory` de `calc/cash.ts`. Son
@@ -989,6 +989,9 @@ export const CashCategorySchema = z.enum([
   'expenses',
   'filament',
   'equipment',
+  'consumables',
+  'services',
+  'supplierAdvances',
   'contributionsRefundable',
   'contributionsCapital',
   'debtRepayments',

@@ -2,6 +2,7 @@ import { Controller, Get, Injectable, Module, Res, UseGuards } from '@nestjs/com
 import type { Response } from 'express';
 import ExcelJS from 'exceljs';
 import {
+  CASH_SIGN,
   breakEvenLevels,
   fixedCostsTotal,
   businessDateKey,
@@ -11,6 +12,7 @@ import {
   orderPaid,
   orderTotal,
   stockTotal,
+  type CashCategory,
   type FixedCost,
   type OrderLine,
 } from '@calc3d/shared';
@@ -452,19 +454,38 @@ export class ReportsService {
     ]);
     bloque(hCaja, 'De dónde sale el saldo del negocio');
     const b = caja.balance;
-    const lineasSaldo: [string, number][] = [
-      ['Ventas cobradas (+)', b.collected],
-      ['Gastos generales (−)', -b.expenses],
-      ['Filamento comprado (−)', -b.filament],
-      ['Equipos pagados por la caja (−)', -b.equipment],
-      [`Aportes de ${nombreContraparte} (se devuelven) (+)`, b.contributionsRefundable],
-      [`Aportes de capital de ${nombreContraparte} (+)`, b.contributionsCapital],
-      [`Devoluciones a ${nombreContraparte} (−)`, -b.debtRepayments],
-      [`Retiros de ${nombreContraparte} (−)`, -b.ownerDraws],
-      ['Cuotas del préstamo pagadas por la caja (−)', -b.loanPayments],
-    ];
-    for (const [etiqueta, valor] of lineasSaldo) {
-      hCaja.addRow([etiqueta, '', valor]);
+    /**
+     * ⚠️ **Las filas se recorren desde `CASH_SIGN`, no se escriben a mano.**
+     * `Record<CashCategory, string>` obliga a que una categoría nueva de la caja
+     * tenga su etiqueta acá o no compile. Con la lista a mano, una categoría
+     * olvidada dejaba la hoja sumando menos de lo que dice su propio SALDO: la
+     * hoja se contradice a sí misma, que es el defecto que este archivo existe
+     * para no tener.
+     *
+     * El signo sale del mismo `CASH_SIGN` que usa el motor para armar el saldo,
+     * así que la columna y el total no pueden discrepar en el sentido.
+     */
+    const etiquetasSaldo: Record<CashCategory, string> = {
+      collected: 'Ventas cobradas',
+      expenses: 'Gastos generales',
+      filament: 'Filamento comprado',
+      equipment: 'Equipos pagados por la caja',
+      consumables: 'Insumos comprados',
+      services: 'Servicios pagados',
+      supplierAdvances: 'Anticipos a proveedores (pagado y sin recibir)',
+      contributionsRefundable: `Aportes de ${nombreContraparte} (se devuelven)`,
+      contributionsCapital: `Aportes de capital de ${nombreContraparte}`,
+      debtRepayments: `Devoluciones a ${nombreContraparte}`,
+      ownerDraws: `Retiros de ${nombreContraparte}`,
+      loanPayments: 'Cuotas del préstamo pagadas por la caja',
+    };
+    for (const categoria of Object.keys(CASH_SIGN) as CashCategory[]) {
+      const signo = CASH_SIGN[categoria];
+      hCaja.addRow([
+        `${etiquetasSaldo[categoria]} (${signo === 1 ? '+' : '−'})`,
+        '',
+        signo * b[categoria],
+      ]);
     }
     hCaja.addRow(['SALDO DEL NEGOCIO', '', b.balance]).font = { bold: true };
     hCaja.addRow([]);

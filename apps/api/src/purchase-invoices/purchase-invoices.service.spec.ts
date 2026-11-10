@@ -7,6 +7,10 @@ import {
   type CashLedger,
 } from '@calc3d/shared';
 import { PurchaseInvoicesService } from './purchase-invoices.module';
+// La MISMA función que alimenta el `maintPerHour` de la calculadora y del
+// recosteo de la tienda. Está acá para poder exigir que recibir una compra no
+// la mueva, no para probar el módulo de impresoras.
+import { derivedMaintenance } from '../printers/printers.module';
 
 const ORG = 'org-A';
 const OTRA = 'org-B';
@@ -947,7 +951,7 @@ describe('PurchaseInvoicesService — el precio real tampoco mueve la caja', () 
     })),
     // ESTO es lo que movió la plata: los $70 abonados.
     purchasePayments: [
-      { id: 'ab1', date: '2026-10-05', amount: 70, payer: null, refundable: true, filamentShare: 1 },
+      { id: 'ab1', date: '2026-10-05', amount: 70, payer: null, refundable: true, reparto: { filament: 1 } },
     ],
     loanPayments: [],
     movements: [],
@@ -1398,7 +1402,7 @@ describe('PurchaseInvoicesService — deshacer no mueve la caja', () => {
     })),
     // ESTO es lo que mueve la plata: el abono de $15.
     purchasePayments: [
-      { id: 'ab1', date: '2026-10-05', amount: 15, payer: null, refundable: true, filamentShare: 1 },
+      { id: 'ab1', date: '2026-10-05', amount: 15, payer: null, refundable: true, reparto: { filament: 1 } },
     ],
     loanPayments: [],
     movements: [],
@@ -2105,5 +2109,137 @@ describe('Código propio de la compra', () => {
         reference: 'A-001',
       } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * ⚠️⚠️ **NADA DE UNA FACTURA PUEDE ATERRIZAR EN `MAINTENANCE`** (fase B, tarea 4).
+ *
+ * `derivedMaintenance()` es `Σ gastos MAINTENANCE ÷ horas de la última lectura`,
+ * **sin ventana de fechas**, y de ahí sale el `maintPerHour` que usan
+ * `calculateQuote` y el recosteo de la tienda. Una categoría mal mapeada
+ * **encarece todo lo que se cotiza, para siempre y sin aviso**: no hay pantalla
+ * donde se vea, porque el número sigue siendo plausible.
+ *
+ * ⚠️ **Hoy una línea de SERVICIO no se puede representar**, y eso es parte de lo
+ * que fija este bloque: el contrato exige exactamente una de
+ * `materialId` / `printerId` / `componentId` / `nombreNuevo`, y `nuevoTipo` solo
+ * tiene `MATERIAL`, `PRINTER` y `COMPONENT`. Así que lo que se prueba es que
+ * **ninguna de las clases que SÍ existen** produce `MAINTENANCE` y que la rama
+ * que elige la categoría solo sabe decir dos cosas. El día que Compras gane el
+ * tipo Servicio (§5.2 del diseño), ESTE es el test que hay que ampliar.
+ */
+describe('recibir una línea NO produce un gasto de mantenimiento', () => {
+  /** Las cuatro clases de línea que el contrato permite hoy. */
+  const clases: [string, Record<string, unknown>][] = [
+    ['filamento del catálogo', {}],
+    [
+      'insumo del catálogo',
+      { materialId: null, material: null, componentId: 'ins-mio', component: { id: 'ins-mio', name: 'Placa' } },
+    ],
+    [
+      'insumo que nace al recibir',
+      { materialId: null, material: null, nombreNuevo: 'Placa lisa', nuevoTipo: 'COMPONENT' },
+    ],
+    [
+      'impresora del catálogo',
+      { materialId: null, material: null, printerId: 'imp-mia', printer: { id: 'imp-mia', name: 'A1' } },
+    ],
+  ];
+
+  it.each(clases)('una línea de %s nace como consumible o equipo, nunca MAINTENANCE', async (_, over) => {
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      supplierId: 'prov-mio',
+      lines: [linea({ quantity: 1, unitPrice: 40, ...over })],
+    });
+
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-11-10' } as never);
+
+    const gasto = p.expense.create.mock.calls[0][0].data;
+    expect(gasto.category).not.toBe('MAINTENANCE');
+    expect(['CONSUMABLE', 'EQUIPMENT']).toContain(gasto.category);
+  });
+});
+
+/**
+ * `derivedMaintenance` DA EL MISMO NÚMERO ANTES Y DESPUÉS.
+ *
+ * No es un test de forma: corre la función **de verdad** contra una base que
+ * contiene el gasto que `receive()` acaba de crear. Si ese gasto entrara como
+ * `MAINTENANCE`, la tarifa por hora subiría y todo el catálogo se encarecería.
+ *
+ * Números de producción: $122 de repuestos ÷ 2.770 horas leídas.
+ */
+describe('la tarifa de mantenimiento por hora no se mueve al recibir una compra', () => {
+  /** Una base que FILTRA como Postgres: el `where` de la categoría se respeta. */
+  const baseDeMantenimiento = (gastos: Record<string, unknown>[]) => ({
+    expense: {
+      aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve({
+          _sum: {
+            amount: gastos
+              .filter((g) => coincide(g, where))
+              .reduce((s, g) => s + Number(g.amount), 0),
+          },
+        }),
+      ),
+    },
+    printer: {
+      findMany: jest.fn(() =>
+        Promise.resolve([{ readings: [{ hours: '2413' }] }, { readings: [{ hours: '357' }] }]),
+      ),
+    },
+  });
+
+  it('recibir un insumo de $40 no cambia la tarifa: sigue en 122 ÷ 2770', async () => {
+    const gastos: Record<string, unknown>[] = [
+      { id: 'g-mant', organizationId: ORG, category: 'MAINTENANCE', amount: '122' },
+    ];
+    const antes = await derivedMaintenance(baseDeMantenimiento(gastos) as never, ORG);
+
+    const p = makePrisma({
+      ...FACTURA_VACIA,
+      supplierId: 'prov-mio',
+      lines: [
+        linea({
+          quantity: 1,
+          unitPrice: 40,
+          materialId: null,
+          material: null,
+          componentId: 'ins-mio',
+          component: { id: 'ins-mio', name: 'Placa' },
+        }),
+      ],
+    });
+    await servicio(p).receive(ORG, 'f1', 'l1', { quantity: 1, date: '2026-11-10' } as never);
+    // El gasto que el servicio creó DE VERDAD entra a la base que alimenta la
+    // tarifa. Escribirlo a mano probaría otra cosa.
+    gastos.push({ id: 'g-nuevo', ...p.expense.create.mock.calls[0][0].data });
+
+    const despues = await derivedMaintenance(baseDeMantenimiento(gastos) as never, ORG);
+
+    expect(despues).toEqual(antes);
+    expect(antes.spent).toBe(122);
+    expect(antes.hours).toBe(2770);
+    expect(antes.ratePerHour).toBeCloseTo(0.044043, 6);
+  });
+
+  /**
+   * EL HERMANO ALCANZABLE: si el gasto SÍ fuera de mantenimiento, la tarifa se
+   * movería. Sin esto, una base que ignorara los gastos nuevos pasaría el test
+   * de arriba con y sin la protección.
+   */
+  it('un gasto que SÍ es de mantenimiento mueve la tarifa: 162 ÷ 2770', async () => {
+    const gastos: Record<string, unknown>[] = [
+      { id: 'g-mant', organizationId: ORG, category: 'MAINTENANCE', amount: '122' },
+    ];
+    const antes = await derivedMaintenance(baseDeMantenimiento(gastos) as never, ORG);
+    gastos.push({ id: 'g-repuesto', organizationId: ORG, category: 'MAINTENANCE', amount: '40' });
+
+    const despues = await derivedMaintenance(baseDeMantenimiento(gastos) as never, ORG);
+
+    expect(despues.spent).toBe(162);
+    expect(Number(despues.ratePerHour)).toBeGreaterThan(Number(antes.ratePerHour));
   });
 });

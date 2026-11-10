@@ -44,6 +44,28 @@ export const generaObligacion = (p: PayerKind | null): boolean =>
   p === 'OWNER' || p === 'PARTNER';
 export type OwnerMovementKind = 'CONTRIBUTION' | 'WITHDRAWAL';
 
+/**
+ * CÓMO SE REPARTE UN ABONO a una factura de compra: categoría → fracción.
+ *
+ * ⚠️ Es una **convención de prorrateo, no un hecho**: un abono de $20 contra una
+ * factura de dos filamentos y una impresora no "fue" a una línea concreta. Se
+ * reparte a prorrata para que la línea "Filamento comprado" siga queriendo decir
+ * *todo el filamento que compraste*, venga de una factura o de una compra
+ * directa. Con facturas de una sola cosa —lo normal— el reparto es exacto.
+ *
+ * ⚠️ **Antes era UNA fracción** (`filamentShare`), o sea un reparto binario:
+ * impresora o filamento. Las líneas de factura pasaron a tener más clases —el
+ * insumo entró el 2026-10-20— y el reparto no se enteró, así que una placa de
+ * impresión se contaba como filamento. Lo viejo no era prorratear: era
+ * prorratear entre DOS clases cuando hay más.
+ *
+ * Las fracciones las calcula quien arma el ledger (la API conoce las columnas de
+ * la línea; el motor no). Acá se normalizan: lo negativo se ignora, el conjunto
+ * se divide por su suma y un reparto vacío cae a `filament` —el caso de una
+ * factura sin líneas, de lejos el más común—.
+ */
+export type RepartoDeCompra = Partial<Record<CashCategory, number>>;
+
 /** Fecha como ISO o `AAAA-MM-DD`; solo se comparan los primeros 10 caracteres. */
 type Fecha = string;
 
@@ -106,16 +128,10 @@ export interface CashLedger {
     /** Si lo puso una persona: ¿se le devuelve, o fue capital? */
     refundable: boolean;
     /**
-     * Qué fracción de SU factura es filamento (0..1); el resto, equipo.
-     *
-     * ⚠️ Es una **convención de prorrateo, no un hecho**: un abono de $20
-     * contra una factura de dos filamentos y una impresora no "fue" a una
-     * línea concreta. Se reparte a prorrata para que la línea "Filamento
-     * comprado" siga queriendo decir *todo el filamento que compraste*, venga
-     * de una factura o de una compra directa. Con facturas de una sola cosa
-     * —lo normal— el reparto es exacto.
+     * CÓMO SE REPARTE ESTE ABONO entre las líneas del saldo: categoría →
+     * fracción. Ver `RepartoDeCompra`.
      */
-    filamentShare: number;
+    reparto: RepartoDeCompra;
     /**
      * **TOMADO DEL SALDO A FAVOR** con ese proveedor: no mueve la caja.
      *
@@ -152,6 +168,26 @@ export interface BusinessCash {
   filament: number;
   /** Equipos que pagó la caja (−). */
   equipment: number;
+  /** Insumos comprados: placas, boquillas, empaque (−). */
+  consumables: number;
+  /**
+   * Servicios pagados: diseño, repuestos de terceros, alquileres (−).
+   *
+   * ⚠️ **Todavía NO tiene quién la alimente**, y es a propósito: una línea de
+   * factura no puede ser un servicio hasta que Compras gane ese tipo de línea
+   * (§5.2 del diseño de compras). La línea existe para que el día que llegue
+   * tenga destino, y porque es la categoría a la que debe ir — hoy una línea
+   * sin clasificar cae en `filament`, que es el default histórico.
+   */
+  services: number;
+  /**
+   * ANTICIPOS A PROVEEDORES: plata que ya salió por mercadería que NO llegó (−).
+   *
+   * ⚠️ **Es UNA fila, no un reparto por categoría.** Lo que todavía no llegó no
+   * es filamento ni insumo: es plata en manos del proveedor. A qué apuntaba lo
+   * responde el DETALLE del asiento, que dice de qué factura es.
+   */
+  supplierAdvances: number;
   /** Compras reembolsables que pagó la contraparte + plata suya reembolsable (+). */
   contributionsRefundable: number;
   /** Aporte de capital: sube la caja y NO genera deuda (+). */
@@ -165,12 +201,15 @@ export interface BusinessCash {
   balance: number;
 }
 
-/** Las nueve líneas de "De dónde sale el saldo", en el orden en que se muestran. */
+/** Las líneas de "De dónde sale el saldo", en el orden en que se muestran. */
 export type CashCategory =
   | 'collected'
   | 'expenses'
   | 'filament'
   | 'equipment'
+  | 'consumables'
+  | 'services'
+  | 'supplierAdvances'
   | 'contributionsRefundable'
   | 'contributionsCapital'
   | 'debtRepayments'
@@ -183,6 +222,9 @@ export const CASH_SIGN: Record<CashCategory, 1 | -1> = {
   expenses: -1,
   filament: -1,
   equipment: -1,
+  consumables: -1,
+  services: -1,
+  supplierAdvances: -1,
   contributionsRefundable: 1,
   contributionsCapital: 1,
   debtRepayments: -1,
@@ -215,6 +257,39 @@ export interface CashEntry {
  * que una de las dos cambie, y la pantalla se contradice a sí misma.
  */
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * PARTIR UN ABONO según su reparto, sin perder ni inventar un centavo.
+ *
+ * ⚠️ **El último pedazo se lleva el residuo**, no su propio redondeo. Con tres
+ * categorías a un tercio, redondear cada una da 3,33 + 3,33 + 3,33 = 9,99 de un
+ * abono de 10: un centavo que desaparece del saldo y que nadie puede explicar.
+ *
+ * El orden es el de `CASH_SIGN` —el mismo en el que se muestran las líneas—,
+ * así que es reproducible: dos corridas parten el mismo abono igual.
+ *
+ * Un reparto vacío (o todo en cero, o todo negativo) cae a `filament`: es la
+ * factura sin líneas, el caso de lejos más común, y deja el abono en una línea
+ * con sentido en vez de en "equipos".
+ */
+function repartir(
+  amount: number,
+  reparto: RepartoDeCompra,
+): { category: CashCategory; amount: number }[] {
+  const partes = (Object.keys(CASH_SIGN) as CashCategory[])
+    .map((category) => ({ category, fraccion: Math.max(reparto[category] ?? 0, 0) }))
+    .filter((p) => p.fraccion > 0);
+  const suma = partes.reduce((s, p) => s + p.fraccion, 0);
+  if (suma <= 0) return [{ category: 'filament', amount }];
+
+  let repartido = 0;
+  return partes.map((p, i) => {
+    const monto =
+      i === partes.length - 1 ? round2(amount - repartido) : round2(amount * (p.fraccion / suma));
+    repartido = round2(repartido + monto);
+    return { category: p.category, amount: monto };
+  });
+}
 
 export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
   const hasta = until?.slice(0, 10);
@@ -266,10 +341,10 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     push('ownerDraws', { date: m.date, id: m.id, amount: Math.max(0, m.amount - (m.applied ?? 0)) });
   }
 
-  // Los abonos: acá SÍ sale la plata. Se reparten entre filamento y equipo a
-  // prorrata de su factura, y si los puso una persona emiten además el aporte
-  // —el mismo doble asiento que un gasto de su bolsillo, que se anula en el
-  // saldo y deja la deuda.
+  // Los abonos: acá SÍ sale la plata. Se reparten entre las líneas del saldo a
+  // prorrata de su factura (ver `RepartoDeCompra`), y si los puso una persona
+  // emiten además el aporte —el mismo doble asiento que un gasto de su
+  // bolsillo, que se anula en el saldo y deja la deuda.
   for (const a of ledger.purchasePayments) {
     if (!vale(a.date)) continue;
     // Tomado del saldo a favor: esa plata ya salió al pagar de más. Ver
@@ -277,10 +352,9 @@ export function cashEntries(ledger: CashLedger, until?: Fecha): CashEntry[] {
     // es un movimiento de plata partido en dos, es ninguno.
     if (a.fromCredit) continue;
     if (a.payer === 'EXTERNAL_LENDER') continue; // lo del prestamista no toca la caja
-    const share = Math.min(Math.max(a.filamentShare, 0), 1);
-    const enFilamento = round2(a.amount * share);
-    push('filament', { ...a, amount: enFilamento });
-    push('equipment', { ...a, amount: round2(a.amount - enFilamento) });
+    for (const parte of repartir(a.amount, a.reparto)) {
+      push(parte.category, { ...a, amount: parte.amount });
+    }
     if (generaObligacion(a.payer)) {
       push(a.refundable ? 'contributionsRefundable' : 'contributionsCapital', a);
     }
@@ -307,6 +381,9 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
     expenses: 0,
     filament: 0,
     equipment: 0,
+    consumables: 0,
+    services: 0,
+    supplierAdvances: 0,
     contributionsRefundable: 0,
     contributionsCapital: 0,
     debtRepayments: 0,
@@ -324,6 +401,9 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
     expenses: round2(acc.expenses),
     filament: round2(acc.filament),
     equipment: round2(acc.equipment),
+    consumables: round2(acc.consumables),
+    services: round2(acc.services),
+    supplierAdvances: round2(acc.supplierAdvances),
     contributionsRefundable: round2(acc.contributionsRefundable),
     contributionsCapital: round2(acc.contributionsCapital),
     debtRepayments: round2(acc.debtRepayments),

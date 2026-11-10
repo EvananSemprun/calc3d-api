@@ -1,6 +1,8 @@
 import {
   codigoDeCompra,
+  invoiceTotals,
   obligationLedger,
+  purchaseCostPerRoll,
   type ApplicationOrder,
   type CashLedger,
   type ObligationInput,
@@ -10,12 +12,42 @@ import { SIN_PROVEEDOR } from '../purchase-invoices/deuda-por-proveedor';
 import {
   dia,
   n,
-  proporcionDeFilamento,
+  repartoDeAbono,
   texto,
   tipoPagador,
   vigentes,
   type EtiquetaAsiento,
+  type LineaParaReparto,
 } from './helpers-de-caja';
+
+/**
+ * LAS CUENTAS DE UNA FACTURA, para saber cuánto de lo pagado es ANTICIPO.
+ *
+ * ⚠️ **Es la MISMA `invoiceTotals` que usa Compras**, con la misma traducción de
+ * las recepciones (sus gastos) y el mismo `purchaseCostPerRoll` para derivar el
+ * precio real de cada entrega. Recalcularlo acá a mano sería una segunda
+ * definición de «lo que te llegó», y el día que una de las dos cambie, Caja y
+ * Compras dirían cosas distintas de la misma factura.
+ */
+const totalesDeFactura = (factura: {
+  lines: (LineaParaReparto & {
+    received: number;
+    expenses: { quantity: number | null; amount: unknown }[];
+  })[];
+  payments: { amount: unknown; voidedAt: Date | null }[];
+}) =>
+  invoiceTotals(
+    factura.lines.map((l) => ({
+      quantity: l.quantity,
+      unitPrice: n(l.unitPrice),
+      received: l.received,
+      recepciones: l.expenses.map((e) => ({
+        quantity: e.quantity ?? 0,
+        unitPrice: purchaseCostPerRoll(n(e.amount), e.quantity ?? 0),
+      })),
+    })),
+    factura.payments.map((p) => ({ amount: n(p.amount), voided: p.voidedAt != null })),
+  );
 
 /**
  * DE DÓNDE SALEN LOS DATOS DE CAJA, y qué se deriva de ellos antes de que
@@ -83,7 +115,37 @@ export async function cargarDatosDeCaja(prisma: PrismaService, organizationId: s
             select: {
               code: true,
               supplier: { select: { name: true } },
-              lines: { select: { quantity: true, unitPrice: true, printerId: true } },
+              lines: {
+                select: {
+                  quantity: true,
+                  unitPrice: true,
+                  /**
+                   * LAS CUATRO FORMAS DE SABER QUÉ ES ESTA LÍNEA. Las tres
+                   * primeras apuntan a una ficha del catálogo; `nuevoTipo` dice
+                   * qué ficha NACE cuando todavía no apunta a ninguna. Con solo
+                   * `printerId` —como estaba— un insumo se contaba como
+                   * filamento.
+                   */
+                  printerId: true,
+                  materialId: true,
+                  componentId: true,
+                  nuevoTipo: true,
+                  /**
+                   * Y lo que hace falta para saber cuánto de lo pagado es
+                   * ANTICIPO: cuántas unidades llegaron y a cuánto salieron de
+                   * verdad. Las recepciones SON los gastos de la línea.
+                   */
+                  received: true,
+                  expenses: { select: { quantity: true, amount: true } },
+                },
+              },
+              /**
+               * ⚠️ Los abonos de la factura, **anulados incluidos con su
+               * marca**: lo que cuenta como pagado lo decide `invoiceTotals`,
+               * no el `where`. Filtrarlos acá sería una segunda definición de
+               * «pagado».
+               */
+              payments: { select: { amount: true, voidedAt: true } },
             },
           },
         },
@@ -136,7 +198,12 @@ export async function cargarDatosDeCaja(prisma: PrismaService, organizationId: s
       amount: n(a.amount),
       payer: tipoPagador(a, contrapartes),
       refundable: true,
-      filamentShare: proporcionDeFilamento(a.invoice.lines),
+      /**
+       * ⚠️ **El reparto mira el tipo REAL de cada línea y separa el anticipo.**
+       * Hasta la fase B era una sola fracción binaria —impresora o filamento— y
+       * un insumo se contaba como filamento.
+       */
+      reparto: repartoDeAbono(a.invoice.lines, totalesDeFactura(a.invoice)),
       // ⚠️ Tomado del saldo a favor con el proveedor: **no mueve la caja**.
       // Esa plata ya salió el día que se pagó de más; contarla otra vez es la
       // misma doble carga que el gasto nacido de una factura, por la otra

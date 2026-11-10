@@ -97,6 +97,9 @@ describe('ReportsService.workbook — la hoja Deuda no recalcula el saldo', () =
         summary: async () => ({
           balance: {
             collected: 0, expenses: 0, filament: 0, equipment: 0,
+            // Las tres de la fase B: la hoja recorre `CASH_SIGN`, así que una
+            // línea que falte en el mock sale como NaN en la celda.
+            consumables: 0, services: 0, supplierAdvances: 0,
             contributionsRefundable: 0, contributionsCapital: 0,
             debtRepayments: 0, ownerDraws: 0, loanPayments: 0, balance: 0,
           },
