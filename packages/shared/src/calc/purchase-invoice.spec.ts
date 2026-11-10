@@ -549,19 +549,13 @@ describe('invoiceTotals — anticipo, deuda y comprometido', () => {
     expect(t.comprometido).toBe(134);
   });
 
-  it('C-0006: igual que C-0004, con otra forma de líneas', () => {
-    const t = invoiceTotals(
-      [
-        { quantity: 3, unitPrice: 20 },
-        { quantity: 1, unitPrice: 74 },
-      ],
-      [],
-    );
+  it('C-0006: comprometido 80, sin anticipo ni deuda (nada pagado, nada recibido)', () => {
+    const t = invoiceTotals([{ quantity: 4, unitPrice: 20 }], []);
 
-    expect(t.total).toBe(134);
+    expect(t.total).toBe(80);
     expect(t.anticipo).toBe(0);
     expect(t.deuda).toBe(0);
-    expect(t.comprometido).toBe(134);
+    expect(t.comprometido).toBe(80);
   });
 
   it('pagaste la mitad y llegó todo: produce DEUDA, no anticipo', () => {
@@ -571,6 +565,16 @@ describe('invoiceTotals — anticipo, deuda y comprometido', () => {
     expect(t.deuda).toBe(50);
     expect(t.anticipo).toBe(0);
     expect(t.comprometido).toBe(0);
+  });
+
+  it('deuda, saldo y comprometido DISTINTOS en un solo escenario: total 100, pagado 20, recibido 5', () => {
+    const t = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 5 }], [{ amount: 20 }]);
+
+    expect(t.valorRecibido).toBe(50);
+    expect(t.deuda).toBe(30);
+    expect(t.saldo).toBe(80);
+    expect(t.comprometido).toBe(50);
+    expect(t.anticipo).toBe(0);
   });
 
   it('lo recibido vale a su precio REAL; lo que falta, a lo pedido', () => {
@@ -624,5 +628,45 @@ describe('invoiceTotals — anticipo, deuda y comprometido', () => {
     expect(c1.pedido).toBe(10);
     expect(c1.recibido).toBe(0);
     expect(c1.porRecibir).toBe(10);
+  });
+});
+
+describe('invoiceTotals — deuda + comprometido = saldo', () => {
+  const casos: Array<[string, Parameters<typeof invoiceTotals>[0], number]> = [
+    ['nada pagado, nada recibido', [{ quantity: 2, unitPrice: 67.25 }], 0],
+    ['anticipo (pagado, sin recibir)', [{ quantity: 10, unitPrice: 26, received: 0 }], 140],
+    ['deuda (recibido, poco pagado)', [{ quantity: 10, unitPrice: 10, received: 10 }], 50],
+    ['los tres a la vez', [{ quantity: 10, unitPrice: 10, received: 5 }], 20],
+    [
+      'precio real de la entrega',
+      [{ quantity: 10, unitPrice: 10, received: 4, recepciones: [{ quantity: 4, unitPrice: 12.35 }] }],
+      100,
+    ],
+    ['pagada de más', [{ quantity: 10, unitPrice: 10, received: 3 }], 130],
+    ['pagada exacta', [{ quantity: 3, unitPrice: 19.99, received: 3 }], 59.97],
+  ];
+
+  it.each(casos)('con precios de 2 decimales cuadra: %s', (_nombre, lineas, abono) => {
+    const t = invoiceTotals(lineas, [{ amount: abono }]);
+
+    expect(t.deuda + t.comprometido).toBeCloseTo(t.saldo, 10);
+  });
+
+  /**
+   * ⚠️ COMPORTAMIENTO CONOCIDO, no un error: `toCents` se aplica a cada campo
+   * por separado (como en todos los demás campos de `invoiceTotals`), así que
+   * con precios de MENOS de un centavo el invariante se desvía un centavo.
+   * La app produce precios de 2 decimales, donde cuadra exacto; cambiar el
+   * redondeo solo de estos tres campos sería la inconsistencia. Se fija aquí
+   * para que nadie se sorprenda el día que aparezca.
+   */
+  it('con precios sub-centavo el invariante se desvía un centavo (aceptado)', () => {
+    // total 0,014 · recibido 0,007 · pagado 0
+    const t = invoiceTotals([{ quantity: 2, unitPrice: 0.007, received: 1 }], []);
+
+    expect(t.saldo).toBe(0.01);
+    expect(t.deuda).toBe(0.01);
+    expect(t.comprometido).toBe(0.01);
+    expect(t.deuda + t.comprometido).not.toBe(t.saldo);
   });
 });

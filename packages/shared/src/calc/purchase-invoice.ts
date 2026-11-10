@@ -122,6 +122,24 @@ export interface InvoiceTotals {
 const recibidoDe = (l: InvoiceLineInput): number =>
   Math.min(Math.max(Math.trunc(l.received ?? 0), 0), Math.max(Math.trunc(l.quantity), 0));
 
+/** Lo que cuestan las recepciones de una línea y cuántas unidades cubren. */
+const dineroDeRecepciones = (l: InvoiceLineInput): { cubiertos: number; dinero: Decimal } => {
+  const recibido = recibidoDe(l);
+
+  let cubiertos = 0;
+  let dinero = D(0);
+  for (const r of l.recepciones ?? []) {
+    // `received` sigue siendo la única definición de cuántos llegaron: una
+    // recepción que diga más se recorta, no agranda lo recibido.
+    const unidades = Math.min(Math.max(Math.trunc(r.quantity), 0), recibido - cubiertos);
+    if (unidades <= 0) continue;
+    dinero = dinero.plus(D(unidades).times(Math.max(r.unitPrice, 0)));
+    cubiertos += unidades;
+  }
+
+  return { cubiertos, dinero };
+};
+
 /**
  * LO QUE CUESTA UNA LÍNEA: el precio REAL de lo que ya llegó y el PEDIDO para
  * lo que falta.
@@ -154,24 +172,6 @@ const valorRecibidoDeLinea = (l: InvoiceLineInput): Decimal => {
   const { cubiertos, dinero } = dineroDeRecepciones(l);
 
   return dinero.plus(D(recibidoDe(l) - cubiertos).times(Math.max(l.unitPrice, 0)));
-};
-
-/** Lo que cuestan las recepciones de una línea y cuántas unidades cubren. */
-const dineroDeRecepciones = (l: InvoiceLineInput): { cubiertos: number; dinero: Decimal } => {
-  const recibido = recibidoDe(l);
-
-  let cubiertos = 0;
-  let dinero = D(0);
-  for (const r of l.recepciones ?? []) {
-    // `received` sigue siendo la única definición de cuántos llegaron: una
-    // recepción que diga más se recorta, no agranda lo recibido.
-    const unidades = Math.min(Math.max(Math.trunc(r.quantity), 0), recibido - cubiertos);
-    if (unidades <= 0) continue;
-    dinero = dinero.plus(D(unidades).times(Math.max(r.unitPrice, 0)));
-    cubiertos += unidades;
-  }
-
-  return { cubiertos, dinero };
 };
 
 /**
