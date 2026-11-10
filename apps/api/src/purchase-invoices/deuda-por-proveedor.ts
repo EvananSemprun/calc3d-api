@@ -20,8 +20,20 @@ export interface FacturaParaDeuda {
   supplier: { id: string; name: string } | null;
   /** Fecha de anulación. Una factura anulada **no se debe**. */
   voidedAt: string | null;
-  /** Lo que falta pagar. Nunca negativo (`invoiceTotals` lo recorta en 0). */
-  saldo: number;
+  /**
+   * Lo que **ya te llegó** y todavía no pagaste. Nunca negativo (`invoiceTotals`
+   * lo recorta en 0).
+   *
+   * ⚠️ **No es `saldo`.** `saldo` incluye la mercadería que todavía no llegó, y
+   * eso no se debe: se pidió. Mezclar las dos cosas era decir «debes $334» de
+   * tres facturas sin una sola caja recibida.
+   */
+  deuda: number;
+  /**
+   * Lo pedido, no recibido y no pagado todavía. **No es deuda**: es plata
+   * comprometida a futuro. Nunca negativo.
+   */
+  comprometido: number;
   /**
    * Lo pagado de más que **todavía se puede usar**. **No es deuda negativa**:
    * ver abajo.
@@ -40,10 +52,17 @@ export interface DeudaConProveedor {
   /** `null` = facturas sin proveedor anotado. Se deben igual. */
   supplierId: string | null;
   supplierName: string;
-  /** Σ saldos de sus facturas vigentes. */
+  /** Σ deuda (mercadería recibida sin pagar) de sus facturas vigentes. */
   total: number;
-  /** Cuántas de sus facturas tienen saldo. */
+  /** Cuántas de sus facturas tienen deuda. */
   facturas: number;
+  /**
+   * Σ comprometido de sus facturas vigentes: lo pedido que todavía no llegó.
+   * ⚠️ **NO suma a `total`**: no se debe todavía.
+   */
+  comprometido: number;
+  /** Cuántas de sus facturas tienen algo comprometido. Es **su propio conteo**. */
+  facturasComprometidas: number;
   /**
    * Lo pagado de más, SUMADO APARTE.
    *
@@ -58,11 +77,18 @@ export interface DeudaConProveedor {
 }
 
 export interface DeudaProveedores {
-  /** Un grupo por proveedor con algo pendiente, de mayor deuda a menor. */
+  /**
+   * Un grupo por proveedor con algo pendiente (deuda, compromiso o a favor), de
+   * mayor deuda a menor; a igualdad, de mayor compromiso.
+   */
   groups: DeudaConProveedor[];
   /** Σ de los `total` de los grupos. Es lo que el bloque muestra arriba. */
   total: number;
   aFavor: number;
+  /** Σ de los `comprometido` de los grupos. Va aparte: no es deuda. */
+  comprometido: number;
+  /** Σ de las facturas comprometidas. La cuenta que acompaña a `comprometido`. */
+  facturasComprometidas: number;
 }
 
 /**
@@ -80,10 +106,13 @@ export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedore
     // pagado de más. Es el primer modo de que el número mienta.
     if (f.voidedAt != null) continue;
 
-    const saldo = Math.max(f.saldo, 0);
+    const deuda = Math.max(f.deuda, 0);
+    const comprometido = Math.max(f.comprometido, 0);
     const aFavor = Math.max(f.aFavorDisponible, 0);
-    // Una factura saldada y sin excedente no tiene nada que contar.
-    if (saldo <= 0 && aFavor <= 0) continue;
+    // ⚠️ El guard tiene que admitir el compromiso: una factura recién pedida
+    // vale 0 de deuda y 0 a favor, y sin esta condición se descartaría ANTES de
+    // que nadie la sume como comprometida.
+    if (deuda <= 0 && comprometido <= 0 && aFavor <= 0) continue;
 
     const id = f.supplier?.id ?? null;
     const grupo =
@@ -93,14 +122,22 @@ export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedore
         supplierName: f.supplier?.name ?? SIN_PROVEEDOR,
         total: 0,
         facturas: 0,
+        comprometido: 0,
+        facturasComprometidas: 0,
         aFavor: 0,
         facturasAFavor: 0,
       };
 
-    // Las dos cuentas se suman POR SEPARADO: ver `aFavor` arriba.
-    if (saldo > 0) {
-      grupo.total = toCents(D(grupo.total).plus(saldo));
+    // Las cuentas se suman POR SEPARADO: ver `aFavor` arriba. Cada una lleva su
+    // propio conteo: la cantidad de facturas con deuda NO es la de las
+    // comprometidas, y el Dashboard dice «$X comprometidos en N facturas».
+    if (deuda > 0) {
+      grupo.total = toCents(D(grupo.total).plus(deuda));
       grupo.facturas += 1;
+    }
+    if (comprometido > 0) {
+      grupo.comprometido = toCents(D(grupo.comprometido).plus(comprometido));
+      grupo.facturasComprometidas += 1;
     }
     if (aFavor > 0) {
       grupo.aFavor = toCents(D(grupo.aFavor).plus(aFavor));
@@ -111,14 +148,20 @@ export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedore
   }
 
   const groups = [...porProveedor.values()].sort(
-    // De mayor deuda a menor; a igualdad, por nombre, para que el orden sea
-    // reproducible y la lista no baile entre dos cargas.
-    (a, b) => b.total - a.total || a.supplierName.localeCompare(b.supplierName, 'es'),
+    // De mayor deuda a menor; a igualdad, el de más compromiso (un proveedor solo
+    // con compromiso no queda mezclado al azar con los de total 0) y después por
+    // nombre, para que el orden sea reproducible y la lista no baile entre cargas.
+    (a, b) =>
+      b.total - a.total ||
+      b.comprometido - a.comprometido ||
+      a.supplierName.localeCompare(b.supplierName, 'es'),
   );
 
   return {
     groups,
     total: toCents(groups.reduce((s, g) => s.plus(g.total), D(0))),
     aFavor: toCents(groups.reduce((s, g) => s.plus(g.aFavor), D(0))),
+    comprometido: toCents(groups.reduce((s, g) => s.plus(g.comprometido), D(0))),
+    facturasComprometidas: groups.reduce((n, g) => n + g.facturasComprometidas, 0),
   };
 }

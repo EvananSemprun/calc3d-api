@@ -1671,7 +1671,7 @@ en el repo web: se sobrescribe al sincronizar.
         reclamar. Los dos números se mueven **juntos**: usar $6 baja la deuda de
         la otra factura a 34 y el saldo a favor a 9, y `totals.total` sigue
         siendo la suma de los tres bloques (test en `loans.service.spec.ts`).
-        El **punto de equilibrio no cambia**: sale del mismo `totals.proveedores`
+        El **punto de equilibrio no cambia**: sale del mismo `totals.comprometido`
         y su test lo sigue fijando.
       - **No hay endpoint nuevo**: `GET /purchase-invoices` ya trae cada factura
         con su `aFavorDisponible`, y el rollup por proveedor lo hace el panel con
@@ -1827,7 +1827,7 @@ en el repo web: se sobrescribe al sincronizar.
       meses; un compromiso puntual no es uno de ellos. Va **al lado** del
       número, con `equilibrioYCompromiso()` (`shared/calc/breakeven.ts`), que
       devuelve los niveles **calculados sin el compromiso** más el monto, la
-      cantidad de facturas y un `mostrar`. El monto es `totals.proveedores` de
+      cantidad de facturas y un `mostrar`. El monto es `totals.comprometido` (desde la fase B; ya NO `totals.proveedores`, que es solo lo recibido y no pagado) de
       `GET /loans/overview` —la cuarta forma de contar lo mismo no existe— y lo
       pagado **de más** no se resta (no compensa; decisión de la Tarea 3).
       Regresión: `breakeven-compromiso.spec.ts` (el equilibrio con y sin

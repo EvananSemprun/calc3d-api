@@ -211,7 +211,8 @@ export class LoansService {
    * Son cosas distintas que comparten la palabra "deuda": lo que le debes al
    * **prestamista** (capital menos pagos), lo que el negocio le debe al
    * **propietario** por lo que puso (equipos, diseñador, aportes) y lo que le
-   * debes a los **proveedores** (facturas de compra sin pagar). Los pagos por
+   * debes a los **proveedores** (mercadería que ya recibiste sin pagar; lo pedido y no
+   * recibido va aparte, como `comprometido`). Los pagos por
    * conciliación caen en la segunda, que es donde de verdad se aplican.
    *
    * ⚠️ Las obligaciones se piden al **mismo servicio que usa Caja** y las
@@ -252,6 +253,11 @@ export class LoansService {
         prestamista,
         propietario,
         proveedores: proveedores.total,
+        /**
+         * Lo pedido y no recibido. ⚠️ **NO entra en `total`**: no se debe todavía.
+         * Es lo que el Dashboard muestra al lado del punto de equilibrio.
+         */
+        comprometido: proveedores.comprometido,
         total: toCents(D(prestamista).plus(propietario).plus(proveedores.total)),
       },
     };

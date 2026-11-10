@@ -130,7 +130,7 @@ const FACTURA_CRUDA = {
   payments: [] as Record<string, unknown>[],
 };
 
-const lineaCruda = (quantity: number, unitPrice: number) => ({
+const lineaCruda = (quantity: number, unitPrice: number, received = 0) => ({
   id: `linea-${quantity}x${unitPrice}`,
   materialId: null,
   material: null,
@@ -140,7 +140,7 @@ const lineaCruda = (quantity: number, unitPrice: number) => ({
   nuevoTipo: null,
   quantity,
   unitPrice,
-  received: 0,
+  received,
   /**
    * Las recepciones de la línea: sus gastos, que el `include` de Compras trae.
    * Acá siempre vacías porque nada llegó todavía — y una línea sin recibir vale
@@ -390,7 +390,7 @@ describe('LoansService — las tres deudas', () => {
     // Propietario: 100 (lo que devuelve el CashService falso).
     // Proveedores: una factura de 2 × 12.50 = 25, con un abono de 10 → 15.
     const facturas = facturasFalsas([
-      facturaCruda({ lines: [lineaCruda(2, 12.5)], payments: [abonoCrudo(10)] }),
+      facturaCruda({ lines: [lineaCruda(2, 12.5, 2)], payments: [abonoCrudo(10)] }),
     ]);
 
     const r = await service(p, cashFalso(), facturas).overview(ORG);
@@ -407,11 +407,11 @@ describe('LoansService — las tres deudas', () => {
 
   it('el bloque de proveedores sale de las facturas, proveedor por proveedor', async () => {
     const facturas = facturasFalsas([
-      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40)], payments: [] }),
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40, 1)], payments: [] }),
       facturaCruda({
         id: 'f2',
         supplier: { id: 'prov-b', name: 'Filamentos del Sur' },
-        lines: [lineaCruda(1, 60)],
+        lines: [lineaCruda(1, 60, 1)],
         payments: [abonoCrudo(20)],
       }),
     ]);
@@ -441,10 +441,10 @@ describe('LoansService — las tres deudas', () => {
 describe('LoansService — las dos formas de que el número mienta', () => {
   it('una factura ANULADA no se debe: no entra en el bloque ni en el total', async () => {
     const facturas = facturasFalsas([
-      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40)] }),
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 40, 1)] }),
       facturaCruda({
         id: 'f2',
-        lines: [lineaCruda(1, 1000)],
+        lines: [lineaCruda(1, 1000, 1)],
         voidedAt: d('2026-10-09'),
         voidReason: 'cargada dos veces',
       }),
@@ -465,10 +465,10 @@ describe('LoansService — las dos formas de que el número mienta', () => {
    */
   it('un abono ANULADO sí se vuelve a deber', async () => {
     const vigente = facturasFalsas([
-      facturaCruda({ lines: [lineaCruda(1, 50)], payments: [abonoCrudo(30)] }),
+      facturaCruda({ lines: [lineaCruda(1, 50, 1)], payments: [abonoCrudo(30)] }),
     ]);
     const anulado = facturasFalsas([
-      facturaCruda({ lines: [lineaCruda(1, 50)], payments: [abonoCrudo(30, d('2026-10-10'))] }),
+      facturaCruda({ lines: [lineaCruda(1, 50, 1)], payments: [abonoCrudo(30, d('2026-10-10'))] }),
     ]);
 
     const conAbono = await service(baseFalsa(), cashFalso(), vigente).overview(ORG);
@@ -486,8 +486,8 @@ describe('LoansService — las dos formas de que el número mienta', () => {
    */
   it('lo pagado de más se muestra aparte y NO compensa', async () => {
     const facturas = facturasFalsas([
-      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 50)] }),
-      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 10)], payments: [abonoCrudo(30)] }),
+      facturaCruda({ id: 'f1', lines: [lineaCruda(1, 50, 1)] }),
+      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 10, 1)], payments: [abonoCrudo(30)] }),
     ]);
 
     const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
@@ -503,7 +503,7 @@ describe('LoansService — las dos formas de que el número mienta', () => {
 describe('LoansService — el tercer bloque es de ESTA organización', () => {
   it('las facturas de otra organización no entran en la deuda', async () => {
     const facturas = facturasFalsas([
-      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999)] }),
+      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999, 1)] }),
     ]);
 
     const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
@@ -516,7 +516,7 @@ describe('LoansService — el tercer bloque es de ESTA organización', () => {
     // Sin este hermano, el test de arriba pasaría aunque el bloque devolviera
     // siempre vacío — o sea, con y sin el filtro por organización.
     const facturas = facturasFalsas([
-      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999)] }),
+      facturaCruda({ id: 'f-ajena', organizationId: OTRA, lines: [lineaCruda(1, 999, 1)] }),
     ]);
 
     const r = await service(baseFalsa(), cashFalso(), facturas).overview(OTRA);
@@ -539,10 +539,10 @@ describe('LoansService — el saldo a favor usado', () => {
     facturasFalsas([
       facturaCruda({
         id: 'f1',
-        lines: [lineaCruda(1, 40)],
+        lines: [lineaCruda(1, 40, 1)],
         payments: usado ? [abonoCrudo(usado, null, 'f2')] : [],
       }),
-      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 85)], payments: [abonoCrudo(100)] }),
+      facturaCruda({ id: 'f2', lines: [lineaCruda(1, 85, 1)], payments: [abonoCrudo(100)] }),
     ]);
 
   it('sin usarlo: debe 40 y tiene 15 a favor', async () => {
@@ -665,5 +665,68 @@ describe('LoansService — cerrar un préstamo', () => {
 
     expect(l.closedAt).toBeNull();
     expect(p._tablas.loan).toHaveLength(1);
+  });
+});
+
+/**
+ * ⚠️ **LO PEDIDO Y NO RECIBIDO YA NO ES DEUDA** (fase B, tarea 2).
+ *
+ * Las tres facturas abiertas de producción valían $334 en «A proveedores».
+ * Nada llegó: ahora son $0 de deuda y $334 comprometidos. Pasa por
+ * `invoiceTotals` de verdad, igual que el resto del bloque.
+ */
+describe('LoansService — deuda real y comprometido', () => {
+  const abiertas = () =>
+    facturasFalsas([
+      // C-0001: 260 pedidos, 140 pagados, nada recibido → comprometido 120.
+      facturaCruda({ id: 'c1', lines: [lineaCruda(1, 260)], payments: [abonoCrudo(140)] }),
+      // C-0004: 134, nada pagado ni recibido.
+      facturaCruda({ id: 'c4', lines: [lineaCruda(1, 134)] }),
+      // C-0006: 80, nada pagado ni recibido.
+      facturaCruda({
+        id: 'c6',
+        supplier: { id: 'prov-b', name: 'Filamentos del Sur' },
+        lines: [lineaCruda(1, 80)],
+      }),
+    ]);
+
+  it('con las tres facturas abiertas, «A proveedores» da 0', async () => {
+    const r = await service(baseFalsa(), cashFalso(), abiertas()).overview(ORG);
+
+    expect(r.totals.proveedores).toBe(0);
+    expect(r.suppliers.total).toBe(0);
+  });
+
+  it('«Comprometido» da 334, repartido 120 + 134 + 80', async () => {
+    const r = await service(baseFalsa(), cashFalso(), abiertas()).overview(ORG);
+
+    expect(r.totals.comprometido).toBe(334);
+    expect(r.suppliers.comprometido).toBe(334);
+    expect(r.suppliers.facturasComprometidas).toBe(3);
+    const a = r.suppliers.groups.find((g) => g.supplierId === 'prov-a');
+    expect(a?.comprometido).toBe(254); // 120 + 134
+    expect(r.suppliers.groups.find((g) => g.supplierId === 'prov-b')?.comprometido).toBe(80);
+  });
+
+  it('el total sigue siendo la suma de sus TRES bloques: el comprometido no entra', async () => {
+    const r = await service(baseFalsa(), cashFalso(), abiertas()).overview(ORG);
+
+    // 0 prestamista + 100 propietario + 0 proveedores. Los 334 NO se deben todavía.
+    expect(r.totals.total).toBe(100);
+    expect(r.totals.total).toBe(
+      r.totals.prestamista + r.totals.propietario + r.totals.proveedores,
+    );
+  });
+
+  it('lo que llegó sin pagar es deuda y lo que falta llegar sigue comprometido', async () => {
+    // 10 pedidos a $5 = 50; llegaron 4 (valen 20), se pagaron 8 → deuda 12, comprometido 30.
+    const facturas = facturasFalsas([
+      facturaCruda({ lines: [lineaCruda(10, 5, 4)], payments: [abonoCrudo(8)] }),
+    ]);
+
+    const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
+
+    expect(r.totals.proveedores).toBe(12);
+    expect(r.totals.comprometido).toBe(30);
   });
 });
