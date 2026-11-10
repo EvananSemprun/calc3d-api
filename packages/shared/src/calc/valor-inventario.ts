@@ -11,7 +11,7 @@ import { D, sum, toMoney } from './money';
  *
  * ⚠️ El precio que entra acá es el de la ÚLTIMA compra de esa ficha, así que
  * esto es COSTO DE REPOSICIÓN ("cuánto costaría volver a tener esto"), no lo
- * que se pagó en su momento. Para saber con cuánto material contás, sirve;
+ * que se pagó en su momento. Para saber con cuánto material cuentas, sirve;
  * como valuación contable histórica, no es lo mismo.
  */
 

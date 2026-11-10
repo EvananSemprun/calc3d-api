@@ -1,7 +1,7 @@
 import { deudaPorProveedor, type FacturaParaDeuda } from './deuda-por-proveedor';
 
 /**
- * LO QUE LE DEBÉS A CADA PROVEEDOR — números a mano.
+ * LO QUE LE DEBES A CADA PROVEEDOR — números a mano.
  *
  * Todos los montos de este archivo están elegidos para que la suma se pueda
  * hacer de cabeza: si un día el agrupador pierde o duplica una factura, el
@@ -106,13 +106,13 @@ describe('deudaPorProveedor — una factura ANULADA no se debe', () => {
 });
 
 describe('deudaPorProveedor — lo pagado de más NO se compensa', () => {
-  it('no resta de lo que debés en otra factura del MISMO proveedor', () => {
+  it('no resta de lo que debes en otra factura del MISMO proveedor', () => {
     const r = deudaPorProveedor([
       factura({ supplier: PROV_A, saldo: 50 }),
       factura({ supplier: PROV_A, aFavorDisponible: 20 }),
     ]);
 
-    // ⚠️ Le debés 50, no 30. Los 20 de más son otra cuenta: restarlos
+    // ⚠️ Le debes 50, no 30. Los 20 de más son otra cuenta: restarlos
     // inventaría un pago que nunca se hizo contra esa factura.
     expect(r.groups[0].total).toBe(50);
     expect(r.groups[0].aFavor).toBe(20);
@@ -121,7 +121,7 @@ describe('deudaPorProveedor — lo pagado de más NO se compensa', () => {
     expect(r.aFavor).toBe(20);
   });
 
-  it('tampoco resta de lo que debés a OTRO proveedor', () => {
+  it('tampoco resta de lo que debes a OTRO proveedor', () => {
     const r = deudaPorProveedor([
       factura({ supplier: PROV_A, aFavorDisponible: 1000 }),
       factura({ supplier: PROV_B, saldo: 60 }),
@@ -182,7 +182,7 @@ describe('deudaPorProveedor — a favor es lo DISPONIBLE, no lo pagado de más',
     // La factura sigue diciendo que pagaste 15 de más; disponible ya es 0.
     const r = deudaPorProveedor([factura({ supplier: PROV_A, aFavorDisponible: 0 })]);
 
-    // No hay nada que decirle al proveedor: ni le debés ni te debe.
+    // No hay nada que decirle al proveedor: ni le debes ni te debe.
     expect(r.aFavor).toBe(0);
     expect(r.groups).toHaveLength(0);
   });

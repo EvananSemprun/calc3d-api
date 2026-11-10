@@ -228,7 +228,7 @@ export class ExpensesService {
     // rollos no hay precio que calcular, y aceptarla dejaba entrar uno a mano.
     const rollos = expense.quantity ?? 0;
     if (link.kind === 'material' && rollos <= 0) {
-      throw new BadRequestException('Indicá cuántos rollos compraste');
+      throw new BadRequestException('Indica cuántos rollos compraste');
     }
     const schemas = {
       material: MaterialSchema,

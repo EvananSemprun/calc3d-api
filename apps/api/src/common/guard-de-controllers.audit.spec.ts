@@ -115,8 +115,8 @@ describe('Ningún controller queda abierto por descuido', () => {
       if (protegido || PUBLICOS[ctrl.clase]) return;
       throw new Error(
         `${ctrl.clase} (${ctrl.archivo}, ruta ${ctrl.ruta}) no tiene JwtAuthGuard.\n` +
-          'Si debe exigir sesión, agregale @UseGuards(JwtAuthGuard).\n' +
-          'Si es público a propósito, agregalo a PUBLICOS en este archivo con su motivo.',
+          'Si debe exigir sesión, agrégale @UseGuards(JwtAuthGuard).\n' +
+          'Si es público a propósito, agrégalo a PUBLICOS en este archivo con su motivo.',
       );
     },
   );

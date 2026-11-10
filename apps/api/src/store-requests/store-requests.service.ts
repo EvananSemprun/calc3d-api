@@ -205,7 +205,7 @@ export class StoreRequestsService {
       for (const nombre of Object.keys(item.options)) {
         if (!conocidos.has(nombre)) {
           throw new BadRequestException(
-            `"${product.name}" no tiene la opción "${nombre}". Recargá la página y probá de nuevo.`,
+            `"${product.name}" no tiene la opción "${nombre}". Recarga la página y prueba de nuevo.`,
           );
         }
       }

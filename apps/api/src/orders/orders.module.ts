@@ -190,7 +190,7 @@ export class OrdersService {
       const moneda = await this.rateForLabel(organizationId, dto.currencyLabel);
       if (!moneda) {
         throw new BadRequestException(
-          `Ya no existe la tasa "${dto.currencyLabel}". Cargala en Configuración → Moneda y volvé a intentar.`,
+          `Ya no existe la tasa "${dto.currencyLabel}". Cárgala en Configuración → Moneda y vuelve a intentar.`,
         );
       }
       await this.prisma.payment.create({

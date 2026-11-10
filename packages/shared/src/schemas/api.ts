@@ -347,7 +347,7 @@ export interface CatalogOptionView {
   /**
    * `null` = el valor está EN USO en alguna ficha pero no es una fila de la
    * lista administrada (típico de lo que entró por el importador del Excel).
-   * Se ofrece igual —si no, el desplegable escondería los tipos que ya usás y
+   * Se ofrece igual —si no, el desplegable escondería los tipos que ya usas y
    * los volverías a tipear, creando variantes— pero no se puede borrar: no hay
    * fila que borrar, y el valor lo sigue usando una ficha.
    */
@@ -747,7 +747,7 @@ export type ExpenseWithDefinitionDto = z.infer<typeof ExpenseWithDefinitionSchem
 export const PaymentFrequencySchema = z.enum(['WEEKLY', 'BIWEEKLY', 'MONTHLY']);
 
 export const LoanCreateSchema = z.object({
-  name: z.string().min(1, 'Ponele un nombre al préstamo'),
+  name: z.string().min(1, 'Ponle un nombre al préstamo'),
   principal: z.number().positive('El capital tiene que ser mayor que cero'),
   /**
    * La cuota OBJETIVO, en la frecuencia de abajo. Es lo que el dueño se propone
@@ -807,7 +807,7 @@ export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
 
 /** Anular NO borra: el pago queda en el historial y el saldo se recalcula. */
 export const LoanPaymentVoidSchema = z.object({
-  reason: z.string().trim().min(1, 'Decí por qué se anula').max(200),
+  reason: z.string().trim().min(1, 'Di por qué se anula').max(200),
 });
 export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 
@@ -964,7 +964,7 @@ export const CashAccountUpsertSchema = z
     active: z.boolean().default(true),
   })
   .refine((v) => !v.shared || !!v.sharedWithId, {
-    message: 'Decí con quién se comparte la cuenta',
+    message: 'Di con quién se comparte la cuenta',
     path: ['sharedWithId'],
   })
   .refine((v) => !v.autoAttributeShortfall || v.shared, {
@@ -1043,7 +1043,7 @@ export type PrinterReadingUpsertDto = z.infer<typeof PrinterReadingUpsertSchema>
 
 /** Qué ficha nace cuando la línea pide algo que todavía no está en el catálogo. */
 /**
- * QUÉ nace al recibir una línea que pide algo que todavía no tenés.
+ * QUÉ nace al recibir una línea que pide algo que todavía no tienes.
  *
  * ⚠️ `COMPONENT` entró el 2026-10-20 con una factura real que traía una placa
  * de impresión. Sin él, las únicas salidas eran dejar la línea fuera —y la
@@ -1099,7 +1099,7 @@ export const PurchaseInvoiceLineSchema = z
     nuevaMarca: z.string().trim().min(1).optional().nullable(),
     nuevoTipoFilamento: z.string().trim().min(1).optional().nullable(),
     nuevoColor: z.string().trim().min(1).optional().nullable(),
-    quantity: z.number().int().positive('Pedí al menos uno'),
+    quantity: z.number().int().positive('Pide al menos uno'),
     unitPrice: z.number().min(0, 'El precio no puede ser negativo'),
     /**
      * RECARGA (sin carrete) o rollo CON CARRETE, dicho por el proveedor.
@@ -1120,20 +1120,20 @@ export const PurchaseInvoiceLineSchema = z
   )
   .refine(
     (l) => !!l.nombreNuevo === !!l.nuevoTipo,
-    'Si pedís algo que todavía no tenés, decí si es filamento, impresora o insumo: la ficha nace al recibirlo',
+    'Si pides algo que todavía no tienes, di si es filamento, impresora o insumo: la ficha nace al recibirlo',
   )
   /**
    * ⚠️ **Un filamento nuevo SIN tipo no entra.** Es la guarda que impide que la
    * ficha nazca muda: sin tipo queda fuera de `preciosPorTipo` y la calculadora
    * cotiza sin contar lo que costó ese rollo — un desfase que no se ve. Cuando
-   * cargás la factura ya sabés qué pediste, así que no es una molestia: es el
+   * cargas la factura ya sabes qué pediste, así que no es una molestia: es el
    * único momento en que el dato está a mano.
    *
    * Solo para `MATERIAL`: una impresora o un insumo no tienen tipo de filamento.
    */
   .refine(
     (l) => !(l.nombreNuevo && l.nuevoTipo === 'MATERIAL') || !!l.nuevoTipoFilamento,
-    'Decí de qué tipo es el filamento nuevo (PLA Basic, PETG…): sin eso la calculadora no puede usarlo para cotizar',
+    'Di de qué tipo es el filamento nuevo (PLA Basic, PETG…): sin eso la calculadora no puede usarlo para cotizar',
   )
   /**
    * La otra mitad: marca, tipo y color describen una FICHA QUE NACE. En una
@@ -1201,7 +1201,7 @@ export type PurchaseInvoicePaymentDto = z.infer<typeof PurchaseInvoicePaymentSch
 
 /** Anular pide motivo: un abono anulado sin explicación es un agujero. */
 export const PurchaseVoidSchema = z.object({
-  reason: z.string().trim().min(1, 'Decí por qué se anula'),
+  reason: z.string().trim().min(1, 'Di por qué se anula'),
   /**
    * EL SEGUNDO SÍ, pasados los 3 días desde que se cargó (2026-11-07).
    *

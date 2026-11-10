@@ -85,7 +85,7 @@ export class ObjectStorageService {
   private require(): S3Client {
     if (!this.client) {
       throw new ServiceUnavailableException(
-        'El almacenamiento de fotos no está configurado. Cargá las credenciales de R2 en el servidor.',
+        'El almacenamiento de fotos no está configurado. Carga las credenciales de R2 en el servidor.',
       );
     }
     return this.client;

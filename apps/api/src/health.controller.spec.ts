@@ -2,7 +2,7 @@
  * `/api/health` TIENE QUE DECIR QUÉ VERSIÓN ESTÁ SIRVIENDO.
  *
  * Devolvía `{ ok, ts }`, y con eso no hay forma de saber si el despliegue que
- * acabás de empujar ya está arriba: el de la tarde del 2026-10-10 se
+ * acabas de empujar ya está arriba: el de la tarde del 2026-10-10 se
  * "verificó" esperando ocho minutos por reloj, que es suponer con cara de
  * comprobar. `ts` no sirve para eso — cambia en cada request, con la versión
  * vieja o con la nueva.

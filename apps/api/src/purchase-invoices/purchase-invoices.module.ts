@@ -372,7 +372,7 @@ export class PurchaseInvoicesService {
     });
     if (!ya) return;
     throw new BadRequestException(
-      `Ese proveedor ya tiene la factura "${reference}": es la compra ${codigoDeCompra(ya.code)}, del ${ya.date.toISOString().slice(0, 10)}. Si es otra compra distinta, cambiale el número; si es la misma, corregila en vez de cargarla de nuevo.`,
+      `Ese proveedor ya tiene la factura "${reference}": es la compra ${codigoDeCompra(ya.code)}, del ${ya.date.toISOString().slice(0, 10)}. Si es otra compra distinta, cámbiale el número; si es la misma, corrígela en vez de cargarla de nuevo.`,
     );
   }
 
@@ -410,7 +410,7 @@ export class PurchaseInvoicesService {
     const recibidas = actual.lines.filter((l) => l.received > 0);
     if (recibidas.length) {
       throw new BadRequestException(
-        `Ya recibiste ${recibidas.length} línea(s) de esta factura: corregir las líneas dejaría esas compras colgando. Deshacé esas recepciones ("Deshacer recepción", en cada línea) y después corregila.`,
+        `Ya recibiste ${recibidas.length} línea(s) de esta factura: corregir las líneas dejaría esas compras colgando. Deshaz esas recepciones ("Deshacer recepción", en cada línea) y después corrígela.`,
       );
     }
     await this.validarReferencias(organizationId, dto);
@@ -457,7 +457,7 @@ export class PurchaseInvoicesService {
     const ms = cargadoEl instanceof Date ? cargadoEl.getTime() : Number.NaN;
     const dias = Number.isFinite(ms) ? Math.floor((Date.now() - ms) / 86_400_000) : null;
     throw new BadRequestException(
-      `${que} ${dias == null ? 'no se cargó hoy' : `se cargó hace ${dias} días`}. Pasados ${DIAS_PARA_ANULAR_SIN_CONFIRMAR}, anular pide una confirmación extra: volvé a intentarlo confirmando.`,
+      `${que} ${dias == null ? 'no se cargó hoy' : `se cargó hace ${dias} días`}. Pasados ${DIAS_PARA_ANULAR_SIN_CONFIRMAR}, anular pide una confirmación extra: vuelve a intentarlo confirmando.`,
     );
   }
 
@@ -470,7 +470,7 @@ export class PurchaseInvoicesService {
       // CERRADA: un gasto nacido de una factura no se toca desde ahí. Un
       // mensaje que manda a una puerta cerrada es peor que no tener mensaje.
       throw new BadRequestException(
-        `Esta factura tiene ${recibidas.length} línea(s) con mercadería recibida. Deshacé esas recepciones ("Deshacer recepción", en cada línea) y después anulala.`,
+        `Esta factura tiene ${recibidas.length} línea(s) con mercadería recibida. Deshaz esas recepciones ("Deshacer recepción", en cada línea) y después anúlala.`,
       );
     }
     this.exigirConfirmacion(f.createdAt, dto, 'Esta factura');
@@ -485,11 +485,11 @@ export class PurchaseInvoicesService {
   async remove(organizationId: string, id: string) {
     const f = await this.mia(organizationId, id);
     if (f.payments.length) {
-      throw new BadRequestException('Tiene abonos: anulala en vez de borrarla.');
+      throw new BadRequestException('Tiene abonos: anúlala en vez de borrarla.');
     }
     if (f.lines.some((l) => l.received > 0)) {
       throw new BadRequestException(
-        'Tiene mercadería recibida: deshacé esas recepciones ("Deshacer recepción", en cada línea) y después borrala.',
+        'Tiene mercadería recibida: deshaz esas recepciones ("Deshacer recepción", en cada línea) y después bórrala.',
       );
     }
     await this.prisma.purchaseInvoice.delete({ where: { id } });
@@ -579,13 +579,13 @@ export class PurchaseInvoicesService {
 
     const mensajes: Record<Exclude<MotivoDeRechazo, 'ORIGEN_DESCONOCIDO'>, string> = {
       MISMA_FACTURA:
-        'Una factura no se paga con su propio saldo a favor: ese sobrepago ya es de ella. Elegí otra factura del mismo proveedor.',
+        'Una factura no se paga con su propio saldo a favor: ese sobrepago ya es de ella. Elige otra factura del mismo proveedor.',
       ORIGEN_ANULADO: 'Esa factura está anulada, así que su saldo a favor ya no existe.',
       SIN_PROVEEDOR:
-        'Para usar un saldo a favor las dos facturas necesitan el proveedor anotado: sin nombre no hay cómo saber que es la misma persona. Anotalo y volvé a intentar.',
+        'Para usar un saldo a favor las dos facturas necesitan el proveedor anotado: sin nombre no hay cómo saber que es la misma persona. Anótalo y vuelve a intentar.',
       OTRO_PROVEEDOR:
         'Ese saldo a favor es de otro proveedor: lo que te debe uno no le sirve al otro.',
-      SIN_SALDO: `Esa factura tiene ${disponible.toFixed(2)} de saldo a favor y estás usando ${monto.toFixed(2)}. Bajá el monto o abonalo con plata.`,
+      SIN_SALDO: `Esa factura tiene ${disponible.toFixed(2)} de saldo a favor y estás usando ${monto.toFixed(2)}. Baja el monto o abónalo con plata.`,
     };
     throw new BadRequestException(mensajes[rechazo]);
   }
@@ -630,7 +630,7 @@ export class PurchaseInvoicesService {
     if (pendiente <= 0) throw new BadRequestException('Esa línea ya llegó entera');
     if (dto.quantity > pendiente) {
       throw new BadRequestException(
-        `Pediste ${linea.quantity} y ya recibiste ${linea.received}: no podés recibir ${dto.quantity} más.`,
+        `Pediste ${linea.quantity} y ya recibiste ${linea.received}: no puedes recibir ${dto.quantity} más.`,
       );
     }
 
@@ -654,7 +654,7 @@ export class PurchaseInvoicesService {
     // un script. Antes de la transacción: el 400 sale sin haber escrito nada.
     if (!linea.materialId && !linea.printerId && !linea.componentId && !linea.nuevoTipo) {
       throw new BadRequestException(
-        'Esa línea pide algo que todavía no tenés pero no dice si es filamento, impresora o insumo. Elegilo en la factura antes de recibir.',
+        'Esa línea pide algo que todavía no tienes pero no dice si es filamento, impresora o insumo. Elígelo en la factura antes de recibir.',
       );
     }
 

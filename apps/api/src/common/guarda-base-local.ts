@@ -24,7 +24,7 @@ export function exigirBaseLocal(url: string | undefined = process.env.DATABASE_U
   throw new Error(
     `El catálogo sintético se negó a correr: DATABASE_URL apunta ${donde}, que no es una base local ` +
       `(localhost, 127.0.0.1 o ::1). Este seed crea 1.000 productos VISIBLES y, en una base real, ` +
-      `terminarían publicados en la tienda. Apuntá DATABASE_URL a tu Postgres local y volvé a correrlo.`,
+      `terminarían publicados en la tienda. Apunta DATABASE_URL a tu Postgres local y vuelve a correrlo.`,
   );
 }
 

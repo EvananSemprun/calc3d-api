@@ -91,7 +91,7 @@ export class CashAccountsService {
     });
     if (conciliaciones > 0) {
       throw new ConflictException(
-        `${acc.name} tiene ${conciliaciones} conciliación(es). Desactivala en vez de borrarla.`,
+        `${acc.name} tiene ${conciliaciones} conciliación(es). Desactívala en vez de borrarla.`,
       );
     }
     const cuantas = await this.prisma.cashAccount.count({ where: { organizationId } });

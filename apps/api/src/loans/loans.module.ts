@@ -181,7 +181,7 @@ const fecha = (v?: string | null) => (v ? new Date(v) : null);
 function exigirSaldado(closedAt: string | null | undefined, saldo: number, nombre: string) {
   if (!closedAt || saldo <= 0) return;
   throw new ConflictException(
-    `Todavía debés $${saldo} de “${nombre}”: registrá el pago que falta (o corregí el capital) antes de cerrarlo. ` +
+    `Todavía debes $${saldo} de “${nombre}”: registra el pago que falta (o corrige el capital) antes de cerrarlo. ` +
       'Cerrarlo debiendo saca esa deuda del punto de equilibrio y de Caja como si estuviera pagada.',
   );
 }
@@ -208,10 +208,10 @@ export class LoansService {
   /**
    * LAS TRES DEUDAS de la pantalla.
    *
-   * Son cosas distintas que comparten la palabra "deuda": lo que le debés al
+   * Son cosas distintas que comparten la palabra "deuda": lo que le debes al
    * **prestamista** (capital menos pagos), lo que el negocio le debe al
    * **propietario** por lo que puso (equipos, diseñador, aportes) y lo que le
-   * debés a los **proveedores** (facturas de compra sin pagar). Los pagos por
+   * debes a los **proveedores** (facturas de compra sin pagar). Los pagos por
    * conciliación caen en la segunda, que es donde de verdad se aplican.
    *
    * ⚠️ Las obligaciones se piden al **mismo servicio que usa Caja** y las
@@ -245,7 +245,7 @@ export class LoansService {
         total: propietario,
         applicationOrder: caja.applicationOrder,
       },
-      /** Lo que le debés a cada proveedor. La GESTIÓN de cada factura vive en Compras. */
+      /** Lo que le debes a cada proveedor. La GESTIÓN de cada factura vive en Compras. */
       suppliers: proveedores,
       /** Los tres bloques y su suma. El panel los muestra, no los calcula. */
       totals: {

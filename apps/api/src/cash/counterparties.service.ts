@@ -98,7 +98,7 @@ export class CounterpartiesService {
     // Poner por defecto una desactivada deja la caja atribuyéndole la deuda a
     // alguien que el dueño dio de baja.
     if (!cp.active) {
-      throw new ConflictException(`${cp.name} está desactivada: activala antes de ponerla por defecto.`);
+      throw new ConflictException(`${cp.name} está desactivada: actívala antes de ponerla por defecto.`);
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.counterparty.updateMany({
@@ -119,12 +119,12 @@ export class CounterpartiesService {
     ]);
     if (movimientos > 0) {
       throw new ConflictException(
-        `${cp.name} tiene ${movimientos} movimiento(s) de caja. Desactivala en vez de borrarla.`,
+        `${cp.name} tiene ${movimientos} movimiento(s) de caja. Desactívala en vez de borrarla.`,
       );
     }
     if (cuentas > 0) {
       throw new ConflictException(
-        `${cp.name} es con quien se comparte una cuenta. Cambiá eso antes de borrarla.`,
+        `${cp.name} es con quien se comparte una cuenta. Cambia eso antes de borrarla.`,
       );
     }
     if (cp.kind === 'OWNER') {

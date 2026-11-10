@@ -382,7 +382,7 @@ export class StoreService {
     });
     if (hijas > 0) {
       throw new BadRequestException(
-        `La categoría tiene ${hijas} ${hijas === 1 ? 'subcategoría' : 'subcategorías'}: movelas o borralas antes`,
+        `La categoría tiene ${hijas} ${hijas === 1 ? 'subcategoría' : 'subcategorías'}: muévelas o bórralas antes`,
       );
     }
     // Las fichas quedan sin categoría (SetNull), no se borran con ella.

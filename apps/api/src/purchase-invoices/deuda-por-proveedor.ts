@@ -1,7 +1,7 @@
 import { D, toCents } from '@calc3d/shared';
 
 /**
- * LO QUE LE DEBÉS A CADA PROVEEDOR, derivado de sus facturas.
+ * LO QUE LE DEBES A CADA PROVEEDOR, derivado de sus facturas.
  *
  * ⚠️ **No se persiste nada.** Igual que el saldo de un préstamo o la deuda con
  * una contraparte, esto se DERIVA de las facturas cada vez que se pregunta. Un

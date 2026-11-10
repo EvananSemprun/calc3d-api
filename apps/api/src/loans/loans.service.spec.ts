@@ -452,7 +452,7 @@ describe('LoansService — las dos formas de que el número mienta', () => {
 
     const r = await service(baseFalsa(), cashFalso(), facturas).overview(ORG);
 
-    // Los $1000 anulados no existen: le debés 40.
+    // Los $1000 anulados no existen: le debes 40.
     expect(r.suppliers.total).toBe(40);
     expect(r.totals.proveedores).toBe(40);
     expect(r.totals.total).toBe(140);
@@ -481,7 +481,7 @@ describe('LoansService — las dos formas de que el número mienta', () => {
   });
 
   /**
-   * ⚠️ **Lo pagado DE MÁS no es deuda negativa.** No resta de lo que debés en
+   * ⚠️ **Lo pagado DE MÁS no es deuda negativa.** No resta de lo que debes en
    * otra factura ni baja el total de la pantalla: se muestra aparte.
    */
   it('lo pagado de más se muestra aparte y NO compensa', async () => {

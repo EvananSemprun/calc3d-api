@@ -400,7 +400,7 @@ export interface CashChainCuts {
  * EL TRAMO DEL MEDIO NO PUEDE COMERSE LO QUE VINO DESPUÉS (2026-10-10).
  *
  * La cadena usaba el saldo de **HOY** como extremo derecho, siempre. Con el mes
- * en curso está bien; con un rango ya cerrado miente: elegís septiembre y dice
+ * en curso está bien; con un rango ya cerrado miente: eliges septiembre y dice
  * "venías con $X al 31/8 · en el rango $Y", con octubre entero metido en ese Y.
  *
  * ⚠️ El rango ABIERTO (el que termina hoy o más adelante) corta en `null`, o

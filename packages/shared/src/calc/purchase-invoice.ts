@@ -66,7 +66,7 @@ export interface InvoiceTotals {
   /**
    * Lo pagado DE MÁS, si lo hay. Un abono de más es plata que igual salió de
    * la caja, así que no se puede esconder restándolo del saldo: ahí quedaría
-   * un saldo negativo que se lee como "la factura te debe a vos", y lo que
+   * un saldo negativo que se lee como "la factura te debe a ti", y lo que
    * pasó es que pagaste de más o la factura está mal cargada.
    */
   aFavor: number;

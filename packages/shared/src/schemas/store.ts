@@ -100,7 +100,7 @@ export const StoreOptionGroupSchema = z.object({
   required: z.boolean().default(false),
   /** Marca el grupo cuyas opciones definen la foto de la ficha. A lo sumo uno por producto. */
   drivesPhoto: z.boolean().default(false),
-  options: z.array(StoreOptionSchema).min(1, 'Agregá al menos una opción').max(40),
+  options: z.array(StoreOptionSchema).min(1, 'Agrega al menos una opción').max(40),
 });
 export type StoreOptionGroupDto = z.infer<typeof StoreOptionGroupSchema>;
 
@@ -190,7 +190,7 @@ const StoreProductFields = z.object({
     .string()
     .max(24)
     .refine((v) => v.trim().toLowerCase() !== 'nuevo', {
-      message: '«Nuevo» se pone solo en los productos recién publicados: elegí otra palabra',
+      message: '«Nuevo» se pone solo en los productos recién publicados: elige otra palabra',
     })
     .nullable()
     .optional(),
@@ -337,7 +337,7 @@ export const StoreBannerCreateSchema = z
       if (v.categoryId) falta('categoryId', 'Un banner de texto no va en una categoría');
     } else {
       if (!v.imageKey) falta('imageKey', 'Falta la imagen');
-      if (v.kind === 'CATEGORIA' && !v.categoryId) falta('categoryId', 'Elegí la categoría donde se muestra');
+      if (v.kind === 'CATEGORIA' && !v.categoryId) falta('categoryId', 'Elige la categoría donde se muestra');
       if (v.kind === 'HERO' && v.categoryId) falta('categoryId', 'Un banner de portada no va en una categoría');
     }
 

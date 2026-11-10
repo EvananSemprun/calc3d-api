@@ -19,7 +19,7 @@ const COMMIT_ENVS = ['RAILWAY_GIT_COMMIT_SHA', 'RENDER_GIT_COMMIT'] as const;
  * `healthCheckPath` para saber si la app está viva sin despertar el cómputo.
  *
  * **Además dice QUÉ VERSIÓN está sirviendo** (2026-10-10). Devolvía `{ ok, ts }`
- * y con eso no había forma de saber si el despliegue que acabás de empujar ya
+ * y con eso no había forma de saber si el despliegue que acabas de empujar ya
  * está arriba: el de esa tarde se "verificó" esperando ocho minutos por reloj,
  * que es suponer con cara de comprobar. `ts` no sirve — cambia en cada request,
  * con la versión vieja o con la nueva.

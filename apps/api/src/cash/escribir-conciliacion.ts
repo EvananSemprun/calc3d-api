@@ -41,7 +41,7 @@ dto: CashReconciliationUpsertDto,
     where: { organizationId, accountId: dto.accountId, date, status: { not: 'VOID' } },
   });
   if (viva?.status === 'CONFIRMED') {
-    throw new ConflictException('Esa conciliación ya está confirmada. Anulala y hacé una nueva.');
+    throw new ConflictException('Esa conciliación ya está confirmada. Anúlala y haz una nueva.');
   }
 
   const datos = {

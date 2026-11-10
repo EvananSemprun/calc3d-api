@@ -441,7 +441,7 @@ describe('ExpensesService.createWithDefinition', () => {
           referenceValue: 40,
         },
       } as any),
-    ).rejects.toThrow('Indicá cuántos rollos compraste');
+    ).rejects.toThrow('Indica cuántos rollos compraste');
     expect(tx.material.create).not.toHaveBeenCalled();
     expect(tx.material.update).not.toHaveBeenCalled();
     expect(tx.expense.create).not.toHaveBeenCalled();

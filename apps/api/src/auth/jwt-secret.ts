@@ -25,19 +25,19 @@ export function resolveJwtSecret(config: ConfigService): string {
   if (!secret) {
     throw new Error(
       'Falta JWT_SECRET. En producción no se usa un secreto por defecto: ' +
-        'generá uno aleatorio (por ejemplo `openssl rand -hex 32`) y cargalo en el entorno.',
+        'genera uno aleatorio (por ejemplo `openssl rand -hex 32`) y cárgalo en el entorno.',
     );
   }
   if (secret === DEV_JWT_SECRET) {
     throw new Error(
       'JWT_SECRET es el valor de desarrollo, que está escrito en el código fuente. ' +
-        'Cualquiera podría firmar un token válido: generá uno aleatorio.',
+        'Cualquiera podría firmar un token válido: genera uno aleatorio.',
     );
   }
   if (secret.length < MIN_SECRET_LENGTH) {
     throw new Error(
       `JWT_SECRET es demasiado corto (${secret.length} caracteres). ` +
-        `Usá al menos ${MIN_SECRET_LENGTH}, por ejemplo \`openssl rand -hex 32\`.`,
+        `Usa al menos ${MIN_SECRET_LENGTH}, por ejemplo \`openssl rand -hex 32\`.`,
     );
   }
   return secret;

@@ -6,7 +6,7 @@ import {
 } from './api';
 
 /**
- * ⚠️ **"Algo que todavía no tenés" tiene que decir QUÉ es.**
+ * ⚠️ **"Algo que todavía no tienes" tiene que decir QUÉ es.**
  *
  * Una impresora nueva es, por definición, la que no está en el catálogo: es el
  * caso normal al encargar una máquina, no el raro. Hasta shared 0.33.0 la línea

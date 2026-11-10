@@ -35,12 +35,12 @@ export const StorePhoneSchema = z
   .trim()
   .min(7, 'El teléfono es demasiado corto')
   .max(30, 'El teléfono es demasiado largo')
-  .refine((v) => (v.match(/\d/g) ?? []).length >= 7, 'Escribí un teléfono válido');
+  .refine((v) => (v.match(/\d/g) ?? []).length >= 7, 'Escribe un teléfono válido');
 
 /** Datos de contacto de quien pide. Se pide lo mínimo: pedido como INVITADO,
  *  sin cuenta ni contraseña (ver la decisión en el CLAUDE.md de la tienda). */
 export const StoreCustomerSchema = z.object({
-  name: z.string().trim().min(2, 'Escribí tu nombre').max(80, 'El nombre es demasiado largo'),
+  name: z.string().trim().min(2, 'Escribe tu nombre').max(80, 'El nombre es demasiado largo'),
   phone: StorePhoneSchema,
   note: z.string().trim().max(500, 'La nota no puede pasar de 500 caracteres').optional(),
 });
@@ -98,7 +98,7 @@ export const StoreCustomRequestSchema = z.object({
   description: z
     .string()
     .trim()
-    .min(10, 'Contanos un poco más de lo que necesitás')
+    .min(10, 'Cuéntanos un poco más de lo que necesitas')
     .max(2000, 'La descripción no puede pasar de 2000 caracteres'),
 });
 export type StoreCustomRequestDto = z.infer<typeof StoreCustomRequestSchema>;

@@ -39,7 +39,7 @@ describe('invoiceTotals', () => {
 
   /**
    * ⚠️ Pagar de más es plata que SALIÓ de la caja. Si se restara del saldo,
-   * quedaría un saldo negativo que se lee como "la factura te debe a vos".
+   * quedaría un saldo negativo que se lee como "la factura te debe a ti".
    */
   it('pagar de más deja saldo 0 y lo de más aparte, no un saldo negativo', () => {
     const t = invoiceTotals([{ quantity: 1, unitPrice: 40 }], [{ amount: 55 }]);
@@ -102,7 +102,7 @@ describe('invoiceTotals', () => {
 
 /**
  * ⚠️ El estado son DOS ejes. Una factura pagada entera y sin recibir existe y
- * es lo normal cuando encargás algo: un solo "estado" tendría que elegir cuál
+ * es lo normal cuando encargas algo: un solo "estado" tendría que elegir cuál
  * de las dos verdades contar.
  */
 /**

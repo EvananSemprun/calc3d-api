@@ -38,7 +38,7 @@ describe('MaterialsService.remove', () => {
     const intento = service(prisma).remove(ORG, 'm1');
 
     await expect(intento).rejects.toBeInstanceOf(ConflictException);
-    await expect(intento).rejects.toThrow('Descontinuala en vez de borrarla');
+    await expect(intento).rejects.toThrow('Descontinúala en vez de borrarla');
     expect(prisma.material.delete).not.toHaveBeenCalled();
   });
 

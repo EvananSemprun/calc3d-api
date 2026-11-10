@@ -498,7 +498,7 @@ describe('PurchaseInvoicesService — las cuentas que devuelve', () => {
 
 /**
  * RECIBIR: la mercadería entra al inventario. El dueño pidió **recepción
- * parcial** (pedís 10, llegan 6), así que una línea se recibe de a tandas.
+ * parcial** (pides 10, llegan 6), así que una línea se recibe de a tandas.
  */
 describe('PurchaseInvoicesService — recibir', () => {
   const conLinea = (over: Record<string, unknown> = {}) =>
@@ -996,9 +996,9 @@ describe('PurchaseInvoicesService — el precio real tampoco mueve la caja', () 
 });
 
 /**
- * ENCARGAR UNA IMPRESORA QUE TODAVÍA NO TENÉS.
+ * ENCARGAR UNA IMPRESORA QUE TODAVÍA NO TIENES.
  *
- * ⚠️ Hasta acá "algo que todavía no tenés" creaba **siempre** una ficha de
+ * ⚠️ Hasta acá "algo que todavía no tienes" creaba **siempre** una ficha de
  * filamento: encargar una impresora nueva te dejaba un rollo llamado "Impresora
  * A2". Y una impresora nueva es, por definición, la que no está en el catálogo:
  * es el caso normal al comprar una máquina, no el raro.
@@ -1006,7 +1006,7 @@ describe('PurchaseInvoicesService — el precio real tampoco mueve la caja', () 
  * Cada test afirma sobre **las DOS tablas**. Mirar solo la que esperás es
  * exactamente cómo este bug pasó desapercibido.
  */
-describe('PurchaseInvoicesService — recibir algo que todavía no tenés', () => {
+describe('PurchaseInvoicesService — recibir algo que todavía no tienes', () => {
   const conNueva = (over: Record<string, unknown>) =>
     makePrisma({
       ...FACTURA_VACIA,

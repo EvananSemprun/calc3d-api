@@ -80,7 +80,7 @@ export class MaterialsService {
       throw new ConflictException(
         ficha.status === 'DISCONTINUED'
           ? 'Tiene compras o conteos registrados: se conserva descontinuada.'
-          : 'Tiene compras o conteos registrados. Descontinuala en vez de borrarla.',
+          : 'Tiene compras o conteos registrados. Descontinúala en vez de borrarla.',
       );
     }
 

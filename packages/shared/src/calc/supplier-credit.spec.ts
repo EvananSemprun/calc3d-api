@@ -69,7 +69,7 @@ describe('invoiceTotals: el saldo a favor DISPONIBLE', () => {
     const t = invoiceTotals(lineas, abonos, 6);
 
     // ⚠️ `aFavor` es un HECHO (pagaste $15 de más) y no se mueve nunca;
-    // `aFavorDisponible` es lo que todavía podés usar. Confundirlos borraría
+    // `aFavorDisponible` es lo que todavía puedes usar. Confundirlos borraría
     // del historial que ese sobrepago existió.
     expect(t.aFavor).toBe(15);
     expect(t.aFavorDisponible).toBe(9);

@@ -290,7 +290,7 @@ export class FilamentService {
           where: { organizationId_month: { organizationId, month } },
         });
         if (fila?.closedAt) {
-          throw new ConflictException(`${etiquetaMes(dto.month)} ya está cerrado. Reabrilo para corregirlo.`);
+          throw new ConflictException(`${etiquetaMes(dto.month)} ya está cerrado. Reábrelo para corregirlo.`);
         }
 
         const materiales = await tx.material.findMany({
@@ -302,7 +302,7 @@ export class FilamentService {
         for (const c of dto.counts) {
           if (!nombres.has(c.materialId)) {
             throw new NotFoundException(
-              'Una de las fichas ya no existe (se borró o no es de esta cuenta). Recargá el conteo.',
+              'Una de las fichas ya no existe (se borró o no es de esta cuenta). Recarga el conteo.',
             );
           }
           if (vistos.has(c.materialId)) {
