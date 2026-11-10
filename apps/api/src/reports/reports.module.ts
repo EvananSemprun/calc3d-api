@@ -471,7 +471,6 @@ export class ReportsService {
       filament: 'Filamento comprado',
       equipment: 'Equipos pagados por la caja',
       consumables: 'Insumos comprados',
-      services: 'Servicios pagados',
       supplierAdvances: 'Anticipos a proveedores (pagado y sin recibir)',
       contributionsRefundable: `Aportes de ${nombreContraparte} (se devuelven)`,
       contributionsCapital: `Aportes de capital de ${nombreContraparte}`,

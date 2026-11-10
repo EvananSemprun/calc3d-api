@@ -1412,13 +1412,22 @@ en el repo web: se sobrescribe al sincronizar.
         en una línea con sentido en vez de en «equipos». **El día que Compras
         gane el tipo SERVICIO va en `categoriaDeLinea`**, o un alquiler se
         contaría como filamento.
-      - ⚠️ **`CashCategory` ganó `consumables`, `services` y `supplierAdvances`**
-        (12 líneas, no nueve). `advertising` **NO entró**: se agrega en la fase
-        (c), junto con lo que la llena. Y **`services` todavía no tiene quién la
-        alimente**: una línea de factura no sabe ser un servicio (el contrato
-        pide una de `materialId`/`printerId`/`componentId`/`nombreNuevo` y
-        `nuevoTipo` solo tiene MATERIAL, PRINTER y COMPONENT). Está anotado en
-        el barrido de `cash.service.spec.ts`, que la exime a mano.
+      - ⚠️ **`CashCategory` ganó `consumables` y `supplierAdvances`** (11
+        líneas, no nueve). **`advertising` y `services` NO entraron**: se
+        agregan en la fase (c), **junto con lo que las llene**. La regla es
+        «un valor de enum sin productor no se agrega», y `services` se agregó y
+        se sacó el mismo día justamente por ella: una línea de factura no puede
+        ser un servicio todavía (el contrato pide una de
+        `materialId`/`printerId`/`componentId`/`nombreNuevo` y `nuevoTipo` solo
+        tiene MATERIAL, PRINTER y COMPONENT).
+      - ⚠️ **Lo que lo decidió no fue la coherencia, fue un TEST**: el barrido
+        de `cash.service.spec.ts` («el total de cada desplegable es igual a la
+        línea de `summary()`, en todas») exige que **ninguna** categoría venga
+        vacía, y es el guardián que existe para cazar justo una categoría que
+        nada produce. Con `services` había que **eximirla a mano**, o sea
+        dejarlo cubriendo todas menos la única que vino a buscar — peor que no
+        tener la categoría. **No eximir una categoría de ese barrido**: si se
+        pone rojo, es un hallazgo.
       - ⚠️ **«Anticipos a proveedores» es UNA fila, no un reparto por
         categoría.** Lo pagado y no recibido (`anticipo` de `invoiceTotals`) no
         es filamento ni insumo: es plata en manos del proveedor. Se reparte

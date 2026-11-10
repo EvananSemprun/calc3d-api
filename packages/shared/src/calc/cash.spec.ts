@@ -235,13 +235,9 @@ const completo = (): CashLedger => ({
     { id: 'cuota-2', date: '2026-09-09', amount: 60, payer: 'OWNER', refundable: true },
   ],
   // Los abonos a facturas de compra, uno por cada categoría que SOLO ellos
-  // pueden poblar. El de servicios no lo puede producir la API todavía (una
-  // línea de factura no sabe ser un servicio), pero el motor sí lo clasifica:
-  // acá está para que el invariante "el detalle suma la línea" tenga algo que
-  // comparar también en esa línea.
+  // pueden poblar.
   purchasePayments: [
     { id: 'abono-c1', date: '2026-09-13', amount: 80, payer: null, refundable: true, reparto: { consumables: 1 } },
-    { id: 'abono-c2', date: '2026-09-14', amount: 45, payer: null, refundable: true, reparto: { services: 1 } },
     { id: 'abono-c3', date: '2026-09-15', amount: 90, payer: null, refundable: true, reparto: { supplierAdvances: 1 } },
   ],
   movements: [
@@ -276,24 +272,23 @@ describe('cashEntries', () => {
    * el invariante se cumple aunque la clasificación esté mal. Verificado por
    * mutación: romper `operativo` deja el invariante en verde.
    *
-   * Por eso las doce líneas van clavadas a mano contra el ledger de arriba.
+   * Por eso las once líneas van clavadas a mano contra el ledger de arriba.
    * Esto es lo que de verdad caza un filtro cambiado.
    */
-  it('las doce líneas dan estos números y no otros', () => {
+  it('las once líneas dan estos números y no otros', () => {
     expect(businessCash(completo())).toEqual({
       collected: 130.55, // 100 de venta + 30,55 de abono
       expenses: 35, // 20 de la caja + 15 de la contraparte (el de 917 es del préstamo)
       filament: 65.25, // 25,25 de la caja + 40 de la contraparte
       equipment: 300, // solo el que pagó la caja
       consumables: 80, // el abono de la factura de insumos
-      services: 45, // el abono de la factura de servicio
       supplierAdvances: 90, // lo abonado de mercadería que no llegó
       contributionsRefundable: 240, // 40 en filamento + 200 de plata pura
       contributionsCapital: 515, // 15 en gasto + 500 de plata pura
       debtRepayments: 70,
       ownerDraws: 30,
       loanPayments: 50, // la cuota que pagó la contraparte no sale de la caja
-      balance: 120.3, // los 335,30 de antes − 80 − 45 − 90 de los tres abonos
+      balance: 165.3, // los 335,30 de antes − 80 − 90 de los dos abonos
     });
   });
 
@@ -675,7 +670,7 @@ describe('abonos de compra: el reparto conoce todas las clases de línea', () =>
     const repartos: RepartoDeCompra[] = [
       { filament: 1 },
       { filament: 220 / 260, consumables: 40 / 260 },
-      { equipment: 1 / 3, consumables: 1 / 3, services: 1 / 3 },
+      { equipment: 1 / 3, consumables: 1 / 3, filament: 1 / 3 },
       { supplierAdvances: 1 },
       {},
     ];

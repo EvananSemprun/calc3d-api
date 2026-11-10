@@ -990,7 +990,6 @@ export const CashCategorySchema = z.enum([
   'filament',
   'equipment',
   'consumables',
-  'services',
   'supplierAdvances',
   'contributionsRefundable',
   'contributionsCapital',

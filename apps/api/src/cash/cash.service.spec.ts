@@ -976,11 +976,7 @@ function baseFalsa(tablas: Record<string, Record<string, unknown>[]>) {
 
 type Tablas = Record<string, Record<string, unknown>[]>;
 
-/**
- * Un negocio con todas las líneas del saldo pobladas, salvo «Servicios
- * pagados»: hoy nada puede producirla (ver el comentario de
- * `purchaseInvoicePayment`).
- */
+/** Un negocio con TODAS las líneas del saldo pobladas. */
 function tablasCompletas(org = ORG): Tablas {
   return {
     counterparty: [
@@ -1021,11 +1017,6 @@ function tablasCompletas(org = ORG): Tablas {
      * Los abonos a facturas de compra: las DOS líneas del saldo que solo ellos
      * pueden poblar. Van después del 12/09, así que el saldo recortado a
      * principios de mes no se mueve.
-     *
-     * ⚠️ «Servicios pagados» queda en cero y no se puede poblar desde acá: una
-     * línea de factura todavía no sabe ser un servicio (el contrato pide una de
-     * `materialId`/`printerId`/`componentId`/`nombreNuevo`, y `nuevoTipo` solo
-     * tiene MATERIAL, PRINTER y COMPONENT). Está anotado en el barrido de abajo.
      */
     purchaseInvoicePayment: [
       {
@@ -1181,19 +1172,14 @@ describe('CashService.breakdown', () => {
     for (const k of Object.keys(CASH_SIGN) as (keyof typeof CASH_SIGN)[]) {
       const d = await servicioFalso(t).breakdown(ORG, k);
       expect({ [k]: d.total }).toEqual({ [k]: resumen.balance[k] });
-      // Y ninguna viene vacía: el fixture las puebla a todas, así que un
+      // Y ninguna viene vacía: el fixture las puebla a TODAS, así que un
       // desplegable sin filas sería un asiento perdido, no un cero real.
       //
-      // ⚠️ `services` es la ÚNICA excepción, y está acá escrita en vez de
-      // escondida: **nada puede producirla todavía**. Una línea de factura no
-      // sabe ser un servicio hasta que Compras gane ese tipo de línea (§5.2 del
-      // diseño de compras); la categoría existe para que el día que llegue
-      // tenga destino, en vez de caer en «filamento», que es el respaldo
-      // histórico. El día que se alimente, este `if` se borra.
-      if (k === 'services') {
-        expect(d.entries).toEqual([]);
-        continue;
-      }
+      // ⚠️ **Sin excepciones, y eso es parte del test.** Una categoría que el
+      // fixture no puede poblar es una categoría que nada produce, y esto es el
+      // guardián que existe para cazarla: eximirla a mano lo dejaría cubriendo
+      // todas menos la única que vino a buscar. `services` se agregó y se sacó
+      // el mismo día por esto (fase B, tarea 4): vuelve con lo que la llene.
       expect(d.entries.length).toBeGreaterThan(0);
     }
   });

@@ -171,16 +171,6 @@ export interface BusinessCash {
   /** Insumos comprados: placas, boquillas, empaque (−). */
   consumables: number;
   /**
-   * Servicios pagados: diseño, repuestos de terceros, alquileres (−).
-   *
-   * ⚠️ **Todavía NO tiene quién la alimente**, y es a propósito: una línea de
-   * factura no puede ser un servicio hasta que Compras gane ese tipo de línea
-   * (§5.2 del diseño de compras). La línea existe para que el día que llegue
-   * tenga destino, y porque es la categoría a la que debe ir — hoy una línea
-   * sin clasificar cae en `filament`, que es el default histórico.
-   */
-  services: number;
-  /**
    * ANTICIPOS A PROVEEDORES: plata que ya salió por mercadería que NO llegó (−).
    *
    * ⚠️ **Es UNA fila, no un reparto por categoría.** Lo que todavía no llegó no
@@ -208,7 +198,6 @@ export type CashCategory =
   | 'filament'
   | 'equipment'
   | 'consumables'
-  | 'services'
   | 'supplierAdvances'
   | 'contributionsRefundable'
   | 'contributionsCapital'
@@ -223,7 +212,6 @@ export const CASH_SIGN: Record<CashCategory, 1 | -1> = {
   filament: -1,
   equipment: -1,
   consumables: -1,
-  services: -1,
   supplierAdvances: -1,
   contributionsRefundable: 1,
   contributionsCapital: 1,
@@ -382,7 +370,6 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
     filament: 0,
     equipment: 0,
     consumables: 0,
-    services: 0,
     supplierAdvances: 0,
     contributionsRefundable: 0,
     contributionsCapital: 0,
@@ -402,7 +389,6 @@ export function businessCash(ledger: CashLedger, until?: Fecha): BusinessCash {
     filament: round2(acc.filament),
     equipment: round2(acc.equipment),
     consumables: round2(acc.consumables),
-    services: round2(acc.services),
     supplierAdvances: round2(acc.supplierAdvances),
     contributionsRefundable: round2(acc.contributionsRefundable),
     contributionsCapital: round2(acc.contributionsCapital),

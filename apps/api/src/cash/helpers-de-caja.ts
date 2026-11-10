@@ -95,9 +95,10 @@ export interface LineaParaReparto {
  * factura vieja —o una línea con un dato incompleto— dando el mismo número que
  * daba ayer, en una línea con sentido en vez de en "equipos".
  *
- * ⚠️ **El día que Compras gane el tipo SERVICIO** (§5.2 del diseño de compras),
- * va acá y devuelve `services`: la categoría ya existe esperándolo. Dejarlo
- * caer en el respaldo contaría un alquiler como filamento.
+ * ⚠️ **El día que Compras gane los tipos SERVICIO y REPUESTO/MANTENIMIENTO**
+ * (§5.2 del diseño de compras), van acá — con su categoría de Caja, que todavía
+ * NO existe: se agrega entonces, junto con lo que la llena. Dejarlos caer en el
+ * respaldo contaría un alquiler como filamento.
  */
 export function categoriaDeLinea(l: LineaParaReparto): CashCategory {
   if (l.printerId != null || l.nuevoTipo === 'PRINTER') return 'equipment';
