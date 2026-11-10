@@ -2102,3 +2102,89 @@ describe('Caja y Deuda cuentan lo mismo: una cuota ANULADA no amortiza', () => {
     expect(caja.financing.owedToOwner).toBe(40);
   });
 });
+
+/**
+ * LOS ABONOS A FACTURAS DE COMPRA TIENEN NOMBRE (fase B, tarea 3).
+ *
+ * Hasta acá `etiquetasDe` armaba el mapa desde cinco orígenes y le faltaba el
+ * sexto: **todos** los abonos a facturas caían en «Sin detalle», no algunos.
+ * El id sí llegaba al asiento; el `get()` devolvía `undefined` y se usaba el
+ * respaldo. El respaldo sigue siendo correcto para un asiento SIN id.
+ */
+describe('CashService.breakdown — los abonos a facturas de compra', () => {
+  const abonoDe = (
+    id: string,
+    code: number,
+    supplier: { name: string } | null,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    id,
+    organizationId: ORG,
+    date: new Date('2026-10-05'),
+    amount: '40',
+    counterpartyId: null,
+    tomadoDeFacturaId: null,
+    voidedAt: null,
+    source: 'MANUAL',
+    invoice: { code, supplier, lines: [{ quantity: 1, unitPrice: '40', printerId: null }] },
+    ...extra,
+  });
+
+  const conAbonos = (abonos: Record<string, unknown>[]): Tablas => ({
+    ...tablasCompletas(),
+    purchaseInvoicePayment: abonos,
+  });
+
+  it('un abono a C-0006 se muestra como «Factura C-0006 · <proveedor>»', async () => {
+    const r = await servicioFalso(
+      conAbonos([abonoDe('pp1', 6, { name: 'Strato' })]),
+    ).breakdown(ORG, 'filament');
+
+    const fila = r.entries.find((e) => e.label.startsWith('Factura'));
+    expect(fila).toMatchObject({ label: 'Factura C-0006 · Strato', amount: 40 });
+  });
+
+  it('una factura SIN proveedor anotado lo dice, sin separador colgando ni «undefined»', async () => {
+    const r = await servicioFalso(conAbonos([abonoDe('pp2', 7, null)])).breakdown(ORG, 'filament');
+
+    const fila = r.entries.find((e) => e.label.startsWith('Factura'));
+    expect(fila?.label).toBe('Factura C-0007 · Sin proveedor anotado');
+  });
+
+  it('un proveedor con el nombre en blanco se trata como sin proveedor', async () => {
+    const r = await servicioFalso(
+      conAbonos([abonoDe('pp3', 8, { name: '   ' })]),
+    ).breakdown(ORG, 'filament');
+
+    expect(r.entries.find((e) => e.label.startsWith('Factura'))?.label).toBe(
+      'Factura C-0008 · Sin proveedor anotado',
+    );
+  });
+
+  /**
+   * ⚠️ El que impide que el defecto vuelva: un barrido sobre TODOS los asientos
+   * de TODAS las categorías, no un caso puntual. Incluye un abono pagado por la
+   * contraparte, que reparte plata en otras categorías (gasto Y aporte).
+   */
+  it('ningún asiento con id cae en «Sin detalle», en ninguna de las categorías', async () => {
+    const t = conAbonos([
+      abonoDe('pp1', 6, { name: 'Strato' }),
+      abonoDe('pp2', 7, null),
+      abonoDe('pp4', 9, { name: 'Strato' }, { counterpartyId: 'cp1' }),
+    ]);
+
+    let vistas = 0;
+    let deFactura = 0;
+    for (const k of Object.keys(CASH_SIGN) as (keyof typeof CASH_SIGN)[]) {
+      const d = await servicioFalso(t).breakdown(ORG, k);
+      for (const e of d.entries) {
+        vistas++;
+        expect({ categoria: k, label: e.label }).not.toEqual({ categoria: k, label: 'Sin detalle' });
+        if (e.label.startsWith('Factura C-')) deFactura++;
+      }
+    }
+    // El barrido no puede ser vacío: tiene que haber mirado los abonos.
+    expect(vistas).toBeGreaterThan(9);
+    expect(deFactura).toBeGreaterThanOrEqual(3);
+  });
+});

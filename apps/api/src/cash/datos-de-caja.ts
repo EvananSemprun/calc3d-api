@@ -1,10 +1,12 @@
 import {
+  codigoDeCompra,
   obligationLedger,
   type ApplicationOrder,
   type CashLedger,
   type ObligationInput,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { SIN_PROVEEDOR } from '../purchase-invoices/deuda-por-proveedor';
 import {
   dia,
   n,
@@ -72,10 +74,19 @@ export async function cargarDatosDeCaja(prisma: PrismaService, organizationId: s
       prisma.counterparty.findMany({ where }),
       // Los abonos a facturas son lo que mueve la plata de una compra
       // encargada. Vienen con las líneas de SU factura porque el reparto
-      // entre filamento y equipo sale de ahí.
+      // entre filamento y equipo sale de ahí, y con el código y el proveedor
+      // porque el desplegable los nombra («Factura C-0006 · Strato»).
       prisma.purchaseInvoicePayment.findMany({
         where: { organizationId, voidedAt: null, invoice: { voidedAt: null } },
-        include: { invoice: { select: { lines: { select: { quantity: true, unitPrice: true, printerId: true } } } } },
+        include: {
+          invoice: {
+            select: {
+              code: true,
+              supplier: { select: { name: true } },
+              lines: { select: { quantity: true, unitPrice: true, printerId: true } },
+            },
+          },
+        },
       }),
     ]);
 
@@ -221,7 +232,7 @@ hasta?: string,
 }
 
 /**
- * El join `id → texto` de los cinco orígenes del ledger.
+ * El join `id → texto` de los seis orígenes del ledger.
  *
  * Vive acá y no en `shared` a propósito: el motor es puro y no conoce los
  * nombres de columna de Prisma (`description`, `concept`, `reference`).
@@ -246,6 +257,17 @@ export function etiquetasDe(d: DatosDeCaja) {
   for (const g of d.gastos) m.set(g.id, { label: texto(g.description) ?? 'Gasto sin descripción', source: g.source });
   for (const c of d.cuotas) m.set(c.id, { label: texto(c.reference) ?? 'Cuota del préstamo', source: c.source });
   for (const mv of d.movimientos) m.set(mv.id, { label: texto(mv.concept) ?? 'Movimiento', source: mv.source });
+  // El sexto origen. Sin este bucle TODOS los abonos a facturas caían en
+  // «Sin detalle»: el id llega al asiento y el `get()` no lo encontraba.
+  // ⚠️ La tabla no tiene `source` (un abono lo carga siempre la app), así que
+  // va MANUAL —el mismo valor del respaldo—: inventar otro dibujaría una
+  // insignia «Importado» que no corresponde.
+  // ⚠️ Una factura puede no tener proveedor: se dice, igual que Deuda, en vez
+  // de dejar un separador colgando.
+  for (const a of d.abonosDeCompra) {
+    const proveedor = texto(a.invoice.supplier?.name) ?? SIN_PROVEEDOR;
+    m.set(a.id, { label: `Factura ${codigoDeCompra(a.invoice.code)} · ${proveedor}`, source: 'MANUAL' });
+  }
 
   return m;
 }

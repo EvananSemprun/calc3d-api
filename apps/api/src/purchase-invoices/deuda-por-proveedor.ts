@@ -96,7 +96,7 @@ export interface DeudaProveedores {
  * nombre sería perder plata que sí se debe — el bloque quedaría diciendo menos
  * de lo que el negocio debe, que es justo la mentira que esto viene a cerrar.
  */
-const SIN_PROVEEDOR = 'Sin proveedor anotado';
+export const SIN_PROVEEDOR = 'Sin proveedor anotado';
 
 export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedores {
   const porProveedor = new Map<string | null, DeudaConProveedor>();
