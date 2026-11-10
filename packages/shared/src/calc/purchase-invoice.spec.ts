@@ -96,6 +96,10 @@ describe('invoiceTotals', () => {
       pedido: 0,
       recibido: 0,
       porRecibir: 0,
+      valorRecibido: 0,
+      deuda: 0,
+      anticipo: 0,
+      comprometido: 0,
     });
   });
 });
@@ -517,5 +521,108 @@ describe('anulacionNecesitaConfirmacion', () => {
   it('el plazo lo da la carga, aunque el documento sea viejo', () => {
     const cargadoHoy = ahora;
     expect(anulacionNecesitaConfirmacion(cargadoHoy, ahora)).toBe(false);
+  });
+});
+
+/**
+ * ⚠️ `saldo` y `deuda` son DOS preguntas distintas y no se pueden confundir:
+ * `saldo` es lo que falta pagar de TODA la factura; `deuda` es lo que ya
+ * llegó y todavía no se pagó. Los números son los de producción, a mano.
+ */
+describe('invoiceTotals — anticipo, deuda y comprometido', () => {
+  it('C-0001: anticipo 140, deuda 0, comprometido 120 (pagado 140 de 260, nada recibido)', () => {
+    const t = invoiceTotals([{ quantity: 10, unitPrice: 26, received: 0 }], [{ amount: 140 }]);
+
+    expect(t.total).toBe(260);
+    expect(t.valorRecibido).toBe(0);
+    expect(t.anticipo).toBe(140);
+    expect(t.deuda).toBe(0);
+    expect(t.comprometido).toBe(120);
+  });
+
+  it('C-0004: comprometido 134, sin anticipo ni deuda (nada pagado, nada recibido)', () => {
+    const t = invoiceTotals([{ quantity: 2, unitPrice: 67 }], []);
+
+    expect(t.total).toBe(134);
+    expect(t.anticipo).toBe(0);
+    expect(t.deuda).toBe(0);
+    expect(t.comprometido).toBe(134);
+  });
+
+  it('C-0006: igual que C-0004, con otra forma de líneas', () => {
+    const t = invoiceTotals(
+      [
+        { quantity: 3, unitPrice: 20 },
+        { quantity: 1, unitPrice: 74 },
+      ],
+      [],
+    );
+
+    expect(t.total).toBe(134);
+    expect(t.anticipo).toBe(0);
+    expect(t.deuda).toBe(0);
+    expect(t.comprometido).toBe(134);
+  });
+
+  it('pagaste la mitad y llegó todo: produce DEUDA, no anticipo', () => {
+    const t = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 10 }], [{ amount: 50 }]);
+
+    expect(t.valorRecibido).toBe(100);
+    expect(t.deuda).toBe(50);
+    expect(t.anticipo).toBe(0);
+    expect(t.comprometido).toBe(0);
+  });
+
+  it('lo recibido vale a su precio REAL; lo que falta, a lo pedido', () => {
+    // 4 llegaron a $12 (pediste a $10) y 6 faltan: total 48 + 60 = 108.
+    const t = invoiceTotals(
+      [{ quantity: 10, unitPrice: 10, received: 4, recepciones: [{ quantity: 4, unitPrice: 12 }] }],
+      [{ amount: 100 }],
+    );
+
+    expect(t.total).toBe(108);
+    expect(t.valorRecibido).toBe(48);
+    expect(t.anticipo).toBe(52);
+    expect(t.deuda).toBe(0);
+    expect(t.comprometido).toBe(8);
+  });
+
+  it('lo recibido SIN recepción registrada vale el precio pedido', () => {
+    const t = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 3 }], []);
+
+    expect(t.valorRecibido).toBe(30);
+    expect(t.deuda).toBe(30);
+  });
+
+  it('pagada de más: el compromiso se recorta en 0 y el excedente lo cuenta aFavor', () => {
+    const t = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 0 }], [{ amount: 130 }]);
+
+    expect(t.comprometido).toBe(0);
+    expect(t.aFavor).toBe(30);
+    expect(t.anticipo).toBe(130);
+  });
+
+  it('`saldo` NO cambia de valor en ninguno de los casos anteriores', () => {
+    const c1 = invoiceTotals([{ quantity: 10, unitPrice: 26, received: 0 }], [{ amount: 140 }]);
+    const c4 = invoiceTotals([{ quantity: 2, unitPrice: 67 }], []);
+    const mitad = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 10 }], [{ amount: 50 }]);
+    const real = invoiceTotals(
+      [{ quantity: 10, unitPrice: 10, received: 4, recepciones: [{ quantity: 4, unitPrice: 12 }] }],
+      [{ amount: 100 }],
+    );
+    const demas = invoiceTotals([{ quantity: 10, unitPrice: 10, received: 0 }], [{ amount: 130 }]);
+
+    // C-0001: falta pagar 120 de la factura, aunque la deuda sea 0.
+    expect(c1.saldo).toBe(120);
+    expect(c1.aFavor).toBe(0);
+    expect(c4.saldo).toBe(134);
+    expect(mitad.saldo).toBe(50);
+    expect(real.saldo).toBe(8);
+    expect(demas.saldo).toBe(0);
+    expect(demas.aFavor).toBe(30);
+    expect(demas.aFavorDisponible).toBe(30);
+    expect(c1.pedido).toBe(10);
+    expect(c1.recibido).toBe(0);
+    expect(c1.porRecibir).toBe(10);
   });
 });
