@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { IMPERATIVOS_DE_VOSEO } from '@calc3d/shared';
 
 /**
  * Guardián de idioma: la API y el motor (`shared`) hablan de «tú», nunca de voseo.
@@ -42,29 +43,16 @@ export const PALABRAS_PERMITIDAS = [
 /**
  * ⚠️ Dos listas, y SE TRATAN DISTINTO a propósito (no las «unifiques»):
  * - `IMPERATIVOS_DE_VOSEO` depende del IDIOMA: una forma que es voseo en la API lo es
- *   en el panel. Es IDÉNTICA en los dos repos (copiada, no importada; en el panel
- *   se llama `FORMAS_DE_VOSEO`).
+ *   en el panel. Por eso **ya no se copia**: vive en `packages/shared/src/idioma.ts`,
+ *   el único artefacto que `pnpm sync:shared` mantiene idéntico entre los dos repos,
+ *   y los dos guardianes la importan de ahí. Antes los dos declaraban que eran
+ *   idénticas y nada lo comprobaba: el día que una sumara una forma, el otro repo
+ *   perdía cobertura con todo en verde — el mismo incidente que los creó.
  * - `PALABRAS_PERMITIDAS` depende del CORPUS de cada repo (qué palabras legítimas
  *   usa): es DISTINTA en cada uno y cada entrada tiene que usarse en ESTE código.
  * Tratar las dos como «del corpus» dejó al panel con la lista corta.
  */
-export const IMPERATIVOS_DE_VOSEO = [
-  'abonás', 'tenés', 'podés', 'tocá', 'mirá', 'dejalo', 'registrá', 'elegí',
-  'hacé', 'ingresá', 'avisá', 'sacá', 'pasá', 'verificá', 'poné', 'cargá',
-  'borrá', 'revisá', 'usá', 'sumá', 'decí', 'fijate', 'acordate', 'escribí',
-  'mandá', 'corregí', 'volvé', 'cargala', 'contá', 'llená', 'cerrá', 'anotá',
-  'publicá', 'cambiá', 'marcá', 'recargá',
-  // Medidas en este corpus:
-  'deshacé', 'generá', 'indicá', 'apuntá', 'bajá', 'probá', 'pedí', 'agregá',
-  // Con pronombre pegado (el acento se pierde: borrá + la = borrala):
-  'cargalo', 'borrala', 'borralas', 'desactivala', 'activala', 'anulala',
-  'descontinuala', 'corregila', 'reabrilo', 'anotalo', 'abonalo', 'elegilo',
-  'agregalo', 'agregale', 'cambiale', 'movelas', 'ponele', 'contanos',
-  'hacelo', 'anotala', 'contalo', 'revisalas', 'usalo', 'atribuilo', 'cambiala',
-  'cambialo', 'publicala', 'sacale', 'renombrala',
-  // El pronombre mismo:
-  'vos',
-] as const;
+export { IMPERATIVOS_DE_VOSEO };
 
 const NO_LETRA = String.raw`(?<![\p{L}\p{N}_])`;
 const NO_LETRA_DESPUES = String.raw`(?![\p{L}\p{N}_])`;
@@ -96,6 +84,16 @@ const RAICES = [
 ];
 const ESTE_ARCHIVO = path.resolve(__dirname, 'idioma.spec.ts');
 
+/**
+ * El ÚNICO archivo exento del barrido además de este spec: la lista de formas
+ * del voseo. Es la lista misma, no texto de cara al usuario, y sin la exención
+ * se denunciaría a sí misma. Hay un test que fija que la exención sea
+ * exactamente esa — una exención que crece es la forma lenta de apagar el
+ * guardián.
+ */
+const LISTA_DE_FORMAS = path.resolve(__dirname, '../../../../packages/shared/src/idioma.ts');
+const EXENTOS = [ESTE_ARCHIVO, LISTA_DE_FORMAS];
+
 function archivos(dir: string): string[] {
   return readdirSync(dir).flatMap((nombre) => {
     const ruta = path.join(dir, nombre);
@@ -104,10 +102,22 @@ function archivos(dir: string): string[] {
   });
 }
 
-const TODOS = RAICES.flatMap(archivos).filter((r) => r !== ESTE_ARCHIVO);
+const TODOS = RAICES.flatMap(archivos).filter((r) => !EXENTOS.includes(r));
 const relativa = (ruta: string) => path.relative(path.resolve(__dirname, '../../../..'), ruta);
 
 describe('idioma de la API y shared', () => {
+  it('la lista de formas llega de shared y el barrido la exime (y nada más)', () => {
+    // Si se importara una lista vacía —o se dejara de importar— el guardián
+    // seguiría verde sin revisar un solo imperativo.
+    expect(IMPERATIVOS_DE_VOSEO.length).toBeGreaterThan(70);
+    expect(IMPERATIVOS_DE_VOSEO).toContain('tocá');
+    // Barre `shared`, pero no el archivo de la lista…
+    expect(TODOS.some((r) => r.includes(`${path.sep}shared${path.sep}`))).toBe(true);
+    expect(TODOS).not.toContain(LISTA_DE_FORMAS);
+    // …y la exención no se amplió a nada más.
+    expect(EXENTOS).toHaveLength(2);
+  });
+
   it('el barrido encuentra archivos de las dos raíces', () => {
     expect(TODOS.some((r) => r.includes(`${path.sep}apps${path.sep}api${path.sep}`))).toBe(true);
     expect(TODOS.some((r) => r.includes(`${path.sep}packages${path.sep}shared${path.sep}`))).toBe(true);

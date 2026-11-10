@@ -3522,3 +3522,40 @@ devuelve `rate: null` y la tienda no muestra bolívares en ningún precio.
 ⚠️ `*.dump` y `*.sql.gz` están en el `.gitignore` desde el 2026-11-08. El método de
 respaldo de este archivo escribe el dump **dentro del repo**, y el repo es PÚBLICO: sin
 esa línea, un `git add .` distraído publica la base entera del negocio.
+
+## La lista de formas del voseo vive en `shared` (2026-11-10, shared 0.73.2)
+
+Los dos guardianes de idioma —`apps/api/src/common/idioma.spec.ts` y
+`calc3d-web/apps/web/src/idioma.spec.ts`— declaraban cada uno que su lista de
+imperativos **«es IDÉNTICA en los dos repos (copiada, no importada)»**, y
+**nada lo comprobaba**. Coincidían de casualidad (74 formas medidas ese día);
+el día que una sumara una forma y la otra no, el repo que se quedó corto perdía
+cobertura **con todo en verde** — que es literalmente el incidente que creó
+estos guardianes (una lista fija dejó 19 formas sin corregir).
+
+- La lista es del **IDIOMA**, no del corpus: una forma que es voseo en la API lo
+  es en el panel. Así que vive en **`packages/shared/src/idioma.ts`**
+  (`IMPERATIVOS_DE_VOSEO`), el único artefacto que `pnpm sync:shared` ya
+  mantiene idéntico entre los dos repos, y los dos guardianes la importan de
+  `@calc3d/shared`. En el panel se re-exporta con su nombre viejo
+  (`FORMAS_DE_VOSEO`) para no tocar a quien ya la importaba.
+- ⚠️ **`PALABRAS_PERMITIDAS` NO se movió, y la distinción es el punto.** Esa
+  depende del CORPUS de cada repo (qué palabras legítimas usa su código), es
+  distinta en cada uno y cada entrada tiene que seguir apareciendo en ESE
+  código. Tratar las dos como «del idioma» —o las dos como «del corpus»— es lo
+  que dejó al panel con la lista corta.
+- ⚠️ **El archivo de la lista está EXENTO del barrido de los dos guardianes**, o
+  se denunciaría a sí mismo. Es el único exento además del propio spec, y los
+  dos tienen un test que lo fija (`expect(EXENTOS).toHaveLength(2)`): una
+  exención que crece es la forma lenta de apagar un guardián.
+- ⚠️ **Se edita en `calc3d-api` y se sincroniza**, como todo `shared`. Con
+  `SHARED_VERSION` al día en los dos repos (0.73.2).
+- ⚠️ **Y una trampa al verificarlo por mutación**: los specs importan de
+  `@calc3d/shared`, o sea del **build**, no del `src`. Vaciar la lista en el
+  fuente y correr los tests da **verde** si no se recompila: el parche está en
+  disco y el artefacto bajo prueba es el viejo. La primera medición de esto fue
+  inválida por eso. Hay que `pnpm --filter @calc3d/shared build` entre el
+  parche y la corrida — y la mutación tiene que **compilar**, porque si el build
+  falla el `dist` se queda con la versión buena y pasa lo mismo.
+- Medido con la lista vacía (compilando y recompilando): tumba **2** tests en la
+  API y **3** en el panel.

@@ -37,4 +37,5 @@ export * from './calc/channels';
 export * from './calc/categorias-arbol';
 export * from './calc/money';
 export * from './calc/format';
+export * from './idioma';
 export { SHARED_VERSION } from './version';
