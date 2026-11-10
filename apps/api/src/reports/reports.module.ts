@@ -470,8 +470,22 @@ export class ReportsService {
       expenses: 'Gastos generales',
       filament: 'Filamento comprado',
       equipment: 'Equipos pagados por la caja',
-      consumables: 'Insumos comprados',
-      supplierAdvances: 'Anticipos a proveedores (pagado y sin recibir)',
+      /**
+       * ⚠️ **"por factura" no es un adorno**: esta línea cuenta SOLO los insumos
+       * que entraron por una factura de compra. Un insumo cargado como gasto
+       * directo cae en «Gastos generales», porque el motor clasifica los gastos
+       * por `isFilament`/`isInvestment` y nada más. La asimetría con el
+       * filamento es **deuda conocida de la fase (c)**, no diseño: reclasificar
+       * movería plata entre dos filas y eso no está autorizado todavía.
+       */
+      consumables: 'Insumos comprados por factura',
+      /**
+       * ⚠️ El paréntesis dice **"por encima de lo recibido"** y no "sin
+       * recibir": una factura recibida entera que se pagó de más también entra
+       * acá, y una recibida a un precio menor al pedido también. «Pagado y sin
+       * recibir» describiría solo una de las tres puertas.
+       */
+      supplierAdvances: 'Anticipos a proveedores (pagado por encima de lo recibido)',
       contributionsRefundable: `Aportes de ${nombreContraparte} (se devuelven)`,
       contributionsCapital: `Aportes de capital de ${nombreContraparte}`,
       debtRepayments: `Devoluciones a ${nombreContraparte}`,

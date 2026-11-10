@@ -256,9 +256,20 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * El orden es el de `CASH_SIGN` —el mismo en el que se muestran las líneas—,
  * así que es reproducible: dos corridas parten el mismo abono igual.
  *
- * Un reparto vacío (o todo en cero, o todo negativo) cae a `filament`: es la
- * factura sin líneas, el caso de lejos más común, y deja el abono en una línea
- * con sentido en vez de en "equipos".
+ * ⚠️ **Un reparto vacío cae a `filament`, y hay que saber qué es y qué NO es.**
+ * Es el respaldo histórico: hasta la fase B el reparto era binario y todo lo que
+ * no era impresora se contaba como filamento, así que un mapa sin categorías
+ * deja el abono en una línea con sentido en vez de en "equipos".
+ *
+ * ⚠️ **Lo que NO es: el caso de una factura sin líneas.** Ese escenario no llega
+ * acá con `{}` — la API lo resuelve antes: una factura sin líneas con un abono
+ * tiene `anticipo = pagado`, así que `repartoDeAbono` devuelve
+ * `{ supplierAdvances: 1 }` y la plata va a «Anticipos a proveedores», que es lo
+ * correcto (pagaste y no llegó nada). **Hoy ningún llamador del repo produce
+ * `{}`.** El respaldo se queda porque el motor acepta cualquier mapa de
+ * cualquier llamador —presente o futuro— y un abono sin categoría tiene que ir a
+ * alguna fila en vez de desaparecer del saldo; sin esta aclaración sería una
+ * guarda que parece cubrir un caso real y no cubre ninguno.
  */
 function repartir(
   amount: number,

@@ -70,11 +70,17 @@ describe('proporcionPorCategoria — el reparto de una factura', () => {
   });
 
   /**
-   * ⚠️ EL CASO DE HOY, y el más común de todos: una factura recién creada
-   * todavía no tiene líneas. Devolver el mapa vacío deja que el motor lo lea
-   * como filamento, que es una línea con sentido; en «equipos» sería mentira.
+   * ⚠️ **Sin líneas no se inventa una categoría: el mapa va vacío.**
+   *
+   * Y OJO con lo que esto NO dice. Una factura sin líneas **con un abono** no
+   * termina en filamento: tiene `anticipo = pagado`, así que `repartoDeAbono`
+   * devuelve `{ supplierAdvances: 1 }` y la plata va a «Anticipos a
+   * proveedores» — que es lo correcto, pagaste y no llegó nada. Lo fija el test
+   * de punta a punta de `cash.service.spec.ts`. Acá se mide solo el prorrateo
+   * de la MERCADERÍA, que sin líneas no tiene nada que repartir, y el respaldo
+   * del motor para un mapa vacío de cualquier llamador.
    */
-  it('una factura sin líneas sigue contando como filamento', () => {
+  it('sin líneas el reparto va vacío, y el motor lo respalda en filamento', () => {
     expect(proporcionPorCategoria([])).toEqual({});
 
     const l: CashLedger = {

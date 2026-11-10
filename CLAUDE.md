@@ -1407,11 +1407,33 @@ en el repo web: se sobrescribe al sincronizar.
         fracción** (`RepartoDeCompra`) que arma `repartoDeAbono` en
         `cash/helpers-de-caja.ts` mirando `materialId`, `printerId`,
         `componentId` y `nuevoTipo`.
-      - ⚠️ **El respaldo sigue siendo `filament`** (factura sin líneas, o línea
-        con el dato incompleto): es el comportamiento histórico y deja el abono
-        en una línea con sentido en vez de en «equipos». **El día que Compras
-        gane el tipo SERVICIO va en `categoriaDeLinea`**, o un alquiler se
-        contaría como filamento.
+      - ⚠️ **El respaldo de `categoriaDeLinea` es `filament`** (una línea con el
+        dato incompleto): es el comportamiento histórico y deja el abono en una
+        línea con sentido en vez de en «equipos». **Y NO es «la factura sin
+        líneas»**: ese escenario no llega al respaldo — una factura sin líneas
+        con un abono tiene `anticipo = pagado`, así que `repartoDeAbono`
+        devuelve `{ supplierAdvances: 1 }` y la plata sale por «Anticipos a
+        proveedores», que es lo correcto (pagaste y no llegó nada). El
+        requisito de la tarea 4 pedía lo contrario y **estaba mal**; lo fija
+        `cash.service.spec.ts`, «una factura SIN LÍNEAS con abono va a
+        anticipos». Hoy **ningún llamador del repo produce el mapa vacío**: el
+        respaldo del motor se queda porque acepta cualquier mapa, y está dicho
+        en su comentario para que no parezca cubrir un caso que no existe.
+      - ⚠️ **`categoriaDeLinea` es un `switch` EXHAUSTIVO con `never`.** Con un
+        respaldo que se tragara los valores nuevos de `PurchaseLineNuevoTipo`,
+        un tipo agregado mañana caería en silencio en filamento — la forma
+        exacta del bug que esto cerró cuando entró `COMPONENT`. Un comentario
+        que avisa no es una guarda: el día que Compras gane SERVICIO o
+        REPUESTO/MANTENIMIENTO, **no compila** hasta que alguien decida su fila.
+      - ⚠️ **«Insumos comprados por factura» se llama así a propósito**: la fila
+        cuenta SOLO los insumos que entraron por una factura. Un insumo cargado
+        como gasto DIRECTO cae en «Gastos generales», porque el motor clasifica
+        los gastos por `isFilament`/`isInvestment` y nada más. Eso contradice el
+        motivo de la convención («que *Filamento comprado* siga queriendo decir
+        todo el filamento, venga de factura o de compra directa») y es **deuda
+        conocida de la fase (c)**, no diseño: reclasificar movería plata entre
+        dos filas y la tabla de aceptación del dueño no lo autoriza. Lo que se
+        arregló fue el NOMBRE.
       - ⚠️ **`CashCategory` ganó `consumables` y `supplierAdvances`** (11
         líneas, no nueve). **`advertising` y `services` NO entraron**: se
         agregan en la fase (c), **junto con lo que las llene**. La regla es
@@ -1436,6 +1458,15 @@ en el repo web: se sobrescribe al sincronizar.
         detalle del asiento** (`GET /cash/breakdown/supplierAdvances` dice de
         qué factura es). Con C-0001, «Filamento comprado» pasó de −$1.803,91 a
         −$1.663,91 y nació «Anticipos a proveedores» en −$140,00.
+      - ⚠️ **La etiqueta dice «pagado POR ENCIMA de lo recibido», no «sin
+        recibir»**, porque son TRES puertas y no una: la mercadería que no
+        llegó, la factura recibida entera y **pagada de más** (ahí
+        `anticipo ≡ aFavor` siempre, no en un caso raro) y la recibida a un
+        precio real **menor** al pedido, que deja `valorRecibido < pagado` sin
+        que falte nada. Hoy no existe ninguna de las dos últimas en producción,
+        así que no mueve números. **No se agrega una categoría para el
+        excedente**: sería un valor de enum sin productor, lo mismo por lo que
+        murió `services`.
       - ⚠️ **La hoja Caja del Excel ya NO escribe sus filas a mano**: las
         recorre desde `CASH_SIGN` con un `Record<CashCategory, string>` de
         etiquetas, así que una categoría nueva **no compila** sin su texto. Con

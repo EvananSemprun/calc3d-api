@@ -95,15 +95,49 @@ export interface LineaParaReparto {
  * factura vieja —o una línea con un dato incompleto— dando el mismo número que
  * daba ayer, en una línea con sentido en vez de en "equipos".
  *
+ * ⚠️ **EL `switch` ES EXHAUSTIVO A PROPÓSITO, y eso NO es estilo.** Con un
+ * respaldo que se tragara los valores nuevos de `PurchaseLineNuevoTipo`, un tipo
+ * de línea agregado mañana caería **en silencio** en filamento — literalmente lo
+ * que pasó cuando entró `COMPONENT` en octubre y este reparto no se enteró, o
+ * sea la forma exacta del bug que esta función vino a cerrar. Un comentario que
+ * avisa no es una guarda: el `const nunca: never` convierte el olvido en un
+ * **error de compilación** que fuerza la decisión, igual que el
+ * `Record<CashCategory, string>` de la hoja Caja del Excel.
+ *
  * ⚠️ **El día que Compras gane los tipos SERVICIO y REPUESTO/MANTENIMIENTO**
  * (§5.2 del diseño de compras), van acá — con su categoría de Caja, que todavía
  * NO existe: se agrega entonces, junto con lo que la llena. Dejarlos caer en el
  * respaldo contaría un alquiler como filamento.
  */
 export function categoriaDeLinea(l: LineaParaReparto): CashCategory {
-  if (l.printerId != null || l.nuevoTipo === 'PRINTER') return 'equipment';
-  if (l.componentId != null || l.nuevoTipo === 'COMPONENT') return 'consumables';
-  return 'filament';
+  // La ficha del catálogo manda cuando está: es lo que la línea YA es.
+  if (l.printerId != null) return 'equipment';
+  if (l.componentId != null) return 'consumables';
+  if (l.materialId != null) return 'filament';
+
+  // Si no apunta a ninguna, lo que decide es qué ficha NACE al recibir.
+  switch (l.nuevoTipo) {
+    case 'PRINTER':
+      return 'equipment';
+    case 'COMPONENT':
+      return 'consumables';
+    case 'MATERIAL':
+      return 'filament';
+    case null:
+    case undefined:
+      // El respaldo histórico: hasta hoy el reparto era
+      // `if (l.printerId == null) deFilamento += monto`, o sea que todo lo que
+      // no era impresora se contaba como filamento. Mantenerlo deja una línea
+      // con el dato incompleto en una fila con sentido en vez de en "equipos".
+      return 'filament';
+    default: {
+      // Inalcanzable: el `never` es lo que impide que un tipo nuevo llegue acá
+      // sin que alguien decida su fila. Lanza en vez de adivinar, porque
+      // adivinar ES el bug (y plata mal clasificada no se ve).
+      const nunca: never = l.nuevoTipo;
+      throw new Error(`Falta decidir en qué línea de Caja cae el tipo de línea ${String(nunca)}`);
+    }
+  }
 }
 
 /**
@@ -119,8 +153,10 @@ export function categoriaDeLinea(l: LineaParaReparto): CashCategory {
  * o filamento) cuando una línea ya podía ser un insumo desde el 2026-10-20: la
  * placa de impresión de $40 de C-0001 se contaba como filamento.
  *
- * Una factura sin líneas (recién creada) devuelve el mapa vacío, y el motor lo
- * lee como filamento: es el caso de lejos más común.
+ * Una factura sin líneas devuelve el mapa VACÍO: no hay mercadería que
+ * repartir. ⚠️ **Eso no significa que su abono termine en filamento**: con una
+ * factura sin líneas el anticipo es todo lo pagado, así que `repartoDeAbono`
+ * devuelve `{ supplierAdvances: 1 }` antes de llamar a esta función.
  */
 export function proporcionPorCategoria(lineas: LineaParaReparto[]): RepartoDeCompra {
   const porCategoria = new Map<CashCategory, number>();
@@ -155,6 +191,14 @@ export function proporcionPorCategoria(lineas: LineaParaReparto[]): RepartoDeCom
  * pendiente—. Con un solo abono por factura —lo normal— es exacto. El
  * denominador es lo pagado de la factura y no su total: lo pagado de más es
  * `aFavor` y no corresponde a esta compra.
+ *
+ * ⚠️ **Un borde que hoy no se puede alcanzar, anotado para que no sorprenda:**
+ * si TODAS las líneas valieran 0 pero hubiera recepciones con precio informado,
+ * `proporcionPorCategoria` devuelve `{}` y, con un anticipo PARCIAL, la parte de
+ * mercadería se queda sin categoría y cae entera en `supplierAdvances` por la
+ * normalización del motor. No vale un test —una línea pide `quantity` positiva y
+ * `unitPrice ≥ 0`, así que una factura con todo en 0 y entregas cobradas no
+ * existe—, pero si alguna vez aparece, el número a mirar es ese.
  */
 export function repartoDeAbono(
   lineas: LineaParaReparto[],

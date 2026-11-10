@@ -2,7 +2,7 @@ import { CASH_SIGN, type CashCategory } from '../calc/cash';
 import { CashCategorySchema, type CashCategoryDto } from './api';
 
 /**
- * Las nueve líneas de la caja están declaradas DOS veces: como tipo
+ * Las líneas de la caja están declaradas DOS veces: como tipo
  * (`CashCategory`, en el motor) y como enum Zod (`CashCategorySchema`, en los
  * contratos). No es duplicación evitable — el tipo se borra al compilar y lo
  * único que frena una categoría inventada en `GET /cash/breakdown/:category`

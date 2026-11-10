@@ -2391,6 +2391,30 @@ describe('CashService.summary — el abono se reparte por el tipo REAL de cada l
     expect(r.balance.filament).toBe(0);
   });
 
+  /**
+   * ⚠️ **UNA FACTURA SIN LÍNEAS NO CUENTA COMO FILAMENTO: es un ANTICIPO.**
+   *
+   * El requisito de la tarea pedía lo contrario («una factura sin líneas sigue
+   * contando como filamento») y estaba MAL: la API no produce el mapa vacío en
+   * ese escenario, porque `invoiceTotals([], [{amount: 140}])` da
+   * `anticipo = 140` y el abono entero sale por «Anticipos a proveedores».
+   * Y es lo correcto: pagaste y no llegó nada. Los tests que afirmaban lo otro
+   * armaban el mapa a mano, o sea probaban un camino que producción no toma.
+   *
+   * Medido antes de cambiarlo: **no mueve ningún número del dueño**: los $215
+   * de abonos pertenecen a facturas CON líneas, así que hoy no existe una
+   * factura sin líneas con abonos.
+   */
+  it('una factura SIN LÍNEAS con abono va a anticipos, no a filamento', async () => {
+    const r = await servicioFalso(tablas([])).summary(ORG);
+
+    expect(r.balance.supplierAdvances).toBe(140);
+    expect(r.balance.filament).toBe(0);
+    expect(r.balance.consumables).toBe(0);
+    // Y la plata sigue saliendo UNA vez: 200 de venta − 140 abonados.
+    expect(r.balance.balance).toBe(60);
+  });
+
   it('la suma de las categorías sigue dando el mismo saldo', async () => {
     for (const lines of [lineasDeC0001(0), lineasDeC0001(1), []]) {
       const r = await servicioFalso(tablas(lines)).summary(ORG);

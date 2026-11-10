@@ -238,7 +238,7 @@ const completo = (): CashLedger => ({
   // pueden poblar.
   purchasePayments: [
     { id: 'abono-c1', date: '2026-09-13', amount: 80, payer: null, refundable: true, reparto: { consumables: 1 } },
-    { id: 'abono-c3', date: '2026-09-15', amount: 90, payer: null, refundable: true, reparto: { supplierAdvances: 1 } },
+    { id: 'abono-c2', date: '2026-09-15', amount: 90, payer: null, refundable: true, reparto: { supplierAdvances: 1 } },
   ],
   movements: [
     { id: 'mov-1', date: '2026-09-10', amount: 200, kind: 'CONTRIBUTION', refundable: true },
@@ -660,10 +660,14 @@ describe('abonos de compra: el reparto conoce todas las clases de línea', () =>
     expect(detalle.every((e) => e.id === 'ab-c1')).toBe(true);
   });
 
-  it('una factura sin líneas sigue contando como filamento', () => {
-    // Es el caso de lejos más común (una factura recién creada) y el que hay
-    // hoy: deja el abono en una línea con sentido en vez de en «equipos».
+  it('un reparto VACÍO cae en filamento: ningún abono desaparece del saldo', () => {
+    // ⚠️ Esto NO es «la factura sin líneas»: ese caso la API lo resuelve antes
+    // como anticipo (ver `cash.service.spec.ts`, «una factura SIN LÍNEAS…»), y
+    // hoy ningún llamador del repo manda `{}`. Lo que se fija acá es el
+    // respaldo del MOTOR, que acepta cualquier mapa: un abono sin categoría
+    // tiene que ir a una fila en vez de evaporarse.
     expect(businessCash(deC0001({})).filament).toBe(140);
+    expect(businessCash(deC0001({})).balance).toBe(-140);
   });
 
   it('la suma de las categorías sigue dando el mismo saldo, reparta como reparta', () => {
