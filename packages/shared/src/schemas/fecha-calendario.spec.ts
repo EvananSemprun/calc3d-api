@@ -235,7 +235,7 @@ const PUERTAS_OPCIONALES: { nombre: string; parse: (date: unknown) => unknown }[
     parse: (nextDueDate) => LoanUpdateSchema.parse({ nextDueDate }),
   },
   {
-    // SALE IMPRESO en la nota de entrega: una fecha inventada se la mostrás al
+    // SALE IMPRESO en la nota de entrega: una fecha inventada se la muestras al
     // cliente, corrida al día que el calendario sí tiene.
     nombre: 'POST /orders · deliveryDate (sale en la nota de entrega)',
     parse: (deliveryDate) =>
@@ -383,7 +383,7 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
    * No persisten nada, y por eso se habían dejado para después. Pero mienten
    * de la peor manera: `from=2026-02-30` se corre al **2 de marzo** y la lista
    * sale recortada **sin avisar** —ves menos ventas de las que hay y no te
-   * enterás—, mientras `to=2026-02-31` se corre al **3 de marzo** y te muestra
+   * enteras—, mientras `to=2026-02-31` se corre al **3 de marzo** y te muestra
    * días que no pediste. Un `?from&to` no escribe, pero es con lo que el dueño
    * mira su plata.
    *

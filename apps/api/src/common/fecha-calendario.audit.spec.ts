@@ -133,7 +133,7 @@ function bodyDeLaRuta(controller: Puerta['controller'], metodo: string) {
  * quedado afuera. El día corrido se guarda igual, y dos de las tres duelen:
  * un `nextDueDate` en marzo cuando se escribió el 30 de febrero es un
  * compromiso MAL FECHADO, y un `deliveryDate` inventado **sale impreso en la
- * nota de entrega**: la fecha corrida se la mostrás al cliente.
+ * nota de entrega**: la fecha corrida se la muestras al cliente.
  *
  * ⚠️ Van en su propia tabla porque su fecha es OPCIONAL (salvo el inicio de
  * campaña): el hermano alcanzable no es solo el día real, es también el "sin

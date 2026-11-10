@@ -594,7 +594,7 @@ describe('PurchaseInvoicesService — recibir', () => {
       rollPrice: 19,
     });
     expect(p.expense.create.mock.calls[0][0].data.materialId).toBe('mat-nuevo');
-    // ⚠️ Las DOS tablas: mirar solo la que esperás es cómo pasó desapercibido
+    // ⚠️ Las DOS tablas: mirar solo la que esperas es cómo pasó desapercibido
     // el bug simétrico (una impresora que nacía como rollo).
     expect(p.printer.create).not.toHaveBeenCalled();
   });
@@ -1003,7 +1003,7 @@ describe('PurchaseInvoicesService — el precio real tampoco mueve la caja', () 
  * A2". Y una impresora nueva es, por definición, la que no está en el catálogo:
  * es el caso normal al comprar una máquina, no el raro.
  *
- * Cada test afirma sobre **las DOS tablas**. Mirar solo la que esperás es
+ * Cada test afirma sobre **las DOS tablas**. Mirar solo la que esperas es
  * exactamente cómo este bug pasó desapercibido.
  */
 describe('PurchaseInvoicesService — recibir algo que todavía no tienes', () => {

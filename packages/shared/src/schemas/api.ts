@@ -90,7 +90,7 @@ const FECHA_OPCIONAL = z
  * peor manera, y en las DOS direcciones: los servicios hacen
  * `new Date(from)` y `new Date(\`${to}T23:59:59.999Z\`)`, así que
  * `from=2026-02-30` arranca el **2 de marzo** y la lista sale recortada **sin
- * avisar** —ves menos ventas de las que hay y no te enterás—, mientras
+ * avisar** —ves menos ventas de las que hay y no te enteras—, mientras
  * `to=2026-02-31` termina el **3 de marzo** y te muestra días que no pediste.
  * Un `?from&to` no escribe, pero es con lo que el dueño mira su plata.
  *
@@ -526,7 +526,7 @@ export const OrderCreateSchema = z.object({
    * para los que no la tienen). Lo que se cierra es el día inventado, y acá
    * duele más que en otras partes: **esta fecha SALE IMPRESA en la nota de
    * entrega** (`documents/delivery-note.service.ts`), así que un 30 de febrero
-   * corrido al 2 de marzo se lo mostrás al cliente.
+   * corrido al 2 de marzo se lo muestras al cliente.
    */
   deliveryDate: FECHA_OPCIONAL,
   status: OrderStatusSchema.default('QUOTED'),

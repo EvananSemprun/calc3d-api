@@ -10,9 +10,9 @@ import path from 'node:path';
  * Diseño en dos mitades (el mismo del panel, `calc3d-web/apps/web/src/idioma.spec.ts`):
  *
  * - Presente de voseo (`-ás`, `-és`, `-ís`): POR PATRÓN. Se marca cualquier palabra
- *   con esa terminación sin que nadie la enumere, salvo las terminadas en
- *   `-rás`/`-rés`/`-rís` (futuro del tuteo: verás, tendrás) y las de
- *   `PALABRAS_PERMITIDAS`. Una lista fija falló dos veces: dejó 19 formas sin
+ *   con esa terminación sin que nadie la enumere, salvo las de `PALABRAS_PERMITIDAS`.
+ *   Las `-rás/-rés/-rís` TAMBIÉN se marcan: excluirlas por ser futuro del tuteo
+ *   (verás) escondía el voseo de los verbos en `-rar` (esperás, mostrás, enterás). Una lista fija falló dos veces: dejó 19 formas sin
  *   corregir con todo en verde.
  * - Imperativos (`cargá`, `volvé`, `borrala`): lista explícita, porque ahí el
  *   patrón chocaría con medio diccionario (`está`, `acá`, `categoría`, `había`).
@@ -35,9 +35,19 @@ import path from 'node:path';
  */
 export const PALABRAS_PERMITIDAS = [
   'más', 'además', 'después', 'demás', 'revés', 'jamás', 'país', 'arnés', 'estás', 'estés',
+  // `-rás/-rés`: adverbios y sustantivos, medidos en este corpus.
+  'atrás', 'detrás', 'interés',
 ] as const;
 
-/** Imperativos de voseo (y con pronombre pegado). Lista explícita, ver arriba. */
+/**
+ * ⚠️ Dos listas, y SE TRATAN DISTINTO a propósito (no las «unifiques»):
+ * - `IMPERATIVOS_DE_VOSEO` depende del IDIOMA: una forma que es voseo en la API lo es
+ *   en el panel. Es IDÉNTICA en los dos repos (copiada, no importada; en el panel
+ *   se llama `FORMAS_DE_VOSEO`).
+ * - `PALABRAS_PERMITIDAS` depende del CORPUS de cada repo (qué palabras legítimas
+ *   usa): es DISTINTA en cada uno y cada entrada tiene que usarse en ESTE código.
+ * Tratar las dos como «del corpus» dejó al panel con la lista corta.
+ */
 export const IMPERATIVOS_DE_VOSEO = [
   'abonás', 'tenés', 'podés', 'tocá', 'mirá', 'dejalo', 'registrá', 'elegí',
   'hacé', 'ingresá', 'avisá', 'sacá', 'pasá', 'verificá', 'poné', 'cargá',
@@ -50,6 +60,8 @@ export const IMPERATIVOS_DE_VOSEO = [
   'cargalo', 'borrala', 'borralas', 'desactivala', 'activala', 'anulala',
   'descontinuala', 'corregila', 'reabrilo', 'anotalo', 'abonalo', 'elegilo',
   'agregalo', 'agregale', 'cambiale', 'movelas', 'ponele', 'contanos',
+  'hacelo', 'anotala', 'contalo', 'revisalas', 'usalo', 'atribuilo', 'cambiala',
+  'cambialo', 'publicala', 'sacale', 'renombrala',
   // El pronombre mismo:
   'vos',
 ] as const;
@@ -58,7 +70,7 @@ const NO_LETRA = String.raw`(?<![\p{L}\p{N}_])`;
 const NO_LETRA_DESPUES = String.raw`(?![\p{L}\p{N}_])`;
 
 const PATRON_PRESENTE = new RegExp(
-  String.raw`${NO_LETRA}[\p{L}]*(?<!r)(?:ás|és|ís)${NO_LETRA_DESPUES}`,
+  String.raw`${NO_LETRA}[\p{L}]*(?:ás|és|ís)${NO_LETRA_DESPUES}`,
   'giu',
 );
 
@@ -128,8 +140,10 @@ describe('idioma de la API y shared', () => {
   it('el patrón caza voseo que nadie enumeró y deja pasar lo legítimo', () => {
     expect(presentesDeVoseo('Si pensás o elegís algo')).toEqual(['pensás', 'elegís']);
     expect(
-      presentesDeVoseo('Después verás que estás además más aquí, tendrás el revés, jamás en el país'),
+      presentesDeVoseo('Después estás además más aquí, atrás y detrás, el revés, jamás en el país, con interés'),
     ).toEqual([]);
+    // El voseo de los verbos en -rar ya no se cuela por la excepción del futuro.
+    expect(presentesDeVoseo('lo que esperás y mostrás')).toEqual(['esperás', 'mostrás']);
   });
 
   it('la lista blanca no está vacía y cada entrada sigue usándose en el código', () => {
