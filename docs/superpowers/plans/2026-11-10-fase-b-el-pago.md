@@ -12,8 +12,15 @@ comparte es un **componente de formulario** y un **contrato de servicio**. Los c
 nuevos (`deuda`, `anticipo`, `comprometido`) son funciones **puras** en `packages/shared`,
 hermanas de `invoiceTotals`. Caja gana categorías y etiquetas; no cambia su forma de sumar.
 
-**Stack:** NestJS + Prisma (`calc3d-api/apps/api`), motor puro con decimal.js
-(`calc3d-api/packages/shared`, tests Jest), panel React (`calc3d-web/apps/web`, vitest).
+**Stack:** NestJS + Prisma (`calc3d-api/apps/api`, **tests Jest**), motor puro con decimal.js
+(`calc3d-api/packages/shared`, **tests Jest**), panel React (`calc3d-web/apps/web`,
+**vitest**: `.spec.ts` → node, `.spec.tsx` → jsdom).
+
+⚠️ **El runner NO es el mismo en los dos repos, y esta línea no lo decía.** Al despachar las
+tareas 2 y 3 afirmé que la API usaba vitest; usa **Jest** (`apps/api/package.json` →
+`jest --passWithNoTests`, y no tiene vitest instalado). No rompió nada porque los
+implementadores corren los scripts del proyecto, pero un dato de ambiente mal dicho en un
+despacho es exactamente lo que hace perder una tarde.
 
 **Spec:** [`../specs/2026-11-10-compras-y-pagos-design.md`](../specs/2026-11-10-compras-y-pagos-design.md)
 
