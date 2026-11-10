@@ -1333,6 +1333,14 @@ en el repo web: se sobrescribe al sincronizar.
     `GET /loans/overview`, junto al del prestamista y el del propietario. Hasta
     acá "cuánto debe el negocio" estaba partido: las facturas de compra sin
     pagar vivían solo en Compras y **no aparecían en ningún total**.
+    - ⚠️ **Desde la fase B (2026-11-10) este bloque es SOLO lo RECIBIDO y no
+      pagado** (`deuda` de `invoiceTotals`), no el `saldo` de la factura. Lo
+      pedido que todavía no llegó **no se debe**: va aparte como
+      **`comprometido`** (`totals.comprometido`, con su propio conteo
+      `facturasComprometidas`), y **no entra en `totals.total`**. Una factura
+      parcialmente recibida cuenta en las dos cuentas. Con las tres facturas
+      abiertas de producción, «A proveedores» pasó de $334 a $0 y
+      «Comprometido» nació en $334.
     - **Nada nuevo se guarda ni se recalcula.** `LoansService` pide las facturas
       a la MISMA `PurchaseInvoicesService` que usa Compras (que ya les pega
       `invoiceTotals`) y las agrupa con `deudaPorProveedor()`

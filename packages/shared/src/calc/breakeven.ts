@@ -86,14 +86,15 @@ export interface EquilibrioYCompromiso {
   /** Los tres niveles del mes. ⚠️ Sin lo comprometido adentro. */
   niveles: BreakEvenLevels;
   /**
-   * Lo que se debe de facturas de compra (`totals.proveedores` de
-   * `GET /loans/overview`). Va AL LADO del equilibrio, nunca sumado.
+   * Lo comprometido en facturas de compra: lo pedido y no recibido
+   * (`totals.comprometido` de `GET /loans/overview`; ya NO `totals.proveedores`,
+   * que es solo lo recibido y no pagado). Va AL LADO del equilibrio, nunca sumado.
    *
    * ⚠️ Lo pagado **de más** no se resta acá: no compensa lo que se debe en otra
    * factura (decisión de la Tarea 3) y restarlo inventaría un pago.
    */
   compromiso: number;
-  /** Cuántas facturas con saldo lo componen, para que el aviso sea concreto. */
+  /** Cuántas facturas comprometidas lo componen (`facturasComprometidas`), para que el aviso sea concreto. */
   facturas: number;
   /** Si hay algo que decir al lado del equilibrio. */
   mostrar: boolean;

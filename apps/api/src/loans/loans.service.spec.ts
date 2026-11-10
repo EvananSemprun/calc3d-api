@@ -70,11 +70,11 @@ const cashFalso = () => ({
 
 /**
  * Las facturas llegan por la `PurchaseInvoicesService` **de verdad**, no por un
- * mock que devuelva saldos escritos a mano.
+ * mock que devuelva deudas escritas a mano.
  *
  * ⚠️ Es la diferencia entre probar el agrupador y probar la pantalla: el saldo
  * de una factura y la regla del abono anulado viven en `invoiceTotals`, y un
- * mock con `saldo: 40` ya adentro pasaría igual si alguien rompiera esa regla
+ * mock con `deuda: 40` ya adentro pasaría igual si alguien rompiera esa regla
  * en el camino. Así, un abono anulado contado como pagado tumba un test.
  */
 const facturasFalsas = (facturas: Record<string, unknown>[] = []) =>
@@ -143,8 +143,11 @@ const lineaCruda = (quantity: number, unitPrice: number, received = 0) => ({
   received,
   /**
    * Las recepciones de la línea: sus gastos, que el `include` de Compras trae.
-   * Acá siempre vacías porque nada llegó todavía — y una línea sin recibir vale
-   * lo PEDIDO, que es lo único que mira la deuda con el proveedor.
+   * Acá siempre vacías: lo recibido sin recepción registrada vale lo PEDIDO.
+   *
+   * ⚠️ **Ojo con `received`**: la deuda con el proveedor es SOLO lo recibido y
+   * no pagado. Una línea con `received = 0` (el default) no suma deuda: suma
+   * COMPROMETIDO. Para modelar deuda, el fixture tiene que recibir la línea.
    */
   expenses: [] as Record<string, unknown>[],
 });

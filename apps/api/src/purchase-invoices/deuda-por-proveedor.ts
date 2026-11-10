@@ -102,8 +102,9 @@ export function deudaPorProveedor(facturas: FacturaParaDeuda[]): DeudaProveedore
   const porProveedor = new Map<string | null, DeudaConProveedor>();
 
   for (const f of facturas) {
-    // ⚠️ Una factura ANULADA no se debe: no entra ni con su saldo ni con su
-    // pagado de más. Es el primer modo de que el número mienta.
+    // ⚠️ Una factura ANULADA no se debe: no entra ni con su deuda, ni con su
+    // compromiso, ni con su pagado de más. Es el primer modo de que el número
+    // mienta.
     if (f.voidedAt != null) continue;
 
     const deuda = Math.max(f.deuda, 0);

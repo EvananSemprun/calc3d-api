@@ -21,7 +21,7 @@ const factura = (over: Partial<FacturaParaDeuda> = {}): FacturaParaDeuda => ({
 });
 
 describe('deudaPorProveedor — agrupa y suma', () => {
-  it('suma los saldos de cada proveedor y el total es la suma de los grupos', () => {
+  it('suma las deudas de cada proveedor y el total es la suma de los grupos', () => {
     const r = deudaPorProveedor([
       factura({ supplier: PROV_A, deuda: 30 }),
       factura({ supplier: PROV_A, deuda: 12.5 }),
@@ -81,7 +81,7 @@ describe('deudaPorProveedor — agrupa y suma', () => {
 });
 
 describe('deudaPorProveedor — una factura ANULADA no se debe', () => {
-  it('su saldo queda fuera del grupo y del total', () => {
+  it('su deuda queda fuera del grupo y del total', () => {
     const r = deudaPorProveedor([
       factura({ supplier: PROV_A, deuda: 40 }),
       factura({ supplier: PROV_A, deuda: 1000, voidedAt: '2026-10-09T00:00:00.000Z' }),
@@ -234,6 +234,9 @@ describe('deudaPorProveedor — deuda real y comprometido', () => {
     const r = deudaPorProveedor(ABIERTAS);
 
     expect(r.total).toBe(0);
+    // ⚠️ Sin esto el test pasaba con `groups` vacío: `every` sobre [] es true, y
+    // «las tres con deuda 0» no se distinguía de «las tres se descartaron».
+    expect(r.groups).toHaveLength(2);
     expect(r.groups.every((g) => g.total === 0)).toBe(true);
   });
 
@@ -248,7 +251,7 @@ describe('deudaPorProveedor — deuda real y comprometido', () => {
 
   /**
    * ⚠️ EL TEST MÁS IMPORTANTE DE LA TAREA. Hoy el guard descarta una factura sin
-   * saldo ni a favor: con `deuda` en lugar de `saldo`, las tres valen 0 y se
+   * deuda ni a favor: con `deuda` en lugar de `saldo`, las tres valen 0 y se
    * descartarían ANTES de que nadie sume el compromiso.
    */
   it('una factura con SOLO compromiso no se descarta', () => {
@@ -312,5 +315,14 @@ describe('deudaPorProveedor — deuda real y comprometido', () => {
     ]);
 
     expect(r.groups.map((g) => g.supplierId)).toEqual(['d', 'm', 'z']);
+  });
+
+  it('a igualdad de deuda y de comprometido, desempata por nombre', () => {
+    const r = deudaPorProveedor([
+      factura({ supplier: { id: 'z', name: 'Zeta' }, deuda: 5, comprometido: 20 }),
+      factura({ supplier: { id: 'a', name: 'Alfa' }, deuda: 5, comprometido: 20 }),
+    ]);
+
+    expect(r.groups.map((g) => g.supplierId)).toEqual(['a', 'z']);
   });
 });
