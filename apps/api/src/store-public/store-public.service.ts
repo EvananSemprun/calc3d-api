@@ -124,8 +124,18 @@ interface PublicBanner {
   kind: 'HERO' | 'TEXTO' | 'CATEGORIA';
   title: string;
   subtitle: string | null;
-  /** null en los de TEXTO: no tienen imagen. */
+  /** El arte al costado del texto. null en los de TEXTO: no tienen imagen. */
   imageUrl: string | null;
+  /**
+   * EL FONDO del hero, a todo el ancho detrás del texto. Solo en HERO; null en el resto
+   * y en los de portada que no lo cargaron.
+   *
+   * ⚠️ **Guardar un campo y PUBLICARLO son dos cambios.** Este repo ya pagó esa lección
+   * con los tramos de precio: el panel aprendió a guardarlos, los tests quedaron verdes
+   * y esta proyección —que es la que ve la tienda— nunca se tocó, así que durante un día
+   * la ficha mostró un precio y el servidor cobró otro.
+   */
+  backgroundUrl: string | null;
   /** Solo en CATEGORIA: el slug de la categoría donde se muestra. */
   categorySlug: string | null;
   linkType: 'NONE' | 'CATEGORY' | 'PRODUCT' | 'URL';
@@ -321,6 +331,7 @@ export class StorePublicService {
           title: b.title,
           subtitle: b.subtitle,
           imageUrl: b.imageKey ? this.storage.publicUrl(b.imageKey) : null,
+          backgroundUrl: b.backgroundKey ? this.storage.publicUrl(b.backgroundKey) : null,
           categorySlug: b.category?.slug ?? null,
           linkType: vivo ? b.linkType : 'NONE',
           linkValue: vivo ? b.linkValue : null,

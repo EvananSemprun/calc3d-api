@@ -318,6 +318,17 @@ export const StoreBannerCreateSchema = z
      * exigida por tipo en el `superRefine`: un banner de TEXTO no tiene imagen.
      */
     imageKey: z.string().min(1, 'Falta la imagen').max(200).nullable().optional(),
+    /**
+     * EL FONDO del hero: la imagen grande que se ve detrás del texto, a todo el ancho.
+     * Solo en HERO.
+     *
+     * ⚠️ Es OTRA cosa que `imageKey`, que es el arte al costado del texto (el que
+     * reemplaza al banano). Un banner de portada puede llevar las dos, solo el fondo —y
+     * entonces el título va sobre la foto, que es como se ve la mayoría de las campañas—
+     * o solo el arte, que es como funcionaba hasta el 2026-11-11. Lo único que no puede
+     * es no llevar ninguna.
+     */
+    backgroundKey: z.string().min(1).max(200).nullable().optional(),
     /** Categoría donde se muestra. Solo en CATEGORIA. */
     categoryId: z.string().max(60).nullable().optional(),
     linkType: StoreBannerLinkTypeSchema.default('NONE'),
@@ -329,16 +340,26 @@ export const StoreBannerCreateSchema = z
     // Cada tipo EXIGE lo suyo y PROHÍBE lo ajeno. Lo segundo importa tanto como lo
     // primero: un campo que el tipo no usa, guardado porque el formulario lo ofrecía,
     // después alguien lo lee como información.
-    const falta = (campo: 'imageKey' | 'categoryId', message: string) =>
+    const falta = (campo: 'imageKey' | 'backgroundKey' | 'categoryId', message: string) =>
       ctx.addIssue({ code: 'custom', path: [campo], message });
 
     if (v.kind === 'TEXTO') {
       if (v.imageKey) falta('imageKey', 'Un banner de texto no lleva imagen');
+      if (v.backgroundKey) falta('backgroundKey', 'Un banner de texto no lleva fondo');
       if (v.categoryId) falta('categoryId', 'Un banner de texto no va en una categoría');
-    } else {
+    } else if (v.kind === 'CATEGORIA') {
       if (!v.imageKey) falta('imageKey', 'Falta la imagen');
-      if (v.kind === 'CATEGORIA' && !v.categoryId) falta('categoryId', 'Elige la categoría donde se muestra');
-      if (v.kind === 'HERO' && v.categoryId) falta('categoryId', 'Un banner de portada no va en una categoría');
+      // El fondo es del hero: en una categoría la imagen YA es el banner entero.
+      if (v.backgroundKey) falta('backgroundKey', 'El fondo es solo para los banners de portada');
+      if (!v.categoryId) falta('categoryId', 'Elige la categoría donde se muestra');
+    } else {
+      // HERO: le sirve cualquiera de las dos, pero alguna tiene que haber — sin ninguna
+      // la portada quedaría con un título flotando sobre el fondo liso de siempre, que es
+      // peor que el hero de marca que reemplaza.
+      if (!v.imageKey && !v.backgroundKey) {
+        falta('imageKey', 'Sube el fondo, la imagen de al lado, o las dos');
+      }
+      if (v.categoryId) falta('categoryId', 'Un banner de portada no va en una categoría');
     }
 
     if (v.linkType === 'NONE') {

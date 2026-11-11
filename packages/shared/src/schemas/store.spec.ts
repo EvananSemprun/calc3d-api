@@ -230,3 +230,74 @@ describe('la insignia «Nuevo» no se escribe a mano', () => {
     expect(StoreProductCreateSchema.safeParse(base).success).toBe(true);
   });
 });
+
+/**
+ * EL FONDO DEL HERO (2026-11-12).
+ *
+ * Es OTRA imagen que `imageKey`: aquella es el arte al costado del texto —el que
+ * reemplaza al banano— y ésta es la grande que se ve detrás, a todo el ancho. Lo que el
+ * contrato decide es QUIÉN puede llevarla y cuándo un banner se queda sin ninguna.
+ */
+describe('StoreBannerCreateSchema — el fondo del hero', () => {
+  const hero = { title: 'Navidad', kind: 'HERO' as const, linkType: 'NONE' as const };
+
+  it('el hero admite solo el fondo: el título va sobre la foto', () => {
+    const r = StoreBannerCreateSchema.safeParse({ ...hero, backgroundKey: 'org/store/banners/f.png' });
+    expect(r.success).toBe(true);
+  });
+
+  it('el hero admite solo el arte, como funcionaba antes', () => {
+    expect(StoreBannerCreateSchema.safeParse({ ...hero, imageKey: 'org/store/banners/a.png' }).success).toBe(true);
+  });
+
+  it('y admite las dos', () => {
+    const r = StoreBannerCreateSchema.safeParse({
+      ...hero,
+      imageKey: 'org/store/banners/a.png',
+      backgroundKey: 'org/store/banners/f.png',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('pero NO admite un hero sin ninguna imagen', () => {
+    // Sería un título flotando sobre el fondo liso de siempre: peor que el hero de marca
+    // que viene a reemplazar.
+    const r = StoreBannerCreateSchema.safeParse(hero);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].message).toMatch(/fondo/i);
+  });
+
+  it('el fondo es SOLO del hero: una categoría lo rechaza', () => {
+    // En una categoría la imagen YA es el banner entero; un fondo ahí no tiene dónde ir.
+    const r = StoreBannerCreateSchema.safeParse({
+      title: 'Oferta',
+      kind: 'CATEGORIA',
+      categoryId: 'c1',
+      imageKey: 'org/store/banners/a.png',
+      backgroundKey: 'org/store/banners/f.png',
+      linkType: 'NONE',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('un banner de TEXTO tampoco lleva fondo', () => {
+    const r = StoreBannerCreateSchema.safeParse({
+      title: 'Envíos a todo el país',
+      kind: 'TEXTO',
+      backgroundKey: 'org/store/banners/f.png',
+      linkType: 'NONE',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('la categoría SIGUE exigiendo su imagen', () => {
+    // El hermano alcanzable: aflojar la regla del hero no puede aflojar la de al lado.
+    const r = StoreBannerCreateSchema.safeParse({
+      title: 'Oferta',
+      kind: 'CATEGORIA',
+      categoryId: 'c1',
+      linkType: 'NONE',
+    });
+    expect(r.success).toBe(false);
+  });
+});

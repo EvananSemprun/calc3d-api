@@ -59,6 +59,7 @@ const BANNER = {
   title: 'Promo de temporada',
   subtitle: 'Hasta agotar',
   imageKey: `${ORG}/store/banners/promo.png`,
+  backgroundKey: null as string | null,
   kind: 'HERO' as const,
   category: null as { slug: string } | null,
   linkType: 'CATEGORY' as const,
@@ -205,6 +206,33 @@ describe('Banners públicos', () => {
     expect(banners[0].imageUrl).toBe(`https://cdn.example/${ORG}/store/banners/promo.png`);
     // 'imageKey' ya se verifica ausente en el test de arriba (lista blanca).
     expect(banners[0]).not.toHaveProperty('imageKey');
+  });
+
+  it('publica el FONDO del hero en `backgroundUrl`, que es otro campo que `imageUrl`', async () => {
+    // ⚠️ Este test existe por una lección cara: guardar un campo y PUBLICARLO son dos
+    // cambios. Con los tramos de precio el panel aprendió a guardarlos, los tests
+    // quedaron verdes y esta proyección —la que ve la tienda— nunca se tocó: durante un
+    // día la ficha mostró un precio y el servidor cobró otro.
+    const { service } = makeService({
+      bannerFindMany: jest.fn().mockResolvedValue([
+        { ...BANNER, backgroundKey: `${ORG}/store/banners/fondo.png`, linkType: 'NONE', linkValue: null },
+      ]),
+    });
+    const { banners } = await service.banners();
+    expect(banners[0].backgroundUrl).toBe(`https://cdn.example/${ORG}/store/banners/fondo.png`);
+    // Las dos imágenes viajan por separado: el fondo no pisa al arte de al lado.
+    expect(banners[0].imageUrl).toBe(`https://cdn.example/${ORG}/store/banners/promo.png`);
+    // La clave interna del bucket NO sale: con ella se podrían construir rutas a objetos
+    // de otra organización.
+    expect(banners[0]).not.toHaveProperty('backgroundKey');
+  });
+
+  it('un banner SIN fondo lo publica como null, no lo omite', async () => {
+    // El hermano alcanzable: sin él, una proyección que nunca devolviera el campo pasaría
+    // el test de arriba si el fixture fuera el único con fondo.
+    const { service } = makeService();
+    const { banners } = await service.banners();
+    expect(banners[0].backgroundUrl).toBeNull();
   });
 
   it('sin STORE_ORGANIZATION_ID no responde', async () => {

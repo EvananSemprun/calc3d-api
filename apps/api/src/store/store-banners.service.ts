@@ -34,9 +34,13 @@ export class StoreBannersService {
     });
   }
 
-  private withUrl = <T extends { imageKey: string | null }>(b: T) => ({
+  private withUrl = <T extends { imageKey: string | null; backgroundKey: string | null }>(b: T) => ({
     ...b,
     imageUrl: b.imageKey ? this.storage.publicUrl(b.imageKey) : null,
+    // ⚠️ El FONDO del hero es otra imagen que el arte de al lado: las dos van por
+    // separado hasta la tienda. Olvidarse de exponer una acá es el bug que ya pasó con
+    // los tramos de precio — guardado bien y publicado como `null`.
+    backgroundUrl: b.backgroundKey ? this.storage.publicUrl(b.backgroundKey) : null,
   });
 
   async list(organizationId: string) {
@@ -118,6 +122,7 @@ export class StoreBannersService {
 
   async create(organizationId: string, dto: StoreBannerCreateDto) {
     if (dto.imageKey) await this.assertImage(organizationId, dto.imageKey);
+    if (dto.backgroundKey) await this.assertImage(organizationId, dto.backgroundKey);
     await this.assertLink(organizationId, dto);
     await this.assertCategoria(organizationId, dto.categoryId);
     const row = await this.prisma.storeBanner.create({
@@ -126,6 +131,7 @@ export class StoreBannersService {
         title: dto.title,
         subtitle: dto.subtitle ?? null,
         imageKey: dto.imageKey,
+        backgroundKey: dto.backgroundKey ?? null,
         linkType: dto.linkType,
         linkValue: this.linkValueFor(dto),
         visible: dto.visible,
@@ -139,6 +145,8 @@ export class StoreBannersService {
     const current = await this.prisma.storeBanner.findFirst({ where: { id, organizationId } });
     if (!current) throw new NotFoundException('Banner no encontrado');
     if (dto.imageKey && dto.imageKey !== current.imageKey) await this.assertImage(organizationId, dto.imageKey);
+    if (dto.backgroundKey && dto.backgroundKey !== current.backgroundKey)
+      await this.assertImage(organizationId, dto.backgroundKey);
     await this.assertLink(organizationId, dto);
     await this.assertCategoria(organizationId, dto.categoryId);
     const row = await this.prisma.storeBanner.update({
@@ -147,6 +155,7 @@ export class StoreBannersService {
         title: dto.title,
         subtitle: dto.subtitle ?? null,
         imageKey: dto.imageKey,
+        backgroundKey: dto.backgroundKey ?? null,
         linkType: dto.linkType,
         linkValue: this.linkValueFor(dto),
         visible: dto.visible,
@@ -156,6 +165,8 @@ export class StoreBannersService {
     // La imagen vieja se borra de R2 si cambió o si el banner dejó de tener una (pasó a
     // ser de TEXTO). Mejor esfuerzo, como el resto de los borrados del bucket.
     if (current.imageKey && dto.imageKey !== current.imageKey) await this.storage.remove(current.imageKey);
+    if (current.backgroundKey && dto.backgroundKey !== current.backgroundKey)
+      await this.storage.remove(current.backgroundKey);
     return this.withUrl(row);
   }
 
@@ -178,6 +189,7 @@ export class StoreBannersService {
     await this.prisma.storeBanner.delete({ where: { id } });
     // Un banner de TEXTO no tiene imagen que borrar.
     if (b.imageKey) await this.storage.remove(b.imageKey);
+    if (b.backgroundKey) await this.storage.remove(b.backgroundKey);
     return { ok: true };
   }
 }

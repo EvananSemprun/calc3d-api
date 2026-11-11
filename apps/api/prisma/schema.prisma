@@ -1012,6 +1012,14 @@ model StoreBanner {
   /// Obligatoria en HERO y CATEGORIA; null en TEXTO. Lo exige el contrato Zod por tipo.
   imageKey  String?
 
+  /// EL FONDO del hero: la imagen grande detrás del texto, a todo el ancho. Solo en HERO.
+  ///
+  /// ⚠️ Es OTRA cosa que `imageKey`, que es el arte al costado (el que reemplaza al
+  /// banano). Un banner de portada puede llevar las dos, solo el fondo —y entonces el
+  /// título va sobre la foto— o solo el arte, que es como funcionaba hasta 2026-11-11.
+  /// Lo único que el contrato no deja es que no lleve ninguna.
+  backgroundKey String?
+
   /// Solo en CATEGORIA: la categoría donde se muestra. Restrict, no Cascade: borrar una
   /// categoría con banner tiene que fallar y avisar, no llevárselo en silencio.
   category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
