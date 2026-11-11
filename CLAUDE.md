@@ -338,6 +338,34 @@ en el repo web: se sobrescribe al sincronizar.
         publica.
       - ⚠️ **El destino se valida ANTES de subir la imagen** (`17ec7bd`, en el
         panel): al revés, un destino inválido dejaba el objeto huérfano en R2.
+      - **EL FONDO DEL HERO (2026-11-11, shared 0.74.0, migración
+        `20261111180000_fondo_del_banner`, aditiva y nullable)** —
+        `StoreBanner.backgroundKey`: la imagen GRANDE que va detrás del texto, a
+        todo el ancho, aparte del arte que reemplaza al banano. Son DOS imágenes
+        independientes y el contrato lo dice **tipo por tipo**, en vez de dejarlo
+        al criterio de quien dibuje:
+        - **HERO exige AL MENOS UNA de las dos**, y el arte pasó a ser
+          **OPCIONAL** (decisión del dueño). Un hero sin ninguna no es un banner:
+          es un título flotando, y el filtro de la tienda lo descarta igual.
+        - **CATEGORIA exige el arte y PROHÍBE el fondo**: su tarjeta no tiene
+          dónde dibujarlo, así que aceptarlo era guardar un objeto en R2 que
+          nadie muestra nunca. **TEXTO** sigue prohibiendo las dos.
+        - ⚠️ **Se publica `backgroundUrl`, JAMÁS la clave** — con la clave se
+          podría construir una ruta a objetos de otra organización (la misma
+          regla que `customImageUrl` de la bandeja).
+        - ⚠️ **La proyección pública se agregó A MANO en
+          `store-public.service.ts`**, que es donde vive la lista blanca. Es
+          exactamente el paso que se olvidó con los tramos por precio fijo el
+          09/11: **guardar un campo y PUBLICARLO son dos cambios**, y el primero
+          deja todos los tests en verde.
+        - Reemplazar el fondo o borrar el banner borra el objeto viejo de R2
+          (mejor esfuerzo), como el resto de las imágenes del módulo.
+        - ⚠️ **Y había un tercer lugar que decidía si el banner se ve**: el
+          filtro `bannersDeHero` de la tienda pedía `imageUrl`, así que un
+          banner con solo fondo se guardaba bien y la portada **no lo mostraba
+          nunca, sin un solo error**. Ver el `CLAUDE.md` de `calc3d-landing`.
+        - Regresión: 7 tests en `schemas/store.spec.ts` y 2 en
+          `store-public.service.spec.ts` (publica la URL, nunca la clave).
     - **Flash Sale (shared 0.54.0)** — tres columnas en `Settings`
       (`saleTitle`, `saleStartsAt`, `saleEndsAt`) + `GET /public/store/sale`.
       - ⚠️ **`activeSale(settings, now)` es la ÚNICA definición de "oferta
