@@ -1173,10 +1173,29 @@ export type PurchaseInvoiceUpsertDto = z.infer<typeof PurchaseInvoiceUpsertSchem
 export const PurchaseInvoicePaymentSchema = z
   .object({
     date: FECHA,
-    amount: z.number().positive('El abono tiene que ser mayor que cero'),
+    /**
+     * En USD. ⚠️ **Opcional solo porque un abono en otra moneda NO lo trae**: el
+     * servidor lo calcula con la tasa vigente y descarta el que llegue. Sin el
+     * par foráneo sigue siendo obligatorio (ver el `superRefine`).
+     */
+    amount: z.number().positive('El abono tiene que ser mayor que cero').optional(),
+    /**
+     * PAGADO EN OTRA MONEDA: el NOMBRE de la tasa (su identidad; no la moneda,
+     * porque puede haber dos tasas de la misma) y lo que se pagó en ella.
+     * ⚠️ **La TASA no viaja**: la busca el servidor. Si viajara, quien tenga el
+     * token elegiría cuánto vale lo que pagó.
+     */
+    currencyLabel: z.string().trim().min(1).optional().nullable(),
+    amountForeign: z
+      .number()
+      .positive('Lo pagado en esa moneda tiene que ser mayor que cero')
+      .optional()
+      .nullable(),
     /** QUIÉN puso la plata. `null` = la caja del negocio. */
     counterpartyId: z.string().min(1).optional().nullable(),
     accountId: z.string().min(1).optional().nullable(),
+    /** Si lo puso una contraparte: ¿se le devuelve o fue aporte? Solo se lee con contraparte. */
+    refundable: z.boolean().optional(),
     note: z.string().trim().optional().nullable(),
     /**
      * TOMADO DEL SALDO A FAVOR: de qué factura del MISMO proveedor sale.
@@ -1198,7 +1217,35 @@ export const PurchaseInvoicePaymentSchema = z
     // que no salió nada.
     (p) => !p.tomadoDeFacturaId || (!p.counterpartyId && !p.accountId),
     'Un abono tomado del saldo a favor no lo paga nadie ni sale de ninguna cuenta: esa plata ya salió cuando pagaste de más',
-  );
+  )
+  .refine(
+    // ⚠️ El saldo a favor es un saldo DERIVADO en USD: no hubo un pago en otra
+    // moneda que congelar, así que una tasa acá sería inventada. Mismo criterio
+    // que la prohibición de arriba.
+    (p) => !p.tomadoDeFacturaId || (p.currencyLabel == null && p.amountForeign == null),
+    'Un abono tomado del saldo a favor no se paga en otra moneda: es un saldo en USD y no hubo pago que convertir',
+  )
+  .superRefine((p, ctx) => {
+    const tieneMoneda = p.currencyLabel != null;
+    const tieneMonto = p.amountForeign != null;
+    // El par va COMPLETO: una moneda sin monto (o al revés) no se puede convertir.
+    if (tieneMoneda !== tieneMonto) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [tieneMoneda ? 'amountForeign' : 'currencyLabel'],
+        message: 'Para pagar en otra moneda hacen falta la moneda y lo pagado en ella',
+      });
+      return;
+    }
+    // En USD el monto es obligatorio; en otra moneda lo calcula el servidor.
+    if (!tieneMoneda && p.amount == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'El abono tiene que ser mayor que cero',
+      });
+    }
+  });
 export type PurchaseInvoicePaymentDto = z.infer<typeof PurchaseInvoicePaymentSchema>;
 
 /** Anular pide motivo: un abono anulado sin explicación es un agujero. */

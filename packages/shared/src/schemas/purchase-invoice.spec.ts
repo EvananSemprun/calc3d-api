@@ -363,3 +363,67 @@ describe('PurchaseInvoiceUpsertSchema: el código lo pone el servidor', () => {
     expect(PurchaseInvoiceUpsertSchema.parse({ ...ALTA, reference: 'A-001' }).reference).toBe('A-001');
   });
 });
+
+/**
+ * EL ABONO EN OTRA MONEDA (fase B, tarea 5).
+ *
+ * ⚠️ El cliente manda lo que el dueño escribió —la tasa por su NOMBRE y los
+ * bolívares— y **el servidor calcula el USD**. Nunca viaja la tasa ni el monto
+ * en USD como verdad: con cualquiera de los dos, el dueño (o quien tenga el
+ * token) elegiría cuánto vale lo que pagó.
+ */
+describe('PurchaseInvoicePaymentSchema: el abono en otra moneda', () => {
+  const enBs = { date: '2026-11-12', currencyLabel: 'Binance / USDT', amountForeign: 1900 };
+
+  it('moneda + monto en esa moneda, sin monto en USD, se acepta', () => {
+    const r = PurchaseInvoicePaymentSchema.safeParse(enBs);
+    expect(r.success).toBe(true);
+  });
+
+  it('un abono en USD sigue exigiendo su monto', () => {
+    expect(PurchaseInvoicePaymentSchema.safeParse({ date: '2026-11-12' }).success).toBe(false);
+    expect(PurchaseInvoicePaymentSchema.safeParse({ date: '2026-11-12', amount: 7.6 }).success).toBe(true);
+  });
+
+  it.each([
+    ['sin la moneda', { date: '2026-11-12', amountForeign: 1900 }],
+    ['sin el monto en esa moneda', { date: '2026-11-12', currencyLabel: 'Binance / USDT' }],
+  ])('el par va completo: %s se rechaza', (_, cuerpo) => {
+    expect(PurchaseInvoicePaymentSchema.safeParse(cuerpo).success).toBe(false);
+  });
+
+  it('el monto en esa moneda tiene que ser positivo', () => {
+    expect(PurchaseInvoicePaymentSchema.safeParse({ ...enBs, amountForeign: 0 }).success).toBe(false);
+  });
+
+  it('la TASA no viaja: si llega, el schema la descarta', () => {
+    const r = PurchaseInvoicePaymentSchema.safeParse({ ...enBs, rate: 1 });
+    expect(r.success).toBe(true);
+    if (r.success) expect('rate' in r.data).toBe(false);
+  });
+
+  it('tomado del saldo a favor PROHÍBE el par foráneo (no hubo pago en otra moneda)', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({ ...enBs, tomadoDeFacturaId: 'f-vieja' }).success,
+    ).toBe(false);
+  });
+
+  it('…y su hermano alcanzable: tomado del saldo sin par foráneo SÍ entra', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({
+        date: '2026-11-12',
+        amount: 15,
+        tomadoDeFacturaId: 'f-vieja',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('`refundable` es un booleano opcional', () => {
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({ date: '2026-11-12', amount: 5, refundable: false }).success,
+    ).toBe(true);
+    expect(
+      PurchaseInvoicePaymentSchema.safeParse({ date: '2026-11-12', amount: 5, refundable: 'no' }).success,
+    ).toBe(false);
+  });
+});

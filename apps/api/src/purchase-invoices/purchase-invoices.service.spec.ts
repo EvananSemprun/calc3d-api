@@ -35,7 +35,21 @@ const FILAS = {
     { id: 'cp-mia', organizationId: ORG },
     { id: 'cp-ajena', organizationId: OTRA },
   ],
-  cashAccount: [{ id: 'acc-mia', organizationId: ORG }],
+  cashAccount: [
+    { id: 'acc-mia', organizationId: ORG },
+    { id: 'acc-ajena', organizationId: OTRA },
+  ],
+  /**
+   * ⚠️ `ExchangeRate` es un HISTORIAL: la vigente de un label es la fila más
+   * nueva. Hay una vieja a propósito (240) para que usarla se note, y la misma
+   * etiqueta en OTRA organización (999) para que el aislamiento se note.
+   */
+  exchangeRate: [
+    { id: 'r1', organizationId: ORG, label: 'Binance / USDT', currencyCode: 'VES', rate: 240, createdAt: new Date('2026-11-01') },
+    { id: 'r2', organizationId: ORG, label: 'Binance / USDT', currencyCode: 'VES', rate: 250, createdAt: new Date('2026-11-10') },
+    { id: 'r3', organizationId: OTRA, label: 'Binance / USDT', currencyCode: 'VES', rate: 999, createdAt: new Date('2026-11-11') },
+    { id: 'r4', organizationId: OTRA, label: 'Solo de otra', currencyCode: 'VES', rate: 500, createdAt: new Date('2026-11-11') },
+  ],
 };
 
 /**
@@ -109,6 +123,14 @@ function makePrisma(
     },
     counterparty: tabla(FILAS.counterparty),
     cashAccount: tabla(FILAS.cashAccount),
+    exchangeRate: {
+      // Ordena como la base: sin esto "la vigente" se probaría con el orden del array.
+      findFirst: jest.fn(({ where, orderBy }: Consulta) =>
+        Promise.resolve(
+          ordenar(FILAS.exchangeRate.filter((f) => coincide(f, where)), orderBy)[0] ?? null,
+        ),
+      ),
+    },
     purchaseInvoice: {
       // ⚠️ Filtra por el `where` como el resto: una factura de OTRA
       // organización no se alcanza. Devolverla siempre hacía pasar los tests de
@@ -2241,5 +2263,139 @@ describe('la tarifa de mantenimiento por hora no se mueve al recibir una compra'
 
     expect(despues.spent).toBe(162);
     expect(Number(despues.ratePerHour)).toBeGreaterThan(Number(antes.ratePerHour));
+  });
+});
+
+
+/**
+ * EL ABONO LLEVA SU MONEDA, SU TASA Y SU CUENTA (fase B, tarea 5).
+ *
+ * ⚠️ Lo que el dueño pagó en bolívares se congela tal cual: los Bs, la tasa y el
+ * NOMBRE de la tasa. El USD lo calcula el servidor con la tasa vigente de ese
+ * nombre y descarta el que traiga el cliente.
+ */
+describe('PurchaseInvoicesService — el abono en otra moneda', () => {
+  const factura = () => ({ ...FACTURA_VACIA, lines: [linea()] });
+  const enBs = { date: '2026-11-12', currencyLabel: 'Binance / USDT', amountForeign: 1900 };
+  const guardado = (p: ReturnType<typeof makePrisma>) =>
+    p.purchaseInvoicePayment.create.mock.calls[0][0].data;
+
+  it('un abono en Bs guarda monto original, moneda, tasa vigente y monto en USD', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', enBs as never);
+    const d = guardado(p);
+    expect(d.amountForeign).toBe(1900);
+    expect(d.rate).toBe(250); // la MÁS NUEVA; con la vieja (240) daría 7,9167
+    expect(d.currencyCode).toBe('VES');
+    expect(d.currencyLabel).toBe('Binance / USDT');
+    expect(d.amount).toBe(7.6);
+  });
+
+  it('el monto en USD lo calcula el SERVIDOR: el que manda el cliente se descarta', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', { ...enBs, amount: 999 } as never);
+    expect(guardado(p).amount).toBe(7.6);
+  });
+
+  it('la tasa se busca en MI organización: la de otra no sirve', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', enBs as never);
+    expect(guardado(p).rate).not.toBe(999);
+    expect(p.exchangeRate.findFirst.mock.calls[0][0].where.organizationId).toBe(ORG);
+  });
+
+  it('un label que solo existe en OTRA organización → 400 que dice qué hacer, y no escribe', async () => {
+    const p = makePrisma(factura());
+    await expect(
+      servicio(p).addPayment(ORG, 'f1', { ...enBs, currencyLabel: 'Solo de otra' } as never),
+    ).rejects.toThrow(/Configuración/);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  it('un label que no existe → 400 (BadRequest)', async () => {
+    const p = makePrisma(factura());
+    await expect(
+      servicio(p).addPayment(ORG, 'f1', { ...enBs, currencyLabel: 'Inventada' } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('un abono en USD no guarda moneda ni tasa (y no consulta tasas)', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', { date: '2026-11-12', amount: 10 } as never);
+    const d = guardado(p);
+    expect(d.amount).toBe(10);
+    expect(d.rate ?? null).toBeNull();
+    expect(d.amountForeign ?? null).toBeNull();
+    expect(d.currencyLabel ?? null).toBeNull();
+    expect(p.exchangeRate.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('la tasa guardada NO se recalcula al leer', async () => {
+    // Se guardó a 240; HOY la vigente es 250. El abono tiene que seguir diciendo
+    // lo que se congeló, no lo que valdría ahora.
+    const abono = {
+      id: 'pg1',
+      organizationId: ORG,
+      date: new Date('2026-11-02'),
+      amount: 7.9167,
+      amountForeign: 1900,
+      rate: 240,
+      currencyCode: 'VES',
+      currencyLabel: 'Binance / USDT',
+      refundable: true,
+      counterpartyId: null,
+      counterparty: null,
+      accountId: null,
+      note: null,
+      tomadoDeFacturaId: null,
+      voidedAt: null,
+      voidReason: null,
+      createdAt: new Date('2026-11-02'),
+    };
+    const p = makePrisma({ ...FACTURA_VACIA, lines: [linea()], payments: [abono] });
+    const f = await servicio(p).get(ORG, 'f1');
+    const leido = f.payments[0];
+    expect(leido.rate).toBe(240);
+    expect(leido.amount).toBe(7.9167);
+    expect(leido.amountForeign).toBe(1900);
+    expect(leido.currencyLabel).toBe('Binance / USDT');
+    expect(p.exchangeRate.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('PurchaseInvoicesService — la cuenta y el «¿se te devuelve?» del abono', () => {
+  const factura = () => ({ ...FACTURA_VACIA, lines: [linea()] });
+  const guardado = (p: ReturnType<typeof makePrisma>) =>
+    p.purchaseInvoicePayment.create.mock.calls[0][0].data;
+
+  it('el abono guarda la cuenta que mandó el modal', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', { date: '2026-11-12', amount: 10, accountId: 'acc-mia' } as never);
+    expect(guardado(p).accountId).toBe('acc-mia');
+  });
+
+  it('una cuenta de otra organización se rechaza (IDOR) y no escribe', async () => {
+    const p = makePrisma(factura());
+    await expect(
+      servicio(p).addPayment(ORG, 'f1', { date: '2026-11-12', amount: 10, accountId: 'acc-ajena' } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  it('`refundable` se guarda tal cual lo mandó el dueño', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', {
+      date: '2026-11-12',
+      amount: 10,
+      counterpartyId: 'cp-mia',
+      refundable: false,
+    } as never);
+    expect(guardado(p).refundable).toBe(false);
+  });
+
+  it('sin decir nada, `refundable` queda en true (no altera el histórico)', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', { date: '2026-11-12', amount: 10 } as never);
+    expect(guardado(p).refundable).toBe(true);
   });
 });

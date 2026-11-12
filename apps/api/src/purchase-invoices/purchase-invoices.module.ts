@@ -25,6 +25,7 @@ import {
   invoiceStatus,
   invoiceTotals,
   purchaseCostPerRoll,
+  usdDesdeMoneda,
   type PurchaseInvoicePaymentDto,
   type PurchaseInvoiceUpsertDto,
   type PurchaseReceiveDto,
@@ -158,6 +159,13 @@ export class PurchaseInvoicesService {
       id: p.id,
       date: p.date.toISOString(),
       amount: n(p.amount),
+      // ⚠️ Se devuelve lo CONGELADO tal cual está guardado: la tasa de ese día,
+      // jamás la de hoy. `null` = se pagó en USD (o es anterior a esto).
+      rate: p.rate == null ? null : n(p.rate),
+      currencyCode: p.currencyCode ?? null,
+      currencyLabel: p.currencyLabel ?? null,
+      amountForeign: p.amountForeign == null ? null : n(p.amountForeign),
+      refundable: p.refundable ?? true,
       counterpartyId: p.counterpartyId,
       counterparty: p.counterparty,
       accountId: p.accountId,
@@ -515,8 +523,10 @@ export class PurchaseInvoicesService {
       if (!cuenta) throw new NotFoundException('No existe esa cuenta');
     }
 
+    const pago = await this.montoDelAbono(organizationId, dto);
+
     if (dto.tomadoDeFacturaId) {
-      await this.validarSaldoAFavor(organizationId, f, dto.tomadoDeFacturaId, dto.amount);
+      await this.validarSaldoAFavor(organizationId, f, dto.tomadoDeFacturaId, pago.amount);
     }
 
     await this.prisma.purchaseInvoicePayment.create({
@@ -524,7 +534,14 @@ export class PurchaseInvoicesService {
         invoiceId: id,
         organizationId,
         date: new Date(dto.date),
-        amount: dto.amount,
+        amount: pago.amount,
+        // La moneda y la tasa congeladas (todo null si se pagó en USD).
+        rate: pago.rate,
+        currencyCode: pago.currencyCode,
+        currencyLabel: pago.currencyLabel,
+        amountForeign: pago.amountForeign,
+        // Solo se LEE si hay contraparte; acá solo se guarda (default true).
+        refundable: dto.refundable ?? true,
         counterpartyId: dto.counterpartyId || null,
         accountId: dto.accountId || null,
         note: dto.note || null,
@@ -534,6 +551,44 @@ export class PurchaseInvoicesService {
       },
     });
     return this.get(organizationId, id);
+  }
+
+  /**
+   * EL MONTO EN USD DEL ABONO, calculado acá.
+   *
+   * ⚠️ Con el par foráneo presente, el `amount` que mande el cliente se
+   * DESCARTA: sale de `amountForeign ÷ tasa`, con la tasa **vigente** de ese
+   * label. `ExchangeRate` es un historial, así que la vigente es la fila más
+   * NUEVA de esa etiqueta (no cualquiera), y se busca en esta organización.
+   * Una vez guardada, la tasa no se recalcula nunca al leer.
+   */
+  private async montoDelAbono(organizationId: string, dto: PurchaseInvoicePaymentDto) {
+    if (dto.currencyLabel == null || dto.amountForeign == null) {
+      return {
+        amount: dto.amount as number,
+        rate: null,
+        currencyCode: null,
+        currencyLabel: null,
+        amountForeign: null,
+      };
+    }
+    const tasa = await this.prisma.exchangeRate.findFirst({
+      where: { organizationId, label: dto.currencyLabel },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!tasa) {
+      throw new BadRequestException(
+        `No existe la tasa "${dto.currencyLabel}". Cárgala en Configuración → Moneda y vuelve a intentar.`,
+      );
+    }
+    const rate = n(tasa.rate);
+    return {
+      amount: usdDesdeMoneda(dto.amountForeign, rate),
+      rate,
+      currencyCode: tasa.currencyCode,
+      currencyLabel: tasa.label,
+      amountForeign: dto.amountForeign,
+    };
   }
 
   /**
