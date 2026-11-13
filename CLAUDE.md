@@ -952,6 +952,12 @@ en el repo web: se sobrescribe al sincronizar.
         (describen lo que SALE; su `updatedAt` es un instante con hora, no un
         día de negocio). Un campo nuevo flojo aparece ahí **sin que nadie
         tenga que acordarse de ampliar la tabla**.
+        ⚠️ **Desde el 2026-11-13 el inventario barre DOS módulos, `api.ts` y
+        `store.ts`** (las fechas de la ventana de las colecciones de la tienda):
+        antes solo miraba `api.ts`, y un campo de fecha nuevo en `store.ts` podía
+        nacer flojo con el inventario en verde. Sumar otro módulo es UNA línea
+        en `MODULOS` (más su `import * as`). Verificado por mutación: aflojar
+        `startsAt` a `z.string().optional()` lo pone en rojo.
       - ✅ **Y LOS FILTROS DE LECTURA se cerraron el 2026-10-10 (shared
         0.47.0)**, que eran lo último que quedaba afuera. `GET /sales`,
         `/expenses`, `/orders/payments` y `/filament/purchases` eran

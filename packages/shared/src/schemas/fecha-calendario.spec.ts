@@ -26,6 +26,7 @@
  */
 import type { ZodTypeAny } from 'zod';
 import * as API from './api';
+import * as STORE from './store';
 import {
   CampaignCreateSchema,
   CampaignUpdateSchema,
@@ -484,7 +485,14 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
     };
     const abiertos: string[] = [];
 
-    for (const [nombre, schema] of Object.entries(API as Record<string, unknown>)) {
+    // ⚠️ MÓDULOS QUE BARRE EL INVENTARIO: sumar uno es UNA línea acá (y su import de arriba).
+    // Hasta el 2026-11-13 solo miraba `api.ts`, y las fechas de `store.ts` (la ventana de
+    // las colecciones) estaban bien por cuidado de quien las escribió, no porque algo lo
+    // impidiera: el próximo campo de fecha de ese módulo podía nacer flojo con esto en verde.
+    const MODULOS: Record<string, Record<string, unknown>> = { api: API, store: STORE };
+
+    for (const [modulo, exportados] of Object.entries(MODULOS))
+    for (const [nombre, schema] of Object.entries(exportados)) {
       if (!nombre.endsWith('Schema')) continue;
       // Un `*View`/`*Response` describe lo que SALE, no lo que entra: nadie
       // valida con él un cuerpo del cliente, y su `updatedAt` es un instante
@@ -501,7 +509,7 @@ describe('FECHA: la forma no alcanza, el día tiene que existir', () => {
 
       for (const [campo, tipo] of Object.entries(def.shape())) {
         if (!PARECE_FECHA.test(campo)) continue;
-        if (tipo.safeParse('2026-02-30').success) abiertos.push(`${nombre}.${campo}`);
+        if (tipo.safeParse('2026-02-30').success) abiertos.push(`${modulo}/${nombre}.${campo}`);
       }
     }
 

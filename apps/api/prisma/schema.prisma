@@ -1062,6 +1062,10 @@ model StoreCollection {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
 
+  /// Enlace público (`/coleccion/<slug>/`), único por organización y con la forma del slug de
+  /// categoría. Es lo que viaja al endpoint público: un id interno no sale nunca de la API.
+  slug String
+
   /// Nombre INTERNO, para reconocerla en el panel ("Navidad 2026").
   nombre    String
   /// Lo que lee el visitante sobre la fila de productos.
@@ -1069,7 +1073,8 @@ model StoreCollection {
   subtitulo String?
 
   verTodoTipo  StoreCollectionVerTodo @default(NONE)
-  /// slug de categoría o id de colección; null para NONE. Lo exige el contrato Zod.
+  /// SIEMPRE un slug (de categoría o de colección, según `verTodoTipo`); null para NONE.
+  /// Lo exige el contrato Zod. Nunca un id: este valor se publica.
   verTodoValor String?
 
   esPrincipal Boolean @default(false)
@@ -1086,6 +1091,7 @@ model StoreCollection {
   items      StoreCollectionItem[]
   exclusions StoreCollectionExclusion[]
 
+  @@unique([organizationId, slug])
   @@index([organizationId])
 }
 

@@ -8,6 +8,7 @@ CREATE TYPE "StoreCollectionVerTodo" AS ENUM ('CATEGORIA', 'COLECCION', 'NONE');
 CREATE TABLE "StoreCollection" (
     "id" TEXT NOT NULL,
     "organizationId" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
     "nombre" TEXT NOT NULL,
     "titulo" TEXT NOT NULL,
     "subtitulo" TEXT,
@@ -45,6 +46,7 @@ CREATE TABLE "StoreCollectionExclusion" (
     CONSTRAINT "StoreCollectionExclusion_pkey" PRIMARY KEY ("id")
 );
 
+CREATE UNIQUE INDEX "StoreCollection_organizationId_slug_key" ON "StoreCollection"("organizationId", "slug");
 CREATE INDEX "StoreCollection_organizationId_idx" ON "StoreCollection"("organizationId");
 
 CREATE UNIQUE INDEX "StoreCollectionItem_collectionId_categoryId_key" ON "StoreCollectionItem"("collectionId", "categoryId");

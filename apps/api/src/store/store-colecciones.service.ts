@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { StoreCollectionUpsertDto } from '@calc3d/shared';
+import { slugify, type StoreCollectionUpsertDto } from '@calc3d/shared';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -12,6 +13,7 @@ export interface ColeccionItemVista {
 
 export interface ColeccionVista {
   id: string;
+  slug: string;
   nombre: string;
   titulo: string;
   subtitulo: string | null;
@@ -27,6 +29,7 @@ export interface ColeccionVista {
 
 type ColeccionRow = {
   id: string;
+  slug: string;
   nombre: string;
   titulo: string;
   subtitulo: string | null;
@@ -42,6 +45,35 @@ type ColeccionRow = {
  *  (no con `businessDateKey`, que la correría un día para atrás). */
 const aFecha = (dia?: string | null) => (dia ? new Date(`${dia}T00:00:00.000Z`) : null);
 const aDia = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+
+/** Cuántos sufijos (-2, -3...) se prueban antes de caer a uno aleatorio: la búsqueda
+ *  está acotada a propósito, igual que la de las categorías. */
+const SLUG_MAX_TRIES = 50;
+
+/**
+ * Traduce la violación de un índice único (P2002) a un 400 legible.
+ *
+ * ⚠️ RIESGO ACEPTADO: el diff de items escribe uno por uno dentro de la transacción, así
+ * que un guardado que INTERCAMBIARA la categoría (o el producto) entre dos items que ya
+ * existen chocaría un instante con el único `[collectionId, categoryId]`. El panel no lo
+ * puede producir —manda ids estables y reordenar cambia solo `position`, que no está en
+ * ningún único—, y blindarlo costaría un constraint diferible o un diff más complejo por
+ * un caso inalcanzable. Si un cliente a mano lo provocara, que salga un 400 que dice qué
+ * pasó y no un 500 opaco. La misma red atrapa la carrera de dos altas con el mismo slug.
+ */
+function traducirChoqueDeUnico(e: unknown): never {
+  const err = e as { code?: string; meta?: { target?: unknown } };
+  if (err?.code === 'P2002') {
+    const target = String(err.meta?.target ?? '');
+    if (target.includes('slug')) {
+      throw new BadRequestException('Ese enlace ya lo usa otra colección. Elige otro.');
+    }
+    throw new BadRequestException(
+      'La colección tiene una categoría o un producto repetido. Revisa la lista y vuelve a guardar.',
+    );
+  }
+  throw e;
+}
 
 /**
  * Colecciones de la portada: qué categorías y productos sueltos entran, y cuáles se
@@ -59,6 +91,7 @@ export class StoreColeccionesService {
   private vista(c: ColeccionRow, items: ColeccionItemVista[], exclusiones: string[]): ColeccionVista {
     return {
       id: c.id,
+      slug: c.slug,
       nombre: c.nombre,
       titulo: c.titulo,
       subtitulo: c.subtitulo,
@@ -153,11 +186,26 @@ export class StoreColeccionesService {
       if (!c) throw new BadRequestException('La categoría del «Ver todo» no existe');
     } else if (dto.verTodoTipo === 'COLECCION') {
       const c = await this.prisma.storeCollection.findFirst({
-        where: { organizationId, id: dto.verTodoValor ?? '' },
+        where: { organizationId, slug: dto.verTodoValor ?? '' },
         select: { id: true },
       });
       if (!c) throw new BadRequestException('La colección del «Ver todo» no existe');
     }
+  }
+
+  /** Primer slug libre de ESTA organización: si choca prueba -2, -3... (como las categorías). */
+  private async slugLibre(organizationId: string, base: string, excludeId?: string): Promise<string> {
+    const limpio = slugify(base);
+    if (!limpio) throw new BadRequestException('El nombre no genera un enlace válido');
+    for (let i = 1; i <= SLUG_MAX_TRIES; i += 1) {
+      const candidato = i === 1 ? limpio : `${limpio}-${i}`;
+      const choca = await this.prisma.storeCollection.findFirst({
+        where: { organizationId, slug: candidato, ...(excludeId && { id: { not: excludeId } }) },
+        select: { id: true },
+      });
+      if (!choca) return candidato;
+    }
+    return `${limpio}-${randomUUID().slice(0, 8)}`;
   }
 
   private datos(dto: StoreCollectionUpsertDto) {
@@ -175,9 +223,10 @@ export class StoreColeccionesService {
 
   async create(organizationId: string, dto: StoreCollectionUpsertDto): Promise<ColeccionVista> {
     await this.assertPertenencia(organizationId, dto);
+    const slug = await this.slugLibre(organizationId, dto.slug ?? dto.nombre);
     const id = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // `esPrincipal` no se escribe acá: nace en false y solo lo mueve su endpoint propio.
-      const c = await tx.storeCollection.create({ data: { organizationId, ...this.datos(dto) } });
+      const c = await tx.storeCollection.create({ data: { organizationId, slug, ...this.datos(dto) } });
       for (const it of dto.items) {
         await tx.storeCollectionItem.create({
           data: {
@@ -192,7 +241,7 @@ export class StoreColeccionesService {
         await tx.storeCollectionExclusion.create({ data: { collectionId: c.id, productId } });
       }
       return c.id;
-    });
+    }).catch(traducirChoqueDeUnico);
     return this.get(organizationId, id);
   }
 
@@ -203,8 +252,10 @@ export class StoreColeccionesService {
    * cosa colgada de ellos caía en cascada. Los items necesitan ids estables.
    */
   async update(organizationId: string, id: string, dto: StoreCollectionUpsertDto): Promise<ColeccionVista> {
-    await this.findOwn(organizationId, id);
+    const actual = await this.findOwn(organizationId, id);
     await this.assertPertenencia(organizationId, dto);
+    // Sin slug en el cuerpo se CONSERVA el que tenía: renombrar no cambia la URL pública.
+    const slug = dto.slug === undefined ? actual.slug : await this.slugLibre(organizationId, dto.slug, id);
 
     const existentes = await this.prisma.storeCollectionItem.findMany({ where: { collectionId: id } });
     const idsExistentes = new Set(existentes.map((i) => i.id));
@@ -214,7 +265,7 @@ export class StoreColeccionesService {
     }
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.storeCollection.update({ where: { id }, data: this.datos(dto) });
+      await tx.storeCollection.update({ where: { id }, data: { slug, ...this.datos(dto) } });
 
       const quedan = new Set(dto.items.map((i) => i.id).filter((x): x is string => !!x));
       const sobran = existentes.filter((i) => !quedan.has(i.id)).map((i) => i.id);
@@ -244,7 +295,7 @@ export class StoreColeccionesService {
           await tx.storeCollectionExclusion.create({ data: { collectionId: id, productId } });
         }
       }
-    });
+    }).catch(traducirChoqueDeUnico);
     return this.get(organizationId, id);
   }
 

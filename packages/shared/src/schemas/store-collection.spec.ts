@@ -46,6 +46,12 @@ describe('StoreCollectionUpsertSchema', () => {
     expect(ok({ ...base, startsAt: '2026-12-24', endsAt: '2026-12-24' }).success).toBe(true);
   });
 
+  it('el slug tiene la forma del de categoría: minúsculas, números y guiones', () => {
+    expect(ok({ ...base, slug: 'navidad-2026' }).success).toBe(true);
+    expect(ok({ ...base, slug: 'Navidad 2026' }).success).toBe(false);
+    expect(ok({ ...base, slug: '' }).success).toBe(false);
+  });
+
   it('esPrincipal NO entra por el cuerpo: se descarta', () => {
     const r = ok({ ...base, esPrincipal: true });
     expect(r.success).toBe(true);

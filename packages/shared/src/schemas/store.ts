@@ -429,10 +429,16 @@ export type StoreCollectionItemInput = z.infer<typeof StoreCollectionItemInputSc
  */
 export const StoreCollectionUpsertSchema = z
   .object({
+    /**
+     * Enlace público de la colección. Opcional: sin él se arma del nombre (y al editar se
+     * conserva el que tenía, para que renombrar no cambie la URL).
+     */
+    slug: SlugSchema.optional(),
     nombre: z.string().min(1, 'El nombre es obligatorio').max(80),
     titulo: z.string().min(1, 'El título es obligatorio').max(120),
     subtitulo: z.string().max(200).nullable().optional(),
     verTodoTipo: StoreCollectionVerTodoSchema.default('NONE'),
+    /** SIEMPRE un slug (de categoría o de colección según el tipo), jamás un id: se publica. */
     verTodoValor: z.string().min(1).max(120).nullable().optional(),
     visible: z.boolean().default(true),
     // Fechas de NEGOCIO (día pelado AAAA-MM-DD, validado contra el calendario): un

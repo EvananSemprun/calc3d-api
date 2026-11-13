@@ -33,6 +33,7 @@ function makeDeps(seed: {
   const match = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
     Object.entries(where).every(([k, v]) => {
       if (v && typeof v === 'object' && 'in' in (v as object)) return (v as { in: unknown[] }).in.includes(row[k]);
+      if (v && typeof v === 'object' && 'not' in (v as object)) return row[k] !== (v as { not: unknown }).not;
       return row[k] === v;
     });
 
@@ -201,7 +202,7 @@ describe('StoreColeccionesService — crear', () => {
     const r = await service.create(ORG, dto());
     expect(r).not.toHaveProperty('organizationId');
     expect(Object.keys(r).sort()).toEqual(
-      ['endsAt', 'esPrincipal', 'exclusiones', 'id', 'items', 'nombre', 'startsAt', 'subtitulo', 'titulo', 'verTodoTipo', 'verTodoValor', 'visible'].sort(),
+      ['endsAt', 'esPrincipal', 'exclusiones', 'id', 'items', 'nombre', 'slug', 'startsAt', 'subtitulo', 'titulo', 'verTodoTipo', 'verTodoValor', 'visible'].sort(),
     );
   });
 });
@@ -359,5 +360,76 @@ describe('StoreColeccionesService — leer y borrar', () => {
     await service.remove(ORG, mia.id);
     expect(items).toHaveLength(0);
     expect(exclusions).toHaveLength(0);
+  });
+});
+
+describe('StoreColeccionesService — slug y «Ver todo»', () => {
+  it('sin slug en el cuerpo se arma del nombre', async () => {
+    const { service } = makeDeps(mundo());
+    const r = await service.create(ORG, dto({ nombre: 'Navidad 2026' }));
+    expect(r.slug).toBe('navidad-2026');
+  });
+
+  it('un slug repetido en la MISMA organización recibe sufijo; en otra organización no', async () => {
+    const { service } = makeDeps(mundo());
+    const a = await service.create(ORG, dto({ nombre: 'Navidad' }));
+    const b = await service.create(ORG, dto({ nombre: 'Navidad' }));
+    const c = await service.create(OTHER, dto({ nombre: 'Navidad' }));
+    expect([a.slug, b.slug, c.slug]).toEqual(['navidad', 'navidad-2', 'navidad']);
+  });
+
+  it('editar sin slug CONSERVA el enlace aunque cambie el nombre; con slug lo cambia', async () => {
+    const { service } = makeDeps(mundo());
+    const c = await service.create(ORG, dto({ nombre: 'Navidad' }));
+    expect((await service.update(ORG, c.id, dto({ nombre: 'Otro nombre' }))).slug).toBe('navidad');
+    expect((await service.update(ORG, c.id, dto({ nombre: 'Otro nombre', slug: 'fiestas' }))).slug).toBe('fiestas');
+  });
+
+  it('conservar el propio slug al editar no se cuenta como choque consigo misma', async () => {
+    const { service } = makeDeps(mundo());
+    const c = await service.create(ORG, dto({ nombre: 'Navidad' }));
+    expect((await service.update(ORG, c.id, dto({ slug: 'navidad' }))).slug).toBe('navidad');
+  });
+
+  it('«Ver todo» a una colección se guarda por SLUG; un id o un slug ajeno se rechaza con 400', async () => {
+    const { service } = makeDeps(mundo());
+    const destino = await service.create(ORG, dto({ nombre: 'Destino' }));
+    await service.create(OTHER, dto({ nombre: 'Ajena' }));
+    const ok = await service.create(ORG, dto({ nombre: 'Origen', verTodoTipo: 'COLECCION', verTodoValor: destino.slug }));
+    expect(ok.verTodoValor).toBe('destino');
+    // El id interno NO es un destino válido: este valor se publica.
+    await expect(
+      service.create(ORG, dto({ nombre: 'X', verTodoTipo: 'COLECCION', verTodoValor: destino.id })),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.create(ORG, dto({ nombre: 'Y', verTodoTipo: 'COLECCION', verTodoValor: 'ajena' })),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('StoreColeccionesService — choque de índice único', () => {
+  const choque = (target: string) => Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { target: [target] } });
+
+  it('un choque del único de items sale como 400 en español, no como 500', async () => {
+    const { service, prisma } = makeDeps(mundo());
+    const c = await service.create(ORG, dto({ items: [{ categoryId: 'cat-1', position: 0 }] }));
+    (prisma.storeCollectionItem as { create: jest.Mock }).create.mockRejectedValueOnce(choque('collectionId,categoryId'));
+    const e = await service.update(ORG, c.id, dto({ items: [{ categoryId: 'cat-1', position: 0 }, { categoryId: 'cat-2', position: 1 }] })).catch((x) => x);
+    expect(e).toBeInstanceOf(BadRequestException);
+    expect(e.message).toMatch(/repetido/);
+  });
+
+  it('un choque del slug (carrera de dos altas) también sale como 400 y dice qué pasó', async () => {
+    const { service, prisma } = makeDeps(mundo());
+    (prisma.storeCollection as { create: jest.Mock }).create.mockRejectedValueOnce(choque('organizationId,slug'));
+    const e = await service.create(ORG, dto()).catch((x) => x);
+    expect(e).toBeInstanceOf(BadRequestException);
+    expect(e.message).toMatch(/enlace/);
+  });
+
+  it('un error que NO es de índice único se propaga tal cual (no se disfraza de 400)', async () => {
+    const { service, prisma } = makeDeps(mundo());
+    (prisma.storeCollection as { create: jest.Mock }).create.mockRejectedValueOnce(new Error('se cayó la base'));
+    await expect(service.create(ORG, dto())).rejects.toThrow('se cayó la base');
   });
 });
