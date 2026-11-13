@@ -12,7 +12,8 @@ function makePrisma() {
       delete: jest.fn(),
       findMany: jest.fn(),
     },
-    material: { update: jest.fn(), updateMany: jest.fn() },
+    // Por defecto la ficha está DESCONTINUADA: es el caso en que comprar cambia el estado.
+    material: { update: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn().mockResolvedValue({ status: 'DISCONTINUED' }) },
     counterparty: { findFirst: jest.fn(), findMany: jest.fn() },
     client: { findFirst: jest.fn(), create: jest.fn() },
   };
@@ -165,7 +166,7 @@ describe('ExpensesService', () => {
         Promise.resolve(where?.materialId ? (compras[where.materialId] ?? null) : null),
       );
 
-    it('una compra de filamento fija el precio del rollo y reactiva la ficha', async () => {
+    it('una compra de filamento fija el precio del rollo y reactiva la ficha descontinuada', async () => {
       prisma.expense.create.mockResolvedValue({ id: 'e1' });
       conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
 
@@ -186,6 +187,56 @@ describe('ExpensesService', () => {
         data: { rollPrice: 20, status: 'ACTIVE' }, // 40 ÷ 2 rollos; comprarla la vuelve a activa
       });
       expect(prisma.material.update).not.toHaveBeenCalled();
+    });
+
+    // ⚠️ Decisión (13/11): comprar para un encargo puntual NO reactiva una ficha que
+    // el dueño marcó «solo pedido especial». Se actualiza el precio, no el estado.
+    it('una ficha «solo pedido especial» recibe el precio nuevo pero NO se reactiva', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e-esp' });
+      conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
+      prisma.material.findFirst.mockResolvedValue({ status: 'SOLO_PEDIDO_ESPECIAL' });
+
+      await service.create(ORG, {
+        date: '2026-09-07', category: 'CONSUMABLE', description: 'Rollo para un encargo',
+        amount: 40, isInvestment: false, quantity: 2, materialId: 'm1',
+      } as any);
+
+      expect(prisma.material.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1', organizationId: ORG },
+        data: { rollPrice: 20, status: 'SOLO_PEDIDO_ESPECIAL' },
+      });
+    });
+
+    // Hermano de arriba: una ACTIVA sigue activa (el estado se lee de la ficha, no se inventa).
+    it('una ficha activa sigue activa al comprarle', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e-act' });
+      conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
+      prisma.material.findFirst.mockResolvedValue({ status: 'ACTIVE' });
+
+      await service.create(ORG, {
+        date: '2026-09-07', category: 'CONSUMABLE', description: 'PLA',
+        amount: 40, isInvestment: false, quantity: 2, materialId: 'm1',
+      } as any);
+
+      expect(prisma.material.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1', organizationId: ORG },
+        data: { rollPrice: 20, status: 'ACTIVE' },
+      });
+    });
+
+    it('con una ficha que no es de esta organización no se escribe nada', async () => {
+      prisma.expense.create.mockResolvedValue({ id: 'e-aj' });
+      conUltimaCompra({ m1: { amount: 40, quantity: 2 } });
+      prisma.material.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(where.organizationId === ORG ? { status: 'DISCONTINUED' } : null),
+      );
+
+      await service.create(OTRA_ORG, {
+        date: '2026-09-07', category: 'CONSUMABLE', description: 'PLA',
+        amount: 40, isInvestment: false, quantity: 2, materialId: 'm1',
+      } as any);
+
+      expect(prisma.material.updateMany).not.toHaveBeenCalled();
     });
 
     it('sin NINGUNA compra con rollos se deja el precio que tenía', async () => {
@@ -372,8 +423,24 @@ describe('ExpensesService.createWithDefinition', () => {
     expect(tx.expense.create).not.toHaveBeenCalled();
   });
 
+  // Misma decisión que en recalcularPrecioDelRollo: «solo pedido especial» no se reactiva sola.
+  it("modo 'existing' con una ficha «solo pedido especial»: fija el precio y NO la reactiva", async () => {
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG, status: 'SOLO_PEDIDO_ESPECIAL' });
+    tx.expense.create.mockResolvedValue({ id: 'e-mat' });
+
+    await service.createWithDefinition(ORG, {
+      expense: { date: '2026-09-13', amount: 50, category: 'CONSUMABLE', description: 'Rollo para un encargo', isInvestment: false, quantity: 2 },
+      link: { kind: 'material', mode: 'existing', id: 'mat-9' },
+    } as any);
+
+    expect(tx.material.update).toHaveBeenCalledWith({
+      where: { id: 'mat-9' },
+      data: { rollPrice: 25, status: 'SOLO_PEDIDO_ESPECIAL' },
+    });
+  });
+
   it("modo 'existing' kind material con rollos: fija el precio y la reactiva", async () => {
-    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG });
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG, status: 'DISCONTINUED' });
     tx.expense.create.mockResolvedValue({ id: 'e-mat' });
 
     await service.createWithDefinition(ORG, {
@@ -400,7 +467,7 @@ describe('ExpensesService.createWithDefinition', () => {
    * pueden fijar a mano.
    */
   it("filamento existente: el precio de referencia del body se ignora", async () => {
-    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG });
+    tx.material.findFirst.mockResolvedValue({ id: 'mat-9', organizationId: ORG, status: 'DISCONTINUED' });
     tx.expense.create.mockResolvedValue({ id: 'e-mat' });
 
     await service.createWithDefinition(ORG, {

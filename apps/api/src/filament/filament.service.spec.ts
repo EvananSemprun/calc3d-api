@@ -404,6 +404,26 @@ describe('Resumen del mes', () => {
     expect(r.restock.map((g) => g.label)).not.toContain('PLA Biege');
   });
 
+  // Tercer estado (13/11): igual que una descontinuada, NO se repone ni cuenta como color
+  // a contar. Su hermano alcanzable: m1 (activa, en cero) SÍ sale en la lista, y lo
+  // que cambia entre una y otra es solo el estado.
+  it('un color «solo pedido especial» no entra en la reposición ni en los colores contados', async () => {
+    const prisma = makePrisma();
+    prisma.material.findMany.mockResolvedValue([
+      MATERIALES[0],
+      { id: 'm4', name: 'PLA Silk Dorado', type: 'PLA', brand: 'Eryone', color: 'Dorado', rollGrams: 1000, rollPrice: '25', status: 'SOLO_PEDIDO_ESPECIAL', _count: { expenses: 0, stockCounts: 0 } },
+    ]);
+    prisma.stockCount.findMany.mockResolvedValue([
+      { materialId: 'm1', sealed: 0, inUse: 0, running: 0, needsBrandCheck: false },
+      { materialId: 'm4', sealed: 0, inUse: 0, running: 0, needsBrandCheck: false },
+    ]);
+
+    const r = await service(prisma).summary(ORG, '2026-08');
+
+    expect(r.restock.map((g) => g.label)).toEqual(['PLA Amarillo']);
+    expect(r.totalColors).toBe(1);
+  });
+
   /**
    * Como en el Excel: si el mes está cerrado, un color sin nada marcado es que
    * no hay (decisión del dueño, 2026-09-13). "Sin dato" queda solo para un mes

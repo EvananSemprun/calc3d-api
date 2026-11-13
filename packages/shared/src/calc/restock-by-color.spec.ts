@@ -157,3 +157,31 @@ describe('restockByColor — orden', () => {
     expect(r.groups.map((g) => g.label)).toEqual(['PLA Negro', 'PLA Blanco', 'PLA Arena']);
   });
 });
+
+describe('restockByColor — «solo pedido especial»', () => {
+  // ⚠️ Tercer estado: no se repone. Un color que SOLO tiene esa ficha no cuenta ni
+  // se pide, igual que uno descontinuado (si no, un rollo en cero que el dueño
+  // decidió no tener en estante aparecería en la lista de compras).
+  it('un color con TODAS sus fichas en «solo pedido especial» no cuenta ni se pide', () => {
+    const r = restockByColor(
+      [mat('a', 'PLA', 'Arcoiris', 'Creality', 'SOLO_PEDIDO_ESPECIAL')],
+      { a: cero },
+      {},
+    );
+
+    expect(r.totalColors).toBe(0);
+    expect(r.groups).toEqual([]);
+  });
+
+  // Su hermano alcanzable: el mismo color con una ficha activa SÍ se repone. Sin
+  // él, una función que devolviera siempre vacío pasaría el test de arriba.
+  it('con una marca en «solo pedido especial» y otra activa, el color se sigue reponiendo', () => {
+    const r = restockByColor(
+      [mat('a', 'PLA', 'Negro', 'Sunlu', 'SOLO_PEDIDO_ESPECIAL'), mat('b', 'PLA', 'Negro', 'Creality')],
+      { a: cero, b: cero },
+      {},
+    );
+
+    expect(r.groups[0]).toMatchObject({ label: 'PLA Negro', status: 'OUT' });
+  });
+});

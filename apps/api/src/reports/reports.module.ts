@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import ExcelJS from 'exceljs';
 import {
   CASH_SIGN,
+  ETIQUETA_DE_ESTADO,
   breakEvenLevels,
   fixedCostsTotal,
   businessDateKey,
@@ -316,7 +317,7 @@ export class ReportsService {
         r.type ?? '',
         r.color ?? '',
         r.brand ?? '',
-        r.status === 'ACTIVE' ? 'Activo' : 'Descontinuado',
+        ETIQUETA_DE_ESTADO[r.status],
         r.counted ? r.sealed : '',
         r.counted ? r.inUse : '',
         r.counted ? r.running : '',

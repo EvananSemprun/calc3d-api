@@ -1,4 +1,5 @@
 import type { MaterialStatus } from '../schemas/stock';
+import { entraEnReposicion } from './estado-de-ficha';
 import { restockKey, type RestockGroup } from './stock';
 
 /**
@@ -100,7 +101,8 @@ export function suggestRestockLines(
 ): SuggestedPurchaseLine[] {
   const porColor = new Map<string, RestockOrderSource[]>();
   for (const f of fichas) {
-    if (f.status === 'DISCONTINUED') continue;
+    // Descontinuada o «solo pedido especial»: no se propone comprarla para reponer.
+    if (!entraEnReposicion(f.status)) continue;
     const key = restockKey(f);
     const grupo = porColor.get(key);
     if (grupo) grupo.push(f);

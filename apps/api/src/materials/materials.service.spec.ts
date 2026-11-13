@@ -4,7 +4,7 @@ import { MaterialsService } from './materials.service';
 const ORG = 'org-A';
 const AGOSTO = new Date('2026-08-01T00:00:00Z');
 
-type Ficha = { id: string; organizationId: string; status: 'ACTIVE' | 'DISCONTINUED' };
+type Ficha = { id: string; organizationId: string; status: 'ACTIVE' | 'DISCONTINUED' | 'SOLO_PEDIDO_ESPECIAL' };
 
 function makePrisma() {
   return {
@@ -74,14 +74,28 @@ describe('MaterialsService.remove', () => {
     expect(prisma.material.delete).not.toHaveBeenCalled();
   });
 
-  it('si ya está descontinuada, el 409 no sugiere descontinuarla', async () => {
+  it('si ya está descontinuada, el 409 no sugiere descontinuarla (se conserva)', async () => {
     const prisma = makePrisma();
     prisma.material.findFirst.mockResolvedValue({ id: 'm1', organizationId: ORG, status: 'DISCONTINUED' });
     prisma.expense.count.mockResolvedValue(3);
 
     const intento = service(prisma).remove(ORG, 'm1');
 
-    await expect(intento).rejects.toThrow('se conserva descontinuada');
+    await expect(intento).rejects.toThrow('se conserva fuera de circulación');
+    expect(prisma.material.delete).not.toHaveBeenCalled();
+  });
+
+  // El tercer estado tampoco es «activa»: no tiene sentido sugerir descontinuarla
+  // como si siguiera circulando con normalidad. Su hermano (ACTIVA → sí sugiere) está arriba.
+  it('si es «solo pedido especial», el 409 tampoco sugiere descontinuarla', async () => {
+    const prisma = makePrisma();
+    prisma.material.findFirst.mockResolvedValue({ id: 'm1', organizationId: ORG, status: 'SOLO_PEDIDO_ESPECIAL' });
+    prisma.expense.count.mockResolvedValue(3);
+
+    const intento = service(prisma).remove(ORG, 'm1');
+
+    await expect(intento).rejects.toThrow('se conserva fuera de circulación');
+    await expect(intento).rejects.not.toThrow('Descontinúala');
     expect(prisma.material.delete).not.toHaveBeenCalled();
   });
 });

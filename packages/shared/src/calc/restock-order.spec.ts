@@ -234,3 +234,28 @@ describe('suggestRestockLines — el orden y la cantidad', () => {
     expect(lineas.map((l) => l.quantity)).toEqual([1, 1]);
   });
 });
+
+describe('suggestRestockLines — «solo pedido especial»', () => {
+  it('una ficha «solo pedido especial» no se propone, aunque su color esté en cero', () => {
+    const lineas = suggestRestockLines(
+      [grupo()],
+      [ficha({ materialId: 'especial', status: 'SOLO_PEDIDO_ESPECIAL' })],
+    );
+
+    expect(lineas).toEqual([]);
+  });
+
+  // Hermano alcanzable y con los desempates a favor de la «especial» (va primero
+  // por nombre y tiene último precio): si el filtro no estuviera, ganaría ella.
+  it('con una marca «solo pedido especial» y otra activa, se propone la activa', () => {
+    const lineas = suggestRestockLines(
+      [grupo({ brands: ['Bambu Lab', 'Creality'] })],
+      [
+        ficha({ materialId: 'especial', name: 'PLA Bambu Negro', status: 'SOLO_PEDIDO_ESPECIAL', lastRollPrice: 18 }),
+        ficha({ materialId: 'viva', name: 'PLA Creality Negro', lastRollPrice: null }),
+      ],
+    );
+
+    expect(lineas.map((l) => [l.materialId, l.unitPrice])).toEqual([['viva', null]]);
+  });
+});

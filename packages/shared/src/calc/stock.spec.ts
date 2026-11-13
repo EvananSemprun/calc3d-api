@@ -107,6 +107,14 @@ describe('restockStatus', () => {
     expect(restockStatus(descontinuado, { sealed: 0, inUse: 0, running: 2 })).toBe('IGNORED');
   });
 
+  // Tercer estado: fuera de la reposición, igual que la descontinuada. Su hermano
+  // (el activo con los mismos números) ya está probado arriba y SÍ da OUT.
+  it('«solo pedido especial» no se repone aunque esté en cero', () => {
+    const especial = { status: 'SOLO_PEDIDO_ESPECIAL' as const };
+    expect(restockStatus(especial, { sealed: 0, inUse: 0, running: 0 })).toBe('IGNORED');
+    expect(restockStatus(especial, { sealed: 0, inUse: 0, running: 2 })).toBe('IGNORED');
+  });
+
   it('sin conteo del mes no se sabe si hay que reponer', () => {
     expect(restockStatus(activo, null)).toBeNull();
   });

@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { monthKey, stockTotal, type MaterialCorrectionDto, type MaterialStatusUpdateDto } from '@calc3d/shared';
+import { entraEnReposicion, monthKey, stockTotal, type MaterialCorrectionDto, type MaterialStatusUpdateDto } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -78,9 +78,11 @@ export class MaterialsService {
     ]);
     if (compras > 0 || conteos > 0) {
       throw new ConflictException(
-        ficha.status === 'DISCONTINUED'
-          ? 'Tiene compras o conteos registrados: se conserva descontinuada.'
-          : 'Tiene compras o conteos registrados. Descontinúala en vez de borrarla.',
+        // «Se maneja con normalidad» es lo que decide si tiene sentido sugerir
+        // descontinuarla: una descontinuada o «solo pedido especial» ya salió.
+        entraEnReposicion(ficha.status)
+          ? 'Tiene compras o conteos registrados. Descontinúala en vez de borrarla.'
+          : 'Tiene compras o conteos registrados: se conserva fuera de circulación.',
       );
     }
 

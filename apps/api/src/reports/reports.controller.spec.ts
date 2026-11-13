@@ -160,3 +160,65 @@ describe('ReportsService.workbook — la hoja Deuda no recalcula el saldo', () =
     expect(pagos[1][3]).toBe('ANULADA: Se cargó dos veces');
   });
 });
+
+/**
+ * LA HOJA "Stock mensual" Y EL TERCER ESTADO.
+ *
+ * La columna Estado era `status === 'ACTIVE' ? 'Activo' : 'Descontinuado'`: con
+ * un tercer valor, «solo pedido especial» salía rotulada «Descontinuado» en el
+ * libro del dueño, sin que nada fallara (no es una comparación contra
+ * DISCONTINUED, así que ni el compilador ni el inventario la ven).
+ */
+describe('ReportsService.workbook — la hoja Stock mensual distingue los tres estados', () => {
+  const fila = (materialId: string, status: 'ACTIVE' | 'DISCONTINUED' | 'SOLO_PEDIDO_ESPECIAL') => ({
+    materialId, name: materialId, type: 'PLA', brand: 'Creality', color: materialId, status,
+    sealed: 1, inUse: 0, running: 0, total: 1, counted: true,
+  });
+
+  const columnaEstado = async () => {
+    const vacio = { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) };
+    const service = new ReportsService(
+      {
+        organization: { findFirst: jest.fn().mockResolvedValue({ name: 'Banano Lab' }) },
+        settings: { findFirst: jest.fn().mockResolvedValue(null) },
+        sale: vacio, order: vacio, expense: vacio, client: vacio, campaign: vacio,
+      } as never,
+      {
+        purchases: async () => [],
+        lastClosedMonth: async () => '2026-10',
+        stock: async () => [fila('Rojo', 'ACTIVE'), fila('Verde', 'DISCONTINUED'), fila('Azul', 'SOLO_PEDIDO_ESPECIAL')],
+      } as never,
+      { list: async () => ({ months: [] }) } as never,
+      { list: async () => [] } as never,
+      {
+        recovery: async () => ({ accumulatedProfit: 0, rows: [], freeCapital: 0 }),
+        usage: async () => ({ printers: [], total: { jobs: 0, unmeasuredJobs: 0, printersWithoutReading: 0 } }),
+      } as never,
+      {
+        summary: async () => ({
+          balance: {
+            collected: 0, expenses: 0, filament: 0, equipment: 0, consumables: 0, supplierAdvances: 0,
+            contributionsRefundable: 0, contributionsCapital: 0, debtRepayments: 0, ownerDraws: 0,
+            loanPayments: 0, balance: 0,
+          },
+          counterparty: { id: 'cp1', name: 'Propietario', kind: 'OWNER' },
+          financing: { rows: [], owedToOwner: 0, owedToLender: 0, totalOwed: 0, overWithdrawn: 0 },
+          obligations: [], movements: [], reconciliations: [],
+        }),
+      } as never,
+    );
+    const ws = (await service.workbook('org-A')).getWorksheet('Stock mensual')!;
+    const porColor: Record<string, unknown> = {};
+    ws.eachRow((r: { values: unknown }) => {
+      const v = (r.values as unknown[]).slice(1);
+      porColor[String(v[1])] = v[3];
+    });
+    return porColor;
+  };
+
+  it('cada ficha sale con SU estado', async () => {
+    const estados = await columnaEstado();
+
+    expect(estados).toMatchObject({ Rojo: 'Activo', Verde: 'Descontinuado', Azul: 'Solo pedido especial' });
+  });
+});

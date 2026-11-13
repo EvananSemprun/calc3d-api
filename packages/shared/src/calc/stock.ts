@@ -1,4 +1,5 @@
 import type { MaterialStatus, StockCountParts } from '../schemas/stock';
+import { entraEnReposicion } from './estado-de-ficha';
 
 /**
  * CONTROL DE FILAMENTO — las cuentas de las hojas "Inventario" (compras) y
@@ -66,7 +67,8 @@ export function restockStatus(
   material: { status: MaterialStatus },
   count: StockCountParts | null,
 ): RestockStatus | null {
-  if (material.status === 'DISCONTINUED') return 'IGNORED';
+  // Fuera de la reposición = descontinuada o «solo pedido especial»: no se pide aunque esté en cero.
+  if (!entraEnReposicion(material.status)) return 'IGNORED';
   if (!count) return null;
   if (stockTotal(count) === 0) return 'OUT';
   if (count.running > 0) return 'LOW';
@@ -173,7 +175,7 @@ export function restockByColor(
   const mesContado = Object.values(counts).some((c) => !!c);
 
   const filas = [...grupos.entries()]
-    .filter(([, g]) => g.fichas.some((m) => m.status !== 'DISCONTINUED'))
+    .filter(([, g]) => g.fichas.some((m) => entraEnReposicion(m.status)))
     .map(([key, g]) => {
       const conteos = g.fichas
         .map((m) => counts[m.id])

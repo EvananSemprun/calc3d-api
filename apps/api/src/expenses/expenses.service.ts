@@ -1,6 +1,8 @@
 import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  estadoTrasComprar,
+  type MaterialStatus,
   purchaseCostPerRoll,
   MaterialSchema,
   PrinterSchema,
@@ -32,7 +34,7 @@ function dateWhere(from?: string, to?: string) {
  */
 interface CatalogDelegate {
   create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
-  findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string } | null>;
+  findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string; status?: string } | null>;
   update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<{ id: string }>;
 }
 
@@ -199,8 +201,11 @@ export class ExpensesService {
    *   quedar congelado en una compra que ya no existe.
    *
    * Comprar rollos de una ficha descontinuada la vuelve a ACTIVA: si se volvió a
-   * comprar, se sigue manejando. `updateMany` con la organización: con el id de
-   * una ficha ajena no escribe nada.
+   * comprar, se sigue manejando. ⚠️ Una ficha «solo pedido especial» NO se
+   * reactiva (`estadoTrasComprar`): el dueño la marcó así a propósito, y comprar
+   * un rollo para un encargo puntual no debería cambiárselo. El estado actual se
+   * lee CON la organización: con el id de una ficha ajena no hay ficha y no se
+   * escribe nada (el `updateMany` también filtra, por si acaso).
    */
   async recalcularPrecioDelRollo(
     organizationId: string,
@@ -215,11 +220,16 @@ export class ExpensesService {
     // Sin compras con rollos no hay precio que calcular: se deja el que tenía.
     // Ponerlo en 0 haría cotizar gratis, que es peor que un precio viejo.
     if (!ultima?.quantity) return;
+    const ficha = await this.prisma.material.findFirst({
+      where: { id: materialId, organizationId },
+      select: { status: true },
+    });
+    if (!ficha) return;
     await this.prisma.material.updateMany({
       where: { id: materialId, organizationId },
       data: {
         rollPrice: purchaseCostPerRoll(Number(ultima.amount), ultima.quantity),
-        status: 'ACTIVE',
+        status: estadoTrasComprar(ficha.status as MaterialStatus),
       },
     });
   }
@@ -247,6 +257,8 @@ export class ExpensesService {
     return this.prisma.$transaction(async (tx) => {
       const model = (tx as unknown as Record<string, CatalogDelegate>)[link.kind];
       let linkId = link.id ?? undefined;
+      // Estado de la ficha de filamento ANTES de esta compra (ver estadoTrasComprar).
+      let estadoPrevio: MaterialStatus = 'ACTIVE';
 
       if (link.mode === 'new') {
         // Filamento: lo que venga en `data.rollPrice` se pisa con el de la compra.
@@ -257,10 +269,12 @@ export class ExpensesService {
         const data = schemas[link.kind].parse(crudo);
         const created = await model.create({ data: { ...data, organizationId } });
         linkId = created.id;
+        estadoPrevio = (data as { status?: MaterialStatus }).status ?? 'ACTIVE';
       } else {
         if (!linkId) throw new BadRequestException('Falta el item del catálogo');
         const owned = await model.findFirst({ where: { id: linkId, organizationId } });
         if (!owned) throw new NotFoundException('Definición no encontrada');
+        estadoPrevio = (owned.status as MaterialStatus | undefined) ?? 'ACTIVE';
         // El precio de referencia es de impresoras e insumos. En filamento se
         // ignora (sin 400: un panel viejo lo sigue mandando durante el deploy).
         if (link.kind !== 'material' && link.referenceField != null && link.referenceValue != null) {
@@ -275,11 +289,11 @@ export class ExpensesService {
       }
 
       // Una compra de filamento fija el precio del rollo y reactiva la ficha si
-      // estaba descontinuada. La ficha ya se validó como propia arriba.
+      // estaba descontinuada (no si es «solo pedido especial»). La ficha ya se validó como propia arriba.
       if (link.kind === 'material' && linkId) {
         await model.update({
           where: { id: linkId },
-          data: { rollPrice: purchaseCostPerRoll(expense.amount, rollos), status: 'ACTIVE' },
+          data: { rollPrice: purchaseCostPerRoll(expense.amount, rollos), status: estadoTrasComprar(estadoPrevio) },
         });
       }
 
