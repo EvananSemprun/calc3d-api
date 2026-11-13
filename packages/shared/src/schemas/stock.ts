@@ -22,6 +22,19 @@ export const MaterialStatusUpdateSchema = z.object({ status: MaterialStatusSchem
 export type MaterialStatusUpdateDto = z.infer<typeof MaterialStatusUpdateSchema>;
 
 /**
+ * Cambiar el estado de VARIAS fichas de una vez (`POST /materials/status-batch`):
+ * «descontinuar toda la marca». Son ids y no una marca a propósito: el panel ya
+ * mostró y confirmó CUÁLES fichas son, y el servidor actúa sobre esas, no sobre
+ * una consulta que pudo cambiar entre la confirmación y el clic.
+ * El tope evita un lote desmesurado por un cliente roto; no es regla de negocio.
+ */
+export const MaterialStatusBatchSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(200),
+  status: MaterialStatusSchema,
+});
+export type MaterialStatusBatchDto = z.infer<typeof MaterialStatusBatchSchema>;
+
+/**
  * Corregir una ficha (`PATCH /materials/:id`). Nombre, color, **marca y tipo**.
  *
  * ⚠️ Marca y tipo entraron el 2026-10-09, revirtiendo la decisión del

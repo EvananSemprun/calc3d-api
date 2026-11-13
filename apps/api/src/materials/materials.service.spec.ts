@@ -251,3 +251,74 @@ describe('MaterialsService.setStatus', () => {
     expect(prisma.material.update).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Descontinuar VARIAS fichas de una vez (13/11, «descontinuar toda la marca»).
+ *
+ * ⚠️ El IDOR tiene su HERMANO alcanzable: un lote con fichas propias Y una ajena.
+ * Probar solo «todas ajenas» deja pasar un `updateMany` sin `organizationId`, que
+ * con ids mezclados tocaría la ajena. Y el lote es ATÓMICO a propósito: una sola
+ * ficha ajena lo rechaza entero, no se escribe «las que sí».
+ */
+describe('MaterialsService.setStatusBatch', () => {
+  type Fila = { id: string; organizationId: string };
+  const FICHAS: Fila[] = [
+    { id: 'm1', organizationId: ORG },
+    { id: 'm2', organizationId: ORG },
+    { id: 'x9', organizationId: 'org-B' },
+  ];
+
+  // Un prisma que RESPETA el `where`: si el servicio olvida la organización, la ajena aparece.
+  function prismaConFichas() {
+    const prisma = makePrisma();
+    const coincide = (where: { id: { in: string[] }; organizationId?: string }) =>
+      FICHAS.filter((f) => where.id.in.includes(f.id) && (where.organizationId === undefined || f.organizationId === where.organizationId));
+    prisma.material.findMany.mockImplementation(({ where }: { where: { id: { in: string[] }; organizationId?: string } }) =>
+      Promise.resolve(coincide(where)),
+    );
+    const updateMany = jest.fn().mockImplementation(({ where }: { where: { id: { in: string[] }; organizationId?: string } }) =>
+      Promise.resolve({ count: coincide(where).length }),
+    );
+    return { prisma: Object.assign(prisma, { material: { ...prisma.material, updateMany } }), updateMany };
+  }
+
+  it('cambia solo las fichas elegidas, de la organización del token', async () => {
+    const { prisma, updateMany } = prismaConFichas();
+
+    const r = await service(prisma as never).setStatusBatch(ORG, { ids: ['m1', 'm2'], status: 'DISCONTINUED' });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['m1', 'm2'] }, organizationId: ORG },
+      data: { status: 'DISCONTINUED' },
+    });
+    expect(r).toEqual({ updated: 2 });
+  });
+
+  it('hermano: la propia SÍ se toca (un lote de una sola ficha propia funciona)', async () => {
+    const { prisma, updateMany } = prismaConFichas();
+
+    await service(prisma as never).setStatusBatch(ORG, { ids: ['m1'], status: 'ACTIVE' });
+
+    expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('una ficha de otra organización mezclada con propias rechaza TODO el lote y no escribe', async () => {
+    const { prisma, updateMany } = prismaConFichas();
+
+    await expect(
+      service(prisma as never).setStatusBatch(ORG, { ids: ['m1', 'x9'], status: 'DISCONTINUED' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('un id repetido no hace creer que falta una ficha', async () => {
+    const { prisma, updateMany } = prismaConFichas();
+
+    await service(prisma as never).setStatusBatch(ORG, { ids: ['m1', 'm1', 'm2'], status: 'DISCONTINUED' });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['m1', 'm2'] }, organizationId: ORG },
+      data: { status: 'DISCONTINUED' },
+    });
+  });
+});

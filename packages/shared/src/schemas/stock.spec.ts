@@ -1,5 +1,6 @@
 import {
   MaterialCorrectionSchema,
+  MaterialStatusBatchSchema,
   MaterialStatusUpdateSchema,
   StockMonthCloseSchema,
   StockMonthReopenSchema,
@@ -129,5 +130,20 @@ describe('MaterialCorrectionSchema', () => {
 
   it('un color vacío queda sin color', () => {
     expect(MaterialCorrectionSchema.parse({ color: '' })).toEqual({ color: null });
+  });
+});
+
+describe('MaterialStatusBatchSchema', () => {
+  it('acepta una lista de ids con un estado', () => {
+    expect(MaterialStatusBatchSchema.parse({ ids: ['a', 'b'], status: 'DISCONTINUED' })).toEqual({
+      ids: ['a', 'b'],
+      status: 'DISCONTINUED',
+    });
+  });
+
+  it('rechaza una lista vacía, un estado inválido y un lote desmesurado', () => {
+    expect(MaterialStatusBatchSchema.safeParse({ ids: [], status: 'ACTIVE' }).success).toBe(false);
+    expect(MaterialStatusBatchSchema.safeParse({ ids: ['a'], status: 'BORRADO' }).success).toBe(false);
+    expect(MaterialStatusBatchSchema.safeParse({ ids: Array(201).fill('a'), status: 'ACTIVE' }).success).toBe(false);
   });
 });

@@ -100,3 +100,26 @@ describe('MaterialsController', () => {
     expect(posts).toEqual([]);
   });
 });
+
+/** Descontinuar varias fichas (13/11): la ruta es PATCH y no puede chocar con `:id/status`. */
+describe('MaterialsController — estado en lote', () => {
+  it('PATCH status/batch llega a setStatusBatch con la organización del token', async () => {
+    const service = { setStatusBatch: jest.fn().mockResolvedValue({ updated: 2 }) };
+    const controller = new MaterialsController(service as never);
+
+    await controller.setStatusBatch({ organizationId: 'org-A' } as never, { ids: ['m1', 'm2'], status: 'DISCONTINUED' });
+
+    expect(service.setStatusBatch).toHaveBeenCalledWith('org-A', { ids: ['m1', 'm2'], status: 'DISCONTINUED' });
+    const handler = MaterialsController.prototype.setStatusBatch;
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.PATCH);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('status/batch');
+  });
+
+  it('valida con el pipe real: sin ids o con un estado inválido es 400', () => {
+    const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, MaterialsController, 'setStatusBatch') as Record<string, { pipes?: unknown[] }>;
+    const pipe = Object.values(args).find((a) => (a.pipes?.length ?? 0) > 0)!.pipes![0] as ZodValidationPipe<unknown>;
+
+    expect(() => pipe.transform({ ids: [], status: 'ACTIVE' })).toThrow(BadRequestException);
+    expect(() => pipe.transform({ ids: ['m1'], status: 'BORRADO' })).toThrow(BadRequestException);
+  });
+});

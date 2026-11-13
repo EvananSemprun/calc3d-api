@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { entraEnReposicion, monthKey, stockTotal, type MaterialCorrectionDto, type MaterialStatusUpdateDto } from '@calc3d/shared';
+import { entraEnReposicion, monthKey, stockTotal, type MaterialCorrectionDto, type MaterialStatusBatchDto, type MaterialStatusUpdateDto } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -60,6 +60,29 @@ export class MaterialsService {
   async setStatus(organizationId: string, id: string, dto: MaterialStatusUpdateDto) {
     await this.ensureOwned(organizationId, id);
     return this.prisma.material.update({ where: { id }, data: { status: dto.status } });
+  }
+
+  /**
+   * Cambiar el estado de VARIAS fichas (13/11: «descontinuar toda la marca»).
+   *
+   * ⚠️ **Atómico a propósito.** Si UNA sola ficha no es de esta organización, se
+   * rechaza TODO el lote y no se escribe nada: aplicar «las que sí» dejaría al
+   * dueño creyendo que descontinuó la marca entera. Y la organización va también
+   * en el `updateMany`, no solo en la comprobación: si alguien quita una de las
+   * dos, la otra sigue cerrando el IDOR.
+   */
+  async setStatusBatch(organizationId: string, dto: MaterialStatusBatchDto) {
+    const ids = [...new Set(dto.ids)];
+    const propias = await this.prisma.material.findMany({
+      where: { id: { in: ids }, organizationId },
+      select: { id: true },
+    });
+    if (propias.length !== ids.length) throw new NotFoundException('Material no encontrado');
+    await this.prisma.material.updateMany({
+      where: { id: { in: ids }, organizationId },
+      data: { status: dto.status },
+    });
+    return { updated: ids.length };
   }
 
   /**

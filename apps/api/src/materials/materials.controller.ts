@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import {
   MaterialCorrectionSchema,
+  MaterialStatusBatchSchema,
   MaterialStatusUpdateSchema,
   type MaterialCorrectionDto,
+  type MaterialStatusBatchDto,
   type MaterialStatusUpdateDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -49,6 +51,18 @@ export class MaterialsController {
     @Body(new ZodValidationPipe(MaterialStatusUpdateSchema)) dto: MaterialStatusUpdateDto,
   ) {
     return this.service.setStatus(user.organizationId, id, dto);
+  }
+
+  /**
+   * Cambiar el estado de varias fichas (descontinuar toda una marca). PATCH (no hay rutas POST: ver el test «no hay alta suelta») y ruta de
+   * dos segmentos que no encajan con `:id` ni con `:id/status`.
+   */
+  @Patch('status/batch')
+  setStatusBatch(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(MaterialStatusBatchSchema)) dto: MaterialStatusBatchDto,
+  ) {
+    return this.service.setStatusBatch(user.organizationId, dto);
   }
 
   @Delete(':id')
