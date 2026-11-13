@@ -8,6 +8,7 @@ import {
   type StoreCollectionUpsertDto,
 } from '@calc3d/shared';
 import type { Prisma } from '@prisma/client';
+import { categoriasParaColecciones, productosParaColecciones } from '../common/catalogo-de-colecciones';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ColeccionItemVista {
@@ -342,8 +343,8 @@ export class StoreColeccionesService {
    * ⚠️ La resuelve el SERVIDOR con `resolverColeccion` de shared, la MISMA función que usa
    * el endpoint público: el panel no arma la lista. Una previa calculada aparte sería una
    * segunda definición y mentiría el día que una de las dos cambie (el dueño aprobaría una
-   * portada y saldría otra). El catálogo se pide con el mismo criterio que el público
-   * (solo VISIBLE, mismo orden), y por organización.
+   * portada y saldría otra). El catálogo sale de `common/catalogo-de-colecciones.ts`, la
+   * MISMA consulta que usa el público (solo VISIBLE, mismo orden, por organización).
    *
    * No filtra por ventana ni por `visible` de la colección: previsualizar una que todavía no
    * arranca es justo para lo que sirve. `vigente` avisa si hoy se publicaría.
@@ -352,13 +353,9 @@ export class StoreColeccionesService {
     const fila = await this.findOwn(organizationId, id);
     const [vista] = await this.armar([fila]);
     const [categorias, productos] = await Promise.all([
-      this.prisma.storeCategory.findMany({
-        where: { organizationId },
-        select: { id: true, parentId: true },
-      }),
+      this.prisma.storeCategory.findMany(categoriasParaColecciones(organizationId)),
       this.prisma.storeProduct.findMany({
-        where: { organizationId, visible: true },
-        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+        ...productosParaColecciones(organizationId),
         select: { id: true, slug: true, name: true, categoryId: true },
       }),
     ]);

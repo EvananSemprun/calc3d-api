@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { categoriasParaColecciones, productosParaColecciones } from '../common/catalogo-de-colecciones';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
 import { businessDateKey, coleccionEnVentana, coleccionVigente, esNuevo, resolverColeccion } from '@calc3d/shared';
@@ -432,13 +433,9 @@ export class StorePublicService {
    *  las categorías planas con su madre. */
   private async catalogoDeColecciones(organizationId: string) {
     const [categorias, productos] = await Promise.all([
-      this.prisma.storeCategory.findMany({
-        where: { organizationId },
-        select: { id: true, slug: true, parentId: true },
-      }),
+      this.prisma.storeCategory.findMany(categoriasParaColecciones(organizationId)),
       this.prisma.storeProduct.findMany({
-        where: { organizationId, visible: true },
-        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+        ...productosParaColecciones(organizationId),
         include: includeTarjeta(),
       }),
     ]);
