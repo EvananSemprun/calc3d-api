@@ -540,8 +540,11 @@ export class PurchaseInvoicesService {
         currencyCode: pago.currencyCode,
         currencyLabel: pago.currencyLabel,
         amountForeign: pago.amountForeign,
-        // Solo se LEE si hay contraparte; acá solo se guarda (default true).
-        refundable: dto.refundable ?? true,
+        // ⚠️ Solo significa algo si lo puso una contraparte con plata de verdad.
+        // Sin contraparte, o tomado del saldo a favor, no hay nada que devolver:
+        // se guarda el default `true` en vez de un `false` huérfano que la
+        // lectura futura (abono de bolsillo -> obligación) heredaría.
+        refundable: dto.counterpartyId && !dto.tomadoDeFacturaId ? (dto.refundable ?? true) : true,
         counterpartyId: dto.counterpartyId || null,
         accountId: dto.accountId || null,
         note: dto.note || null,
@@ -582,8 +585,20 @@ export class PurchaseInvoicesService {
       );
     }
     const rate = n(tasa.rate);
+    const amount = usdDesdeMoneda(dto.amountForeign, rate);
+    // ⚠️ La guarda va ACÁ y no en `usdDesdeMoneda`: esa función solo mira que
+    // la ENTRADA sea positiva, y `toMoney` redondea a 4 decimales, así que Bs
+    // 0,001 a tasa 250 da 0 y se colaba un abono de $0 saltándose el
+    // `positive()` que sí protege al abono en USD. Es una regla del abono (un
+    // abono de 0 no baja el saldo), no de la conversión, que sirve igual a
+    // quien solo quiere mostrar el equivalente.
+    if (!(amount > 0)) {
+      throw new BadRequestException(
+        `Lo pagado en "${dto.currencyLabel}" no llega ni a un centavo de dólar a esa tasa, así que no bajaría el saldo. Revisa el monto que escribiste.`,
+      );
+    }
     return {
-      amount: usdDesdeMoneda(dto.amountForeign, rate),
+      amount,
       rate,
       currencyCode: tasa.currencyCode,
       currencyLabel: tasa.label,

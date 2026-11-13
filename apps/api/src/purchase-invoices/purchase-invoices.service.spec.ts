@@ -2399,3 +2399,80 @@ describe('PurchaseInvoicesService — la cuenta y el «¿se te devuelve?» del a
     expect(guardado(p).refundable).toBe(true);
   });
 });
+
+/**
+ * RONDA 1 DE LA TAREA 5: lo que se guarda cuando el dato no corresponde.
+ */
+describe('PurchaseInvoicesService — el abono en moneda que no llega a un centavo', () => {
+  const factura = () => ({ ...FACTURA_VACIA, lines: [linea()] });
+  const enBs = (amountForeign: number) => ({
+    date: '2026-11-12',
+    currencyLabel: 'Binance / USDT',
+    amountForeign,
+  });
+
+  it('Bs 0,001 a tasa 250 redondea a 0 USD: se rechaza con 400 y no escribe', async () => {
+    const p = makePrisma(factura());
+    await expect(servicio(p).addPayment(ORG, 'f1', enBs(0.001) as never)).rejects.toThrow(
+      /ni a un centavo|no llega/,
+    );
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+  });
+
+  it('…y su hermano: un monto chico pero que redondea a >= 0,0001 SÍ se acepta', async () => {
+    const p = makePrisma(factura());
+    // 0,025 / 250 = 0,0001 exacto.
+    await servicio(p).addPayment(ORG, 'f1', enBs(0.025) as never);
+    expect(p.purchaseInvoicePayment.create.mock.calls[0][0].data.amount).toBe(0.0001);
+  });
+});
+
+describe('PurchaseInvoicesService — `refundable` solo significa algo con contraparte', () => {
+  const factura = () => ({ ...FACTURA_VACIA, lines: [linea()] });
+  const guardado = (p: ReturnType<typeof makePrisma>) =>
+    p.purchaseInvoicePayment.create.mock.calls[0][0].data;
+
+  it('sin contraparte, un `false` se guarda como true: no hay nada que devolver', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', { date: '2026-11-12', amount: 10, refundable: false } as never);
+    expect(guardado(p).refundable).toBe(true);
+  });
+
+  it('tomado del saldo a favor, un `false` también se guarda como true', async () => {
+    const vieja = {
+      ...FACTURA_VACIA,
+      id: 'f-vieja',
+      lines: [linea()],
+      payments: [
+        {
+          id: 'pv',
+          organizationId: ORG,
+          date: new Date('2026-10-01'),
+          amount: 60,
+          voidedAt: null,
+          tomadoDeFacturaId: null,
+          createdAt: new Date('2026-10-01'),
+        },
+      ],
+    };
+    const p = makePrisma({ ...FACTURA_VACIA, id: 'f-nueva', lines: [linea()] }, [], [vieja]);
+    await servicio(p).addPayment(ORG, 'f-nueva', {
+      date: '2026-11-12',
+      amount: 5,
+      refundable: false,
+      tomadoDeFacturaId: 'f-vieja',
+    } as never);
+    expect(guardado(p).refundable).toBe(true);
+  });
+
+  it('hermano: con contraparte, `false` se respeta (ya cubierto arriba) y `true` también', async () => {
+    const p = makePrisma(factura());
+    await servicio(p).addPayment(ORG, 'f1', {
+      date: '2026-11-12',
+      amount: 10,
+      counterpartyId: 'cp-mia',
+      refundable: true,
+    } as never);
+    expect(guardado(p).refundable).toBe(true);
+  });
+});

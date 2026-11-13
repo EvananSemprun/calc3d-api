@@ -1803,6 +1803,46 @@ en el repo web: se sobrescribe al sincronizar.
         saldo **2 shared**; ignorar `SIN_PROVEEDOR` **1 + 1**; ignorar
         `ORIGEN_ANULADO` **2 + 1**; ignorar `MISMA_FACTURA` **1 + 1**; Deuda
         mostrando 0 a favor **8 api**.
+    - ⚠️ **EL ABONO CONGELA SU MONEDA, SU TASA Y SU CUENTA** (2026-11-12, fase
+      B tarea 5, shared 0.75.0, migración
+      `20261112100000_moneda_y_tasa_del_abono`, **aditiva**). Antes el abono
+      guardaba monto, fecha, quién y de qué cuenta, pero no **en qué moneda se
+      pagó ni a qué tasa**.
+      - **Las columnas llevan los nombres de `Payment`** (`rate`, `currencyCode`,
+        `currencyLabel`, `amountForeign`), no `currency`/`amountOriginal`: la
+        tabla hermana de los abonos de pedido ya congela exactamente lo mismo, y
+        dos nombres para un hecho es la forma de que se desalineen. `amountForeign`
+        **no es redundante con `amount × rate`**: el USD se recorta a 4 decimales
+        y reconstruir los Bs devuelve 1.899,9999 donde se pagaron 1.900. Todo
+        nullable: `null` = USD o anterior a esto, sin backfill (inventarle una
+        tasa sería mentir). `refundable` lleva `default true`.
+      - ⚠️ **Va `currencyLabel`**: la identidad de una tasa es su label, no su
+        moneda (BCV y Binance coexisten). Sin él quedaría congelado un número que
+        no se puede atribuir.
+      - ⚠️ **LA TASA LA RESUELVE EL SERVIDOR POR LABEL y el USD también**. El
+        cuerpo trae `{currencyLabel, amountForeign}`; la tasa **no viaja** (el
+        schema la descarta) y el `amount` que llegue con el par foráneo se
+        **DESCARTA**. `ExchangeRate` es un **historial**: la vigente es la fila
+        más nueva de ese label, de ESTA organización. Una vez guardada, **no se
+        recalcula nunca al leer**. Label sin tasa → 400 que manda a Configuración
+        → Moneda.
+      - ⚠️ **Un abono que convierte a $0 se RECHAZA** (400): `toMoney` redondea a
+        4 decimales y Bs 0,001 a tasa 250 daba 0, saltándose el `positive()` del
+        abono en USD. La guarda vive en el servicio y no en `usdDesdeMoneda`
+        porque es una regla del abono, no de la conversión.
+      - ⚠️ **`tomadoDeFacturaId` PROHÍBE el par foráneo**: el saldo a favor es
+        un saldo derivado en USD, no hubo pago en otra moneda que congelar.
+      - ⚠️ **`refundable` solo se guarda como `false` con contraparte y sin
+        saldo a favor**; en cualquier otro caso queda `true`. Lo consume la
+        tarea 7; cerrarlo en el origen evita que herede un `false` huérfano.
+      - `amount` es opcional en el tipo del DTO (en otra moneda no viaja); lo
+        que impide que llegue `undefined` a Prisma es el `superRefine`, fijado
+        contra el pipe real en `purchase-invoices/abono.audit.spec.ts`.
+      - El modal Abonar ya manda `accountId` (el servidor ya lo validaba por
+        organización; faltaba el test, que ahora existe).
+      - ⚠️ **Deuda conocida: un abono en Bs hecho por API todavía no se dibuja
+        como Bs en el panel.** El tipo `InvoicePayment` lo lleva; ninguna
+        pantalla lo muestra ni hay formulario para pagar en otra moneda.
     - Plan: `docs/superpowers/plans/2026-10-09-facturas-de-compra.md` y
       `docs/superpowers/plans/2026-10-10-fases-4-y-5.md` (tarea 2).
   - **Reporte en Excel (2026-09-07)** (`reports/reports.module.ts`,
