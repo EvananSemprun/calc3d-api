@@ -275,6 +275,7 @@ model Settings {
 enum MaterialStatus {
   ACTIVE
   DISCONTINUED
+  SOLO_PEDIDO_ESPECIAL
 }
 
 model Material {

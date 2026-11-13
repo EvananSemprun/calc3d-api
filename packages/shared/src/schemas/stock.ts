@@ -11,7 +11,7 @@ import type { PayerKind } from '../calc/cash';
  */
 
 /** Un color que se sigue comprando, o uno que se decidió no reponer más. */
-export const MaterialStatusSchema = z.enum(['ACTIVE', 'DISCONTINUED']);
+export const MaterialStatusSchema = z.enum(['ACTIVE', 'DISCONTINUED', 'SOLO_PEDIDO_ESPECIAL']);
 export type MaterialStatus = z.infer<typeof MaterialStatusSchema>;
 
 /**
