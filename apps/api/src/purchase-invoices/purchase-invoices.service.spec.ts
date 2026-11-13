@@ -2490,3 +2490,83 @@ describe('PurchaseInvoicesService — `refundable` solo significa algo con contr
     expect(guardado(p).refundable).toBe(true);
   });
 });
+
+/**
+ * IDOR DE FACTURA (fase B, tarea 9): con el id de una factura de OTRA
+ * organización, NINGUNA ruta con `:id` la alcanza ni escribe.
+ *
+ * ⚠️ Cada rechazo va con su HERMANO ALCANZABLE: la misma factura, pedida desde
+ * SU organización, sí responde. Sin el hermano, un servicio que devolviera 404
+ * para todo pasaría todos los tests de aislamiento.
+ */
+describe('PurchaseInvoicesService — una factura de OTRA organización no se alcanza', () => {
+  const ajena = () => ({ ...FACTURA_VACIA, id: 'f-ajena', organizationId: OTRA, lines: [linea({ id: 'la' })] });
+  const baseConLaAjena = () => makePrisma(FACTURA_VACIA, [], [ajena()]);
+  const confirmado = { reason: 'prueba', confirmoFueraDePlazo: true };
+  // Sin referencias a fichas: así el hermano (OTRA, su propia factura) no choca con otra validación.
+  const correccion = { date: '2026-11-12', lines: [{ nombreNuevo: 'Impresora', nuevoTipo: 'PRINTER', quantity: 1, unitPrice: 300 }] };
+
+  it('get', async () => {
+    const p = baseConLaAjena();
+    await expect(servicio(p).get(ORG, 'f-ajena')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(servicio(p).get(OTRA, 'f-ajena')).resolves.toMatchObject({ id: 'f-ajena' });
+  });
+
+  it('update no escribe', async () => {
+    const p = baseConLaAjena();
+    await expect(servicio(p).update(ORG, 'f-ajena', correccion as never)).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoice.update).not.toHaveBeenCalled();
+    await servicio(p).update(OTRA, 'f-ajena', correccion as never);
+    expect(p.purchaseInvoice.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('void no escribe', async () => {
+    const p = baseConLaAjena();
+    await expect(servicio(p).void(ORG, 'f-ajena', confirmado as never)).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoice.update).not.toHaveBeenCalled();
+    await servicio(p).void(OTRA, 'f-ajena', confirmado as never);
+    expect(p.purchaseInvoice.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('remove no borra', async () => {
+    const p = baseConLaAjena();
+    await expect(servicio(p).remove(ORG, 'f-ajena')).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoice.delete).not.toHaveBeenCalled();
+    await servicio(p).remove(OTRA, 'f-ajena');
+    expect(p.purchaseInvoice.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('addPayment no abona a la factura de otro negocio', async () => {
+    const p = baseConLaAjena();
+    const abono = { date: '2026-11-12', amount: 10 } as never;
+    await expect(servicio(p).addPayment(ORG, 'f-ajena', abono)).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.purchaseInvoicePayment.create).not.toHaveBeenCalled();
+    await servicio(p).addPayment(OTRA, 'f-ajena', abono);
+    expect(p.purchaseInvoicePayment.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('receive no mete mercadería ni crea el gasto', async () => {
+    const p = baseConLaAjena();
+    const dto = { quantity: 1 } as never;
+    await expect(servicio(p).receive(ORG, 'f-ajena', 'la', dto)).rejects.toBeInstanceOf(NotFoundException);
+    expect(p.expense.create).not.toHaveBeenCalled();
+    await servicio(p).receive(OTRA, 'f-ajena', 'la', dto);
+    expect(p.expense.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('voidPayment no anula el abono de otro negocio', async () => {
+    const p = baseConLaAjena();
+    await expect(servicio(p).voidPayment(ORG, 'f-ajena', 'pg', confirmado as never)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(p.purchaseInvoicePayment.update).not.toHaveBeenCalled();
+  });
+
+  it('list no mezcla las facturas de las dos organizaciones', async () => {
+    const p = baseConLaAjena();
+    const mias = await servicio(p).list(ORG);
+    expect(mias.map((f: { id: string }) => f.id)).toEqual(['f1']);
+    const suyas = await servicio(p).list(OTRA);
+    expect(suyas.map((f: { id: string }) => f.id)).toEqual(['f-ajena']);
+  });
+});
