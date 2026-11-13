@@ -738,6 +738,56 @@ en el repo web: se sobrescribe al sincronizar.
     - Rutas: `GET /cash`, `POST/DELETE /cash/movements`,
       `PUT /cash/reconciliations`, `POST /cash/reconciliations/:id/confirm`,
       `POST /cash/reconciliations/:id/void`.
+    - ⚠️ **CARGAR CON FECHA VIEJA DEJABA MINTIENDO A UNA CONCILIACIÓN, EN
+      SILENCIO** (2026-11-13, fase B tarea 8, shared 0.78.0, **sin migración**).
+      El dueño concilia y después carga un movimiento con fecha anterior: el
+      esperado cambia y la conciliación ya no dice la verdad. Ahora el servidor
+      corta con **400** y el cliente reintenta con `confirmoConciliacion`.
+      - **Es un candado BLANDO**, como `confirmoFueraDePlazo`: no impide, obliga
+        a decirlo. El 400 trae la lista de `conciliacionesAfectadas` (id, fecha,
+        estado) para que el panel ofrezca «anular esta» sin adivinar cuál.
+      - ⚠️ **LA DRAFT TAMBIÉN AVISA, y es el caso que motivó el pedido.** Una
+        CONFIRMADA congela sus importes y ya tenía el aviso `stale` —que solo se
+        ve expandiendo la fila—; una **DRAFT no congela nada y cambia en
+        silencio**. Mutación: que la DRAFT no avise tumba **16** tests.
+      - ⚠️ **`update` manda la fecha VIEJA Y LA NUEVA.** Es el error fácil: con
+        solo la nueva, sacar un movimiento *de dentro* de una conciliación no
+        avisa y esa conciliación queda mintiendo igual. Cada rama tiene su
+        mutación (tumba 1 cada una).
+      - **La regla vive en `shared`** (`calc/conciliacion-aviso.ts`:
+        `conciliacionesQueSeInvalidan` + `mensajeDeConciliacionAfectada`), no en
+        el servicio, por lo mismo que `anulacionNecesitaConfirmacion`: el panel
+        tiene que poder mostrar la advertencia sin adivinarla. El `where` solo
+        descarta las `VOID`; **quién cuenta como «afectada» lo decide el motor**,
+        para que no haya dos definiciones.
+      - **Lo llevan SOLO los DTO que mueven el saldo** (los que producen asientos
+        en `cashEntries`): ventas, gastos (los dos), abonos de pedido, pagos de
+        préstamo (incluido **anular**, que devuelve plata), movimientos de caja,
+        abonos de compra y el `void` de una factura (por las fechas de sus abonos
+        vigentes). ⚠️ **La factura de compra en sí NO**: no mueve plata, la mueven
+        sus abonos. Avisar ahí sería avisar de algo que no cambia el saldo, y los
+        avisos que no significan nada se aprenden a ignorar.
+      - ⚠️ **Un abono tomado del SALDO A FAVOR no pide confirmación**, ni al
+        crearlo ni al anularlo, ni cuenta en el `void` de la factura: esa plata ya
+        salió al pagar de más y **no mueve la caja** (`fromCredit`). Es la misma
+        regla de siempre, aplicada acá.
+      - ⚠️ **El esperado sigue siendo GLOBAL, no por cuenta.** Mientras exista un
+        solo movimiento sin cuenta, filtrar **inventa un faltante** — y con
+        `autoAttributeShortfall` encendido lo convierte en deuda saldada contra
+        alguien. Hay ~100 pagos históricos sin cuenta.
+      - ⚠️ **`ZodValidationPipe` pasó a `<Salida, Entrada = Salida>`**. Era
+        `ZodSchema<T>`, que exige que lo que entra y lo que sale sean el mismo
+        tipo, y el schema de la query `?confirmoConciliacion=true` **transforma**
+        texto en booleano. Convertir al validar es para lo que existe Zod; el
+        default deja todas las llamadas viejas iguales.
+      - Regresión: `common/conciliacion-cableado.spec.ts` (**64**: las 14 puertas
+        por cuatro casos cada una, más `update` con las dos fechas y dos de lo que
+        NO mueve caja). Mutaciones: la DRAFT muda **16**, el flag inútil **17**,
+        cada `update` a medias **1**, y el guard de Caja desconectado **2**.
+      - ⚠️ **Los mocks de seis specs existentes hubo que completarlos**: el guard
+        hace `findMany` sobre `cashReconciliation` y ninguno la tenía. Un mock que
+        no modela lo que la consulta pide rompe en cuanto la consulta crece — ya
+        había pasado con el `include` de las recepciones.
     - ⚠️ **UNA CUOTA ANULADA NO AMORTIZA, Y CAJA LO IGNORABA (2026-10-10).**
       Anular no borra: la fila queda en el historial con su motivo y el saldo
       **vuelve a subir**. Deuda lo hacía (`serialize()` calcula sobre los
