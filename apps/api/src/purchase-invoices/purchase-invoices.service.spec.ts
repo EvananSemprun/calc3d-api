@@ -2442,7 +2442,9 @@ describe('PurchaseInvoicesService — `refundable` solo significa algo con contr
     const vieja = {
       ...FACTURA_VACIA,
       id: 'f-vieja',
-      lines: [linea()],
+      supplier: { id: 'prov-mio', name: 'StratoFill' },
+      supplierId: 'prov-mio',
+      lines: [linea({ quantity: 1, unitPrice: 50 })],
       payments: [
         {
           id: 'pv',
@@ -2455,10 +2457,20 @@ describe('PurchaseInvoicesService — `refundable` solo significa algo con contr
         },
       ],
     };
-    const p = makePrisma({ ...FACTURA_VACIA, id: 'f-nueva', lines: [linea()] }, [], [vieja]);
+    const nueva = {
+      ...FACTURA_VACIA,
+      id: 'f-nueva',
+      supplier: { id: 'prov-mio', name: 'StratoFill' },
+      supplierId: 'prov-mio',
+      lines: [linea()],
+    };
+    const p = makePrisma(nueva, [], [vieja]);
     await servicio(p).addPayment(ORG, 'f-nueva', {
       date: '2026-11-12',
       amount: 5,
+      // Llamando al servicio sin pasar por el pipe, la contraparte podría
+      // llegar junto con el saldo: la guarda no puede depender del schema.
+      counterpartyId: 'cp-mia',
       refundable: false,
       tomadoDeFacturaId: 'f-vieja',
     } as never);
