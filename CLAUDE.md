@@ -1552,6 +1552,22 @@ en el repo web: se sobrescribe al sincronizar.
         dice su propio SALDO.
     - Total, pagado, saldo, recibido y estado **se DERIVAN** (`invoiceTotals`,
       `invoiceStatus` en shared). Lo único guardado es `voidedAt`.
+    - ⚠️ **EL INVARIANTE DE CIERRE LLEVA CUATRO TÉRMINOS, NO TRES** (2026-11-13,
+      fase B tarea 9). La definición oficial es:
+      `Gastos recibidos + Anticipos − Deuda − Crédito tomado = lo que salió de
+      Caja por compras` (`cash/invariante-de-compras.spec.ts`).
+      - El `− Deuda` ya estaba justificado: sin él la regla se reduce a
+        `máx(pagado, recibido) = pagado` y **se rompe en la primera compra a
+        crédito**.
+      - ⚠️ **El `− Crédito tomado` se descubrió DESPUÉS, y el plan lo tenía mal.**
+        Sin él la fórmula **es falsa en cuanto se usa un saldo a favor**: medido,
+        factura A de 85 pagada con 100 (anticipo 15) y factura B de 40 pagada con
+        34 + 6 del saldo de A → de Caja salieron **134** y la fórmula literal da
+        **140**. Esos 6 ya habían salido al pagar de más, pero el `anticipo` de A
+        **no baja** al usarlos.
+      - **Un invariante que solo se cumple mientras nadie use una funcionalidad
+        desplegada no es un invariante**: saltaría en un estado legítimo, y una
+        alarma que suena con todo bien se aprende a ignorar.
     - **El estado son DOS ejes.** Pagada y sin recibir es lo normal al encargar.
     - ⚠️ **Una factura con mercadería recibida no se corrige ni se anula.** Esa
       recepción ya creó un gasto; rehacer las líneas lo dejaría apuntando a una
