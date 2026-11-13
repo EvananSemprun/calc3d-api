@@ -73,6 +73,27 @@ describe('SUFIJO_DE_ESTADO', () => {
 });
 
 describe('accionesDeEstado: la escalera de acciones', () => {
+  // Compras NO filtra por estado (se ofrecen las tres fichas: volver a comprar es la
+  // señal de que el filamento volvió, ver `estadoTrasComprar`). Ningún texto puede
+  // prometer lo contrario: ya pasó, y la afirmación sobre compras no la ataba nadie.
+  it('ningún efecto afirma que una ficha deja de aparecer al registrar compras', () => {
+    for (const origen of MaterialStatusSchema.options) {
+      for (const a of accionesDeEstado(origen)) {
+        expect(a.efecto).not.toMatch(/(deja|dejan) de aparecer[^.]*compras/i);
+      }
+    }
+  });
+
+  // Las dos que llevan a DISCONTINUED describen el MISMO estado: no pueden contradecirse.
+  it('las acciones que llevan a DISCONTINUED dicen lo mismo de las compras', () => {
+    const frase = 'Se reactiva sola al registrar una compra con rollos';
+    const haciaDescontinuada = (['ACTIVE', 'SOLO_PEDIDO_ESPECIAL'] as const)
+      .flatMap((o) => accionesDeEstado(o))
+      .filter((a) => a.destino === 'DISCONTINUED');
+    expect(haciaDescontinuada).toHaveLength(2);
+    for (const a of haciaDescontinuada) expect(a.efecto).toContain(frase);
+  });
+
   const destinos = (s: MaterialStatus) => accionesDeEstado(s).map((a) => a.destino);
 
   it('cada estado ofrece las acciones que le tocan y ninguna más', () => {

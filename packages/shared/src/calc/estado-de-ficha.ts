@@ -200,9 +200,10 @@ export function accionesDeEstado(s: MaterialStatus): AccionDeEstado[] {
           destino: 'DISCONTINUED',
           etiqueta: 'Descontinuar',
           pregunta: (n) => `¿Descontinuar «${n}»?`,
-          // Ya estaba fuera de la reposición y del conteo: el cambio real es el calculador y las compras.
+          // Ya estaba fuera de la reposición y del conteo: el único cambio real es el calculador.
+          // Compras NO filtra por estado (ver `estadoTrasComprar`): sigue apareciendo ahí, y comprarla la reactiva.
           efecto:
-            'Deja de aparecer al cotizar y al registrar compras. Sus compras y conteos no se tocan. Se vuelve a usar con «Reactivar».',
+            'Deja de aparecer al cotizar. Sus compras y conteos no se tocan. Se reactiva sola al registrar una compra con rollos, o con «Reactivar».',
         },
       ];
     case 'DISCONTINUED':
