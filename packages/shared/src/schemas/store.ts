@@ -438,7 +438,7 @@ export const StoreCollectionUpsertSchema = z
     titulo: z.string().min(1, 'El título es obligatorio').max(120),
     subtitulo: z.string().max(200).nullable().optional(),
     verTodoTipo: StoreCollectionVerTodoSchema.default('NONE'),
-    /** SIEMPRE un slug (de categoría o de colección según el tipo), jamás un id: se publica. */
+    /** SIEMPRE un slug (de categoría o de colección según el tipo), nunca un id: se publica. */
     verTodoValor: z.string().min(1).max(120).nullable().optional(),
     visible: z.boolean().default(true),
     // Fechas de NEGOCIO (día pelado AAAA-MM-DD, validado contra el calendario): un

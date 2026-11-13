@@ -64,3 +64,11 @@ ALTER TABLE "StoreCollectionItem" ADD CONSTRAINT "StoreCollectionItem_categoryId
 ALTER TABLE "StoreCollectionItem" ADD CONSTRAINT "StoreCollectionItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "StoreProduct"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "StoreCollectionExclusion" ADD CONSTRAINT "StoreCollectionExclusion_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "StoreCollection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "StoreCollectionExclusion" ADD CONSTRAINT "StoreCollectionExclusion_productId_fkey" FOREIGN KEY ("productId") REFERENCES "StoreProduct"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Una sola colección PRINCIPAL por organización, impuesto por la base y no solo por el
+-- servicio (igual que `Counterparty_org_default_key` y `CashAccount_org_default_key`).
+-- Prisma no declara índices parciales: va a mano. Cambiar de principal desmarca la vieja
+-- y marca la nueva dentro de una transacción, o el índice rechazaría el instante con dos.
+CREATE UNIQUE INDEX "StoreCollection_org_principal_key"
+  ON "StoreCollection" ("organizationId")
+  WHERE "esPrincipal";

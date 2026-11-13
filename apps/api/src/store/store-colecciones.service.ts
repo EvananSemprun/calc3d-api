@@ -299,6 +299,23 @@ export class StoreColeccionesService {
     return this.get(organizationId, id);
   }
 
+  /**
+   * Una sola principal: desmarcar la vieja y marcar la nueva van juntas o no van. La base
+   * lo impone con un índice único parcial (`StoreCollection_org_principal_key`), así que
+   * sin la transacción el índice rechazaría el instante en que hay dos.
+   */
+  async setPrincipal(organizationId: string, id: string): Promise<ColeccionVista[]> {
+    await this.findOwn(organizationId, id);
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.storeCollection.updateMany({
+        where: { organizationId, esPrincipal: true },
+        data: { esPrincipal: false },
+      });
+      await tx.storeCollection.update({ where: { id }, data: { esPrincipal: true } });
+    });
+    return this.list(organizationId);
+  }
+
   async remove(organizationId: string, id: string) {
     await this.findOwn(organizationId, id);
     // Los items y las exclusiones caen en cascada desde la tabla.

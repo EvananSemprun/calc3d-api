@@ -50,8 +50,18 @@ function makeDeps(seed: {
       }),
       update: jest.fn(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
         const row = collections.find((c) => c.id === where.id);
+        // Como el índice único parcial de la base: dos principales en una organización
+        // se rechazan en el instante en que existen, no al final de la transacción.
+        if (row && data.esPrincipal === true && collections.some((c) => c !== row && c.organizationId === row.organizationId && c.esPrincipal)) {
+          return Promise.reject(Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { target: ['StoreCollection_org_principal_key'] } }));
+        }
         if (row) Object.assign(row, data);
         return Promise.resolve(row);
+      }),
+      updateMany: jest.fn(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const hit = collections.filter((c) => match(c, where));
+        hit.forEach((c) => Object.assign(c, data));
+        return Promise.resolve({ count: hit.length });
       }),
       // Como Postgres: borrar la colección se lleva sus items y exclusiones (Cascade).
       delete: jest.fn(({ where }: { where: { id: string } }) => {
@@ -431,5 +441,46 @@ describe('StoreColeccionesService — choque de índice único', () => {
     const { service, prisma } = makeDeps(mundo());
     (prisma.storeCollection as { create: jest.Mock }).create.mockRejectedValueOnce(new Error('se cayó la base'));
     await expect(service.create(ORG, dto())).rejects.toThrow('se cayó la base');
+  });
+});
+
+describe('StoreColeccionesService — la principal', () => {
+  const dosColecciones = async () => {
+    const d = makeDeps(mundo());
+    const a = await d.service.create(ORG, dto({ nombre: 'Navidad' }));
+    const b = await d.service.create(ORG, dto({ nombre: 'San Valentín' }));
+    return { ...d, a, b };
+  };
+
+  it('las colecciones nacen sin ser principal', async () => {
+    const { a, b } = await dosColecciones();
+    expect([a.esPrincipal, b.esPrincipal]).toEqual([false, false]);
+  });
+
+  it('marcar una como principal deja UNA sola, aunque ya hubiera otra', async () => {
+    const { service, a, b } = await dosColecciones();
+    await service.setPrincipal(ORG, a.id);
+    const lista = await service.setPrincipal(ORG, b.id);
+    expect(lista.filter((c) => c.esPrincipal).map((c) => c.id)).toEqual([b.id]);
+  });
+
+  it('desmarca y marca DENTRO de una transacción', async () => {
+    const { service, prisma, a } = await dosColecciones();
+    (prisma.$transaction as jest.Mock).mockClear();
+    await service.setPrincipal(ORG, a.id);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('no se puede marcar la colección de OTRA organización (y la propia sí)', async () => {
+    const { service, a } = await dosColecciones();
+    await expect(service.setPrincipal(OTHER, a.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.setPrincipal(ORG, a.id)).resolves.toBeDefined();
+  });
+
+  it('marcar la principal de una organización no toca la de otra', async () => {
+    const { service, collections, a } = await dosColecciones();
+    collections.push({ id: 'ajena', organizationId: OTHER, esPrincipal: true } as never);
+    await service.setPrincipal(ORG, a.id);
+    expect(collections.find((c) => c.id === 'ajena')?.esPrincipal).toBe(true);
   });
 });

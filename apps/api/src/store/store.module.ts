@@ -246,6 +246,12 @@ export class StoreController {
     return this.colecciones.update(user.organizationId, id, dto);
   }
 
+  /** Marca la principal (desmarca la anterior en una transacción). */
+  @Post('colecciones/:id/principal')
+  setPrincipalColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.colecciones.setPrincipal(user.organizationId, id);
+  }
+
   @Delete('colecciones/:id')
   removeColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.colecciones.remove(user.organizationId, id);

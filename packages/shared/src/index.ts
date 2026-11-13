@@ -36,6 +36,7 @@ export * from './calc/product';
 export * from './calc/campaign';
 export * from './calc/channels';
 export * from './calc/categorias-arbol';
+export * from './calc/coleccion';
 export * from './calc/money';
 export * from './calc/format';
 export * from './idioma';
