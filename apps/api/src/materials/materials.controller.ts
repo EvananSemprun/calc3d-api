@@ -1,11 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import {
   MaterialCorrectionSchema,
   MaterialStatusBatchSchema,
   MaterialStatusUpdateSchema,
+  UnirFichaSchema,
   type MaterialCorrectionDto,
   type MaterialStatusBatchDto,
   type MaterialStatusUpdateDto,
+  type UnirFichaDto,
 } from '@calc3d/shared';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
@@ -63,6 +65,29 @@ export class MaterialsController {
     @Body(new ZodValidationPipe(MaterialStatusBatchSchema)) dto: MaterialStatusBatchDto,
   ) {
     return this.service.setStatusBatch(user.organizationId, dto);
+  }
+
+  /**
+   * Vista previa de unir esta ficha DENTRO de `destinoId`: qué se mueve y a qué
+   * precio queda. Solo lectura.
+   */
+  @Get(':id/unir')
+  vistaDeUnion(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('destinoId') destinoId: string) {
+    return this.service.vistaDeUnion(user.organizationId, id, destinoId ?? '');
+  }
+
+  /**
+   * Unir esta ficha dentro de otra (`{ destinoId }`). PATCH y no POST, por lo
+   * mismo que el lote: es una acción sobre fichas que ya existen, no un alta
+   * (ver el test «no hay alta suelta»).
+   */
+  @Patch(':id/unir')
+  unir(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(UnirFichaSchema)) dto: UnirFichaDto,
+  ) {
+    return this.service.unir(user.organizationId, id, dto);
   }
 
   @Delete(':id')

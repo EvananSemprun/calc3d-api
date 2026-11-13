@@ -1,5 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { entraEnReposicion, monthKey, stockTotal, type MaterialCorrectionDto, type MaterialStatusBatchDto, type MaterialStatusUpdateDto } from '@calc3d/shared';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
+import { entraEnReposicion, monthKey, purchaseCostPerRoll, stockTotal, type MaterialCorrectionDto, type MaterialStatusBatchDto, type MaterialStatusUpdateDto, type UnionVista, type UnirFichaDto } from '@calc3d/shared';
+import { exigirAfectadas, exigirAmbasPropias, exigirFichasDistintas, renombrarEnCosteo } from '../common/unir-fichas';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -111,6 +113,163 @@ export class MaterialsService {
 
     await this.prisma.material.delete({ where: { id } });
     return { ok: true };
+  }
+
+  /**
+   * Lo que unir `origenId` dentro de `destinoId` va a mover, SIN escribir nada. Es
+   * la vista previa de la confirmación: la misma `planearUnion` que usa `unir`, así
+   * que el número que el dueño confirma es el que se ejecuta.
+   */
+  async vistaDeUnion(organizationId: string, origenId: string, destinoId: string): Promise<UnionVista> {
+    exigirFichasDistintas(origenId, destinoId);
+    return (await this.planearUnion(this.prisma, organizationId, origenId, destinoId)).vista;
+  }
+
+  /**
+   * UNIR dos fichas duplicadas (13/11): todo lo de `origenId` pasa a `destinoId` y
+   * la de origen se borra.
+   *
+   * ⚠️ **Repunta, no reescribe.** Solo cambia a qué ficha apunta cada compra,
+   * línea de factura y conteo; ningún monto ni fecha se toca. Lo único que se
+   * recalcula es el precio de la ficha que sobrevive, desde la ÚLTIMA compra del
+   * conjunto unido (la regla de siempre: el precio sigue a la última compra).
+   *
+   * ⚠️ **Una sola transacción**: una unión a medias deja compras apuntando a una
+   * ficha borrada. Y la de origen se borra AL FINAL, después de comprobar que
+   * nada quedó apuntándole; si algo quedó, se aborta todo en vez de borrar.
+   *
+   * ⚠️ Toda escritura lleva organizationId en el where (updateMany/deleteMany) y se
+   * comprueba su count: segunda capa tras la lectura acotada, la misma regla que
+   * setStatusBatch. Si alguien toca la lectura, la escritura sigue cerrada.
+   *
+   * No cambia el estado del destino (una descontinuada sigue descontinuada): unir
+   * no es comprar, así que no pasa por `estadoTrasComprar`.
+   */
+  async unir(organizationId: string, origenId: string, dto: UnirFichaDto): Promise<UnionVista> {
+    const destinoId = dto.destinoId;
+    exigirFichasDistintas(origenId, destinoId);
+    return this.prisma.$transaction(async (tx) => {
+      const db = tx as Prisma.TransactionClient;
+      const { vista, conteosPorMover, costeosPorRenombrar } = await this.planearUnion(db, organizationId, origenId, destinoId);
+
+      await db.expense.updateMany({ where: { materialId: origenId, organizationId }, data: { materialId: destinoId } });
+      await db.purchaseInvoiceLine.updateMany({
+        where: { materialId: origenId, invoice: { organizationId } },
+        data: { materialId: destinoId },
+      });
+      // El recosteo busca la línea POR NOMBRE: sin esto el costeo de cada ficha de la
+      // tienda que usaba la de origen quedaría «sin encontrar» y con un precio viejo.
+      for (const p of costeosPorRenombrar) {
+        exigirAfectadas(
+          await db.storeProduct.updateMany({ where: { id: p.id, organizationId }, data: { input: p.input as Prisma.InputJsonValue } }),
+          1,
+          'el costeo de un producto',
+        );
+      }
+      for (const c of conteosPorMover) {
+        if (c.suma) {
+          // El destino ya contó ese mes: los rollos son de una sola ficha ahora, se suman.
+          exigirAfectadas(
+            await db.stockCount.updateMany({
+              where: { id: c.suma.id, organizationId },
+              data: {
+                sealed: c.suma.sealed + c.sealed,
+                inUse: c.suma.inUse + c.inUse,
+                running: c.suma.running + c.running,
+                needsBrandCheck: c.suma.needsBrandCheck || c.needsBrandCheck,
+              },
+            }),
+            1,
+            'la suma de un conteo',
+          );
+          exigirAfectadas(await db.stockCount.deleteMany({ where: { id: c.id, organizationId } }), 1, 'el borrado de un conteo');
+        } else {
+          exigirAfectadas(
+            await db.stockCount.updateMany({ where: { id: c.id, organizationId }, data: { materialId: destinoId } }),
+            1,
+            'el repunte de un conteo',
+          );
+        }
+      }
+      if (vista.precio.deLaUltimaCompra) {
+        await db.material.updateMany({
+          where: { id: destinoId, organizationId },
+          data: { rollPrice: vista.precio.despues },
+        });
+      }
+
+      const quedan = await Promise.all([
+        db.expense.count({ where: { materialId: origenId } }),
+        db.purchaseInvoiceLine.count({ where: { materialId: origenId } }),
+        db.stockCount.count({ where: { materialId: origenId } }),
+      ]);
+      if (quedan.some((n) => n > 0)) {
+        throw new InternalServerErrorException('Quedó historial apuntando a la ficha de origen: no se unió nada');
+      }
+      exigirAfectadas(
+        await db.material.deleteMany({ where: { id: origenId, organizationId } }),
+        1,
+        'el borrado de la ficha de origen',
+      );
+      return vista;
+    });
+  }
+
+  /** Lee lo que una unión movería; sirve a la vista previa y a la unión (con `db` = la transacción). */
+  private async planearUnion(
+    db: Prisma.TransactionClient | PrismaService,
+    organizationId: string,
+    origenId: string,
+    destinoId: string,
+  ) {
+    const encontradas = await db.material.findMany({
+      where: { id: { in: [origenId, destinoId] }, organizationId },
+    });
+    const { origen, destino } = exigirAmbasPropias(encontradas, origenId, destinoId, 'Material no encontrado');
+    // El costo por gramo de cada compra pasada sale de los gramos de SU ficha: unir
+    // rollos de distinto peso reescribiría ese costo (por eso tampoco se pueden corregir).
+    if (origen.rollGrams !== destino.rollGrams) {
+      throw new BadRequestException(
+        `Los rollos pesan distinto (${origen.rollGrams} g y ${destino.rollGrams} g): unirlas cambiaría el costo por gramo de las compras pasadas`,
+      );
+    }
+
+    const [compras, lineasDeFactura, conteosDeLasDos, ultima] = await Promise.all([
+      db.expense.count({ where: { materialId: origenId, organizationId } }),
+      db.purchaseInvoiceLine.count({ where: { materialId: origenId, invoice: { organizationId } } }),
+      db.stockCount.findMany({ where: { materialId: { in: [origenId, destinoId] }, organizationId } }),
+      db.expense.findFirst({
+        where: { organizationId, materialId: { in: [origenId, destinoId] }, quantity: { gt: 0 } },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        select: { amount: true, quantity: true },
+      }),
+    ]);
+
+    const productos = await db.storeProduct.findMany({ where: { organizationId }, select: { id: true, input: true } });
+    const costeosPorRenombrar = productos
+      .map((p) => ({ id: p.id, ...renombrarEnCosteo(p.input, 'material', origen.name, destino.name) }))
+      .filter((p) => p.cambios > 0);
+
+    const delDestino = new Map(conteosDeLasDos.filter((c) => c.materialId === destinoId).map((c) => [c.month.getTime(), c]));
+    const conteosPorMover = conteosDeLasDos
+      .filter((c) => c.materialId === origenId)
+      .map((c) => ({ ...c, suma: delDestino.get(c.month.getTime()) ?? null }));
+
+    const antes = Number(destino.rollPrice);
+    const deLaUltimaCompra = !!ultima?.quantity;
+    const despues = ultima?.quantity ? purchaseCostPerRoll(Number(ultima.amount), ultima.quantity) : antes;
+
+    const vista: UnionVista = {
+      origen: { id: origen.id, name: origen.name },
+      destino: { id: destino.id, name: destino.name },
+      compras,
+      lineasDeFactura,
+      productos: costeosPorRenombrar.length,
+      conteos: conteosPorMover.length,
+      conteosQueSeSuman: conteosPorMover.filter((c) => c.suma).length,
+      precio: { antes, despues, deLaUltimaCompra },
+    };
+    return { vista, conteosPorMover, costeosPorRenombrar };
   }
 
   private async ensureOwned(organizationId: string, id: string) {

@@ -123,3 +123,36 @@ describe('MaterialsController — estado en lote', () => {
     expect(() => pipe.transform({ ids: ['m1'], status: 'BORRADO' })).toThrow(BadRequestException);
   });
 });
+
+/** Unir fichas (13/11): la organización sale del token y el cuerpo solo trae el destino. */
+describe('MaterialsController — unir', () => {
+  it('PATCH :id/unir llega a unir con la organización del token', async () => {
+    const service = { unir: jest.fn().mockResolvedValue({}) };
+    const controller = new MaterialsController(service as never);
+
+    await controller.unir({ organizationId: 'org-A' } as never, 'm1', { destinoId: 'm2' });
+
+    expect(service.unir).toHaveBeenCalledWith('org-A', 'm1', { destinoId: 'm2' });
+    const handler = MaterialsController.prototype.unir;
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.PATCH);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(':id/unir');
+  });
+
+  it('GET :id/unir (vista previa) usa la organización del token', async () => {
+    const service = { vistaDeUnion: jest.fn().mockResolvedValue({}) };
+    const controller = new MaterialsController(service as never);
+
+    await controller.vistaDeUnion({ organizationId: 'org-A' } as never, 'm1', 'm2');
+
+    expect(service.vistaDeUnion).toHaveBeenCalledWith('org-A', 'm1', 'm2');
+    expect(Reflect.getMetadata(METHOD_METADATA, MaterialsController.prototype.vistaDeUnion)).toBe(RequestMethod.GET);
+  });
+
+  it('valida con el pipe real: sin destino es 400 y no se cuela otro campo', () => {
+    const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, MaterialsController, 'unir') as Record<string, { pipes?: unknown[] }>;
+    const pipe = Object.values(args).find((a) => (a.pipes?.length ?? 0) > 0)!.pipes![0] as ZodValidationPipe<unknown>;
+
+    expect(() => pipe.transform({})).toThrow(BadRequestException);
+    expect(pipe.transform({ destinoId: 'm2', organizationId: 'org-B' })).toEqual({ destinoId: 'm2' });
+  });
+});

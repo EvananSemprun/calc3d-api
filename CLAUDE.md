@@ -3803,3 +3803,14 @@ estos guardianes (una lista fija dejó 19 formas sin corregir).
   falla el `dist` se queda con la versión buena y pasa lo mismo.
 - Medido con la lista vacía (compilando y recompilando): tumba **2** tests en la
   API y **3** en el panel.
+
+## Unir fichas duplicadas (2026-11-13, fase h tarea 6, shared 0.89.0)
+
+`PATCH /materials/:id/unir` y `PATCH /components/:id/unir` (`{ destinoId }`), más su vista previa `GET .../unir?destinoId=` (solo lectura). PATCH y no POST: el test «no hay alta suelta» prohíbe POST en materiales.
+
+- ⚠️ **Repunta, no reescribe**: compras, líneas de factura y conteos cambian de ficha; ningún monto ni fecha se toca. Una sola transacción; el origen se borra al final y solo si nada quedó apuntándole.
+- ⚠️ **El precio sale de la ÚLTIMA compra del conjunto** (decisión del dueño). En insumos se conserva el tamaño de paquete del destino y se ajusta `packagePrice` (`paquetePrecioDesdeCompra`).
+- ⚠️ **Los costeos de la tienda referencian por NOMBRE** (`StoreProduct.input`): unir renombra esa línea al nombre del destino (`renombrarEnCosteo`), sin tocar el costo congelado. Sin esto el recosteo dejaría la línea «sin encontrar».
+- ⚠️ **Dos fichas de filamento con distinto `rollGrams` NO se unen**: el costo por gramo de las compras pasadas sale de esos gramos.
+- ⚠️ **Conteos del mismo mes en las dos fichas se SUMAN** (cerrar escribe todas las fichas, así que chocar es lo normal; `@@unique([materialId, month])`).
+- ⚠️ **Las escrituras llevan `organizationId` en el `where`** (`updateMany`/`deleteMany`) y se mira el `count` (`exigirAfectadas`): segunda capa tras la lectura acotada. Los tests lo prueban aflojando la lectura (`aflojarLectura` de `common/unir-fichas.fake.ts`, una base en memoria con FK, unicidad y rollback).

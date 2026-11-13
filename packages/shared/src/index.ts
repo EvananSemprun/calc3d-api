@@ -14,6 +14,7 @@ export * from './calc/stock';
 export * from './calc/valor-inventario';
 export * from './calc/restock-order';
 export * from './calc/estado-de-ficha';
+export * from './calc/unir-fichas';
 export * from './calc/filament-analytics';
 export * from './calc/pagador';
 export * from './calc/recarga';
