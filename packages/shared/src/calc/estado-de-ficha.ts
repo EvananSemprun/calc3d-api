@@ -3,10 +3,14 @@ import type { MaterialStatus } from '../schemas/stock';
 /**
  * QUÉ PANTALLA VE UNA FICHA según su estado.
  *
- * Son cuatro preguntas separadas porque el tercer estado, «solo pedido
+ * Son tres preguntas separadas porque el tercer estado, «solo pedido
  * especial», contesta distinto a cada una: sale de lo que se repone y se
- * cuenta, pero SIGUE en el calculador y en compras (se sigue cotizando y
- * comprando el rollo para ese encargo).
+ * cuenta, pero SIGUE en el calculador (se sigue cotizando el pedido especial).
+ *
+ * ⚠️ «¿Se puede elegir al registrar una compra?» NO es una pregunta: las tres se
+ * ofrecen SIEMPRE (ver `estadoTrasComprar`). Hubo un predicado `entraEnCompras`
+ * y se borró: nadie lo llamaba y su `false` para DISCONTINUED afirmaba una regla
+ * que nunca se decidió y que contradice la reactivación por compra.
  *
  * ⚠️ **CADA `switch` ES EXHAUSTIVO A PROPÓSITO, y eso NO es estilo.** Antes
  * había nueve sitios que comparaban `status === 'DISCONTINUED'` con dos
@@ -14,7 +18,7 @@ import type { MaterialStatus } from '../schemas/stock';
  * mal: es que UNO de los nueve se quede con la regla vieja y nadie lo note
  * durante meses. Un comentario que avisa no es una guarda: el
  * `const nunca: never` hace que agregar un valor a `MaterialStatus` NO COMPILE
- * hasta que los cuatro predicados decidan. Es el mismo patrón de
+ * hasta que los tres predicados decidan. Es el mismo patrón de
  * `categoriaDeLinea` y `columnasDeObligacion` en `cash/helpers-de-caja.ts`.
  *
  * ⚠️ Los consumidores deben llamar a estos predicados, nunca comparar el
@@ -71,22 +75,6 @@ export function entraEnCalculadora(s: MaterialStatus): boolean {
   }
 }
 
-/** ¿La ficha se puede elegir al registrar una compra? */
-export function entraEnCompras(s: MaterialStatus): boolean {
-  switch (s) {
-    case 'ACTIVE':
-    case 'SOLO_PEDIDO_ESPECIAL':
-      // Se sigue comprando el rollo para el encargo.
-      return true;
-    case 'DISCONTINUED':
-      return false;
-    default: {
-      const nunca: never = s;
-      throw new Error(`Estado de ficha sin decidir para compras: ${String(nunca)}`);
-    }
-  }
-}
-
 /**
  * ¿En qué estado queda una ficha después de COMPRARLE rollos?
  *
@@ -94,7 +82,15 @@ export function entraEnCompras(s: MaterialStatus): boolean {
  * manejando). ⚠️ «Solo pedido especial» NO: el dueño la marcó así a propósito y
  * comprar un rollo para un encargo puntual no debería cambiárselo. Reactivar es
  * un acto explícito (la acción «Reactivar» del panel), no un efecto lateral.
- * Es un `switch` exhaustivo por la misma razón que los cuatro de arriba.
+ * Es un `switch` exhaustivo por la misma razón que los tres de arriba.
+ *
+ * ⚠️ **POR QUÉ COMPRAS NO FILTRA POR ESTADO** (decidido a propósito): el
+ * desplegable de compras ofrece las TRES fichas, también la descontinuada,
+ * porque **volver a comprar es la señal de que el filamento volvió**: para eso
+ * existe la rama DISCONTINUED → ACTIVE de acá abajo (y el aviso
+ * `elegidaDescontinuada` del modal de compra). Filtrarlas «para que no ofrezca
+ * una descontinuada» rompería esa reactivación; medido el 13/11, además, ahorraría
+ * 2 filas de 53. No lo «arregles».
  */
 export function estadoTrasComprar(s: MaterialStatus): MaterialStatus {
   switch (s) {

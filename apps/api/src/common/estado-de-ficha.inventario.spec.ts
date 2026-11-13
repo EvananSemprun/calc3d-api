@@ -140,7 +140,7 @@ describe('inventario: nadie compara el estado de una ficha a mano', () => {
     const informe = hallazgos.map((h) => `${h.archivo}:${h.linea} [${h.patron}] ${h.texto}`).join('\n');
 
     // Si salta: usa entraEnReposicion / entraEnConteo / entraEnCalculadora /
-    // entraEnCompras / estadoTrasComprar / ETIQUETA_DE_ESTADO en vez de comparar.
+    // estadoTrasComprar / ETIQUETA_DE_ESTADO en vez de comparar.
     expect(informe).toBe('');
   });
 });

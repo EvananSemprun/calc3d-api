@@ -10,7 +10,7 @@ quedarse con las dos porque borrar da miedo.
 **Arquitectura:** el estado ya existe (`MaterialStatus`); lo nuevo es **un tercer valor y los
 PREDICADOS que obligan a decidir qué hace cada pantalla con él**. Los predicados viven en
 `packages/shared` como `switch` exhaustivos con `const nunca: never`, así que agregar el valor
-**no compila** hasta que los cuatro consumidores deciden. Unir fichas es una transacción que
+**no compila** hasta que los tres consumidores deciden. Unir fichas es una transacción que
 repunta compras, costeos y productos y recalcula el precio desde el historial unido.
 
 **Stack:** NestJS + Prisma (`calc3d-api/apps/api`, tests **Jest**), motor puro
@@ -54,28 +54,30 @@ Cinco modos de falla que el spec implica y que ninguna tarea prueba sola:
 - Create: `packages/shared/src/calc/estado-de-ficha.ts` + su spec
 
 **Interfaces:**
-- Produces: `entraEnReposicion(s)`, `entraEnConteo(s)`, `entraEnCalculadora(s)`,
-  `entraEnCompras(s)` — todas `(s: MaterialStatus) => boolean`.
+- Produces: `entraEnReposicion(s)`, `entraEnConteo(s)`, `entraEnCalculadora(s)`
+  — las tres `(s: MaterialStatus) => boolean`. (Se planeó un cuarto, `entraEnCompras`, y se **borró**
+  el 13/11: nadie lo llamaba y afirmaba una regla falsa; compras ofrece las tres fichas a propósito,
+  ver `estadoTrasComprar`.)
 
 ⚠️ **ESTA ES LA DECISIÓN CENTRAL DEL PLAN.** Hoy hay **9 lugares** que hacen
 `status === 'DISCONTINUED'` o `!== 'DISCONTINUED'` (3 en la API, 6 en el panel). Con un tercer
 valor, el modo de falla es que **uno quede con la regla vieja y nadie lo note**. Un comentario
 no es una guarda: cada predicado es un **`switch` exhaustivo con `const nunca: never`**, así
-que el valor nuevo **no compila** hasta que los cuatro deciden. Es el mismo patrón que ya se
+que el valor nuevo **no compila** hasta que los tres deciden. Es el mismo patrón que ya se
 validó dos veces en este repo (`categoriaDeLinea`, `columnasDeObligacion`).
 
 - [ ] **Paso 1: Escribir los tests**
 
 ```ts
-it('ACTIVE entra en las cuatro', …);
+it('ACTIVE entra en las tres', …);
 it('DISCONTINUED no entra en ninguna', …);
-it('SOLO_PEDIDO_ESPECIAL: fuera de reposición y conteo, DENTRO de calculadora y compras', …);
+it('SOLO_PEDIDO_ESPECIAL: fuera de reposición y conteo, DENTRO de calculadora', …);
 ```
 
 ⚠️ El tercer test **es el punto del tercer estado**: si quedara fuera del calculador, el dueño
 no podría cotizar justamente el pedido especial para el que la ficha existe.
 
-- [ ] **Paso 2: Correr** → FAIL. **Paso 3: Implementar** los cuatro predicados y la migración.
+- [ ] **Paso 2: Correr** → FAIL. **Paso 3: Implementar** los tres predicados y la migración.
 - [ ] **Paso 4: Correr** → PASS. Subir `SHARED_VERSION` + `package.json`, `pnpm sync:shared`.
 - [ ] **Paso 5: Commit.**
 

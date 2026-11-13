@@ -3,17 +3,16 @@ import {
   ETIQUETA_DE_ESTADO,
   SUFIJO_DE_ESTADO,
   entraEnCalculadora,
-  entraEnCompras,
   entraEnConteo,
   accionesDeEstado,
   entraEnReposicion,
   estadoTrasComprar,
 } from './estado-de-ficha';
 
-const PREDICADOS = [entraEnReposicion, entraEnConteo, entraEnCalculadora, entraEnCompras];
+const PREDICADOS = [entraEnReposicion, entraEnConteo, entraEnCalculadora];
 
 describe('estado de la ficha: qué pantalla la ve', () => {
-  it('ACTIVE entra en las cuatro', () => {
+  it('ACTIVE entra en las tres', () => {
     for (const p of PREDICADOS) expect(p('ACTIVE')).toBe(true);
   });
 
@@ -23,11 +22,10 @@ describe('estado de la ficha: qué pantalla la ve', () => {
 
   // ⚠️ Este es el punto entero del tercer estado: la ficha existe para poder
   // cotizar el pedido especial. Si saliera del calculador, no se podría.
-  it('SOLO_PEDIDO_ESPECIAL: fuera de reposición y conteo, DENTRO de calculadora y compras', () => {
+  it('SOLO_PEDIDO_ESPECIAL: fuera de reposición y conteo, DENTRO de calculadora', () => {
     expect(entraEnReposicion('SOLO_PEDIDO_ESPECIAL')).toBe(false);
     expect(entraEnConteo('SOLO_PEDIDO_ESPECIAL')).toBe(false);
     expect(entraEnCalculadora('SOLO_PEDIDO_ESPECIAL')).toBe(true);
-    expect(entraEnCompras('SOLO_PEDIDO_ESPECIAL')).toBe(true);
   });
 
   it('el esquema acepta el tercer valor y rechaza uno inventado', () => {
@@ -35,7 +33,7 @@ describe('estado de la ficha: qué pantalla la ve', () => {
     expect(MaterialStatusSchema.safeParse('BORRADO').success).toBe(false);
   });
 
-  it('cada valor del enum tiene respuesta en los cuatro predicados', () => {
+  it('cada valor del enum tiene respuesta en los tres predicados', () => {
     for (const s of MaterialStatusSchema.options as MaterialStatus[]) {
       for (const p of PREDICADOS) expect(typeof p(s)).toBe('boolean');
     }
