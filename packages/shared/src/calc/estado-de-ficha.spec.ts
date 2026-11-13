@@ -5,6 +5,7 @@ import {
   entraEnCalculadora,
   entraEnConteo,
   accionesDeEstado,
+  ofreceDescontinuar,
   entraEnReposicion,
   estadoTrasComprar,
 } from './estado-de-ficha';
@@ -120,6 +121,20 @@ describe('accionesDeEstado: la escalera de acciones', () => {
         const hablaDeReposicion = /(Sale de la|Vuelve a la|en la) reposición/.test(a.efecto.replace('Ya estaba fuera de la reposición', ''));
         expect(hablaDeReposicion).toBe(cambia.reposicion);
       }
+    }
+  });
+});
+
+describe('ofreceDescontinuar', () => {
+  it('lo ofrecen la activa y la «solo pedido especial»; la ya descontinuada NO (solo se reactiva)', () => {
+    expect(ofreceDescontinuar('ACTIVE')).toBe(true);
+    expect(ofreceDescontinuar('SOLO_PEDIDO_ESPECIAL')).toBe(true);
+    expect(ofreceDescontinuar('DISCONTINUED')).toBe(false);
+  });
+
+  it('coincide, estado por estado, con las acciones que el botón de verdad ofrece', () => {
+    for (const s of ['ACTIVE', 'SOLO_PEDIDO_ESPECIAL', 'DISCONTINUED'] as const) {
+      expect(ofreceDescontinuar(s)).toBe(accionesDeEstado(s).some((a) => a.destino === 'DISCONTINUED'));
     }
   });
 });

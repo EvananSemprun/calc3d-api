@@ -221,3 +221,24 @@ export function accionesDeEstado(s: MaterialStatus): AccionDeEstado[] {
     }
   }
 }
+
+/**
+ * ¿Esta ficha tiene la acción «Descontinuar»? Tiene que coincidir con `accionesDeEstado`, la
+ * lista de lo que el botón ofrece (un test las cruza): quien necesite decir «descontinúala» (el rechazo de
+ * borrar una ficha con historial, la nota de la ficha) pregunta acá en vez de comparar
+ * el estado, para no mandar al dueño a una puerta que no existe (una ya descontinuada
+ * solo puede reactivarse).
+ */
+export function ofreceDescontinuar(s: MaterialStatus): boolean {
+  switch (s) {
+    case 'ACTIVE':
+    case 'SOLO_PEDIDO_ESPECIAL':
+      return true;
+    case 'DISCONTINUED':
+      return false;
+    default: {
+      const nunca: never = s;
+      throw new Error(`Estado de ficha sin decidir si se descontinúa: ${String(nunca)}`);
+    }
+  }
+}

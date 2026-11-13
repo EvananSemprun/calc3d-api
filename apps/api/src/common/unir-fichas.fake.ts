@@ -69,7 +69,8 @@ function delegado(
       return filas().filter((f) => coincide(leer(), tabla, f, w));
     },
     findFirst: async ({ where, orderBy }: { where?: Donde; orderBy?: Record<string, 'asc' | 'desc'>[] } = {}) => {
-      const hallados = filas().filter((f) => coincide(leer(), tabla, f, where));
+      const w = lecturaAflojada().has(tabla) && where ? Object.fromEntries(Object.entries(where).filter(([k]) => k !== 'organizationId')) : where;
+      const hallados = filas().filter((f) => coincide(leer(), tabla, f, w));
       for (const o of [...(orderBy ?? [])].reverse()) {
         const [campo, sentido] = Object.entries(o)[0];
         hallados.sort((a, b) => {

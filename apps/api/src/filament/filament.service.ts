@@ -211,7 +211,7 @@ export class FilamentService {
         this.prisma.material.findMany({
           where: { organizationId },
           orderBy: { name: 'asc' },
-          include: { _count: { select: { expenses: true, stockCounts: true } } },
+          include: { _count: { select: { expenses: true, stockCounts: true, purchaseLines: true } } },
         }),
         this.countsOf(organizationId, month),
         this.isClosed(organizationId, month),
@@ -241,7 +241,7 @@ export class FilamentService {
         // "Contado" = el mes está CERRADO (cierre mensual, 2026-09-13). En un mes
         // cerrado lo que no se marcó es 0; un mes abierto o reabierto no es dato final.
         counted: cerrado,
-        canDelete: m._count.expenses === 0 && m._count.stockCounts === 0,
+        canDelete: m._count.expenses === 0 && m._count.stockCounts === 0 && m._count.purchaseLines === 0,
         // No hay: el mes anterior (cerrado) no la tenía —en 0 o ni siquiera en su
         // conteo—, no se compró en este y no tiene rollos anotados.
         exhausted:

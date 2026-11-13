@@ -23,6 +23,7 @@ import {
   type UnionVista,
   type UnirFichaDto,
 } from '@calc3d/shared';
+import { costeoUsaFicha, rechazoDeBorrado, tieneHistorial } from '../common/borrar-ficha';
 import { exigirAfectadas, exigirAmbasPropias, exigirFichasDistintas, renombrarEnCosteo } from '../common/unir-fichas';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
@@ -46,9 +47,31 @@ export class ComponentsService {
     return this.prisma.component.update({ where: { id }, data: dto });
   }
 
+  /**
+   * Borrar solo un insumo SIN historial. Con compras las deja huérfanas (`SetNull`), con
+   * líneas de factura la base lo impide (`Restrict`, antes un 500 mudo) y los productos de
+   * la tienda lo nombran en su costeo. El rechazo dice cuántas y cuáles, y ofrece la única
+   * salida que un insumo tiene —«Unir con otro insumo»—: no tiene estado que descontinuar.
+   */
   async remove(organizationId: string, id: string) {
-    await this.ensureOwned(organizationId, id);
-    await this.prisma.component.delete({ where: { id } });
+    const ficha = await this.prisma.component.findFirst({ where: { id, organizationId }, select: { name: true } });
+    if (!ficha) throw new NotFoundException('Componente no encontrado');
+
+    const [compras, lineasDeFactura, productos] = await Promise.all([
+      this.prisma.expense.count({ where: { componentId: id, organizationId } }),
+      this.prisma.purchaseInvoiceLine.count({ where: { componentId: id, invoice: { organizationId } } }),
+      this.prisma.storeProduct.findMany({ where: { organizationId }, select: { name: true, input: true } }),
+    ]);
+    const historial = {
+      compras,
+      lineasDeFactura,
+      conteos: 0, // los insumos no se cuentan por rollos
+      productos: productos.filter((p) => costeoUsaFicha(p.input, 'insumo', ficha.name)).map((p) => p.name),
+    };
+    if (tieneHistorial(historial)) throw rechazoDeBorrado({ nombre: ficha.name, tipo: 'insumo' }, historial);
+
+    // La organización va TAMBIÉN en la escritura, y se mira el count: deleteMany no lanza.
+    exigirAfectadas(await this.prisma.component.deleteMany({ where: { id, organizationId } }), 1, 'el borrado del insumo');
     return { ok: true };
   }
 

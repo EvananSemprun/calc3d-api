@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { entraEnReposicion, monthKey, purchaseCostPerRoll, stockTotal, type MaterialCorrectionDto, type MaterialStatusBatchDto, type MaterialStatusUpdateDto, type UnionVista, type UnirFichaDto } from '@calc3d/shared';
+import { monthKey, purchaseCostPerRoll, stockTotal, type MaterialCorrectionDto, type MaterialStatus, type MaterialStatusBatchDto, type MaterialStatusUpdateDto, type UnionVista, type UnirFichaDto } from '@calc3d/shared';
+import { costeoUsaFicha, rechazoDeBorrado, tieneHistorial } from '../common/borrar-ficha';
 import { exigirAfectadas, exigirAmbasPropias, exigirFichasDistintas, renombrarEnCosteo } from '../common/unir-fichas';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -90,28 +91,36 @@ export class MaterialsService {
   /**
    * Borrar solo una ficha SIN historial (2026-09-14). Con compras, borrarla las deja
    * huérfanas (`onDelete: SetNull`); con conteos, los borra en cascada — y un
-   * conteo de un mes cerrado es un registro que el dueño dio por final. Con
-   * historial, la salida es descontinuarla. Sin candado contra un cierre que se
-   * cuele en el medio: carrera aceptada (app de un solo dueño).
+   * conteo de un mes cerrado es un registro que el dueño dio por final; con líneas de
+   * factura la base lo impide (`Restrict`, antes un 500 mudo); y los productos de la
+   * tienda la nombran en su costeo, así que borrarla los deja con líneas «sin
+   * encontrar». Desde el 13/11 el rechazo dice CUÁNTAS y CUÁLES y ofrece la salida
+   * (`rechazoDeBorrado`). Sin candado contra un cierre que se cuele en el medio:
+   * carrera aceptada (app de un solo dueño).
    */
   async remove(organizationId: string, id: string) {
-    const ficha = await this.ensureOwned(organizationId, id);
+    const ficha = await this.prisma.material.findFirst({ where: { id, organizationId }, select: { name: true, status: true } });
+    if (!ficha) throw new NotFoundException('Material no encontrado');
 
-    const [compras, conteos] = await Promise.all([
+    const [compras, lineasDeFactura, conteos, productos] = await Promise.all([
       this.prisma.expense.count({ where: { materialId: id, organizationId } }),
+      this.prisma.purchaseInvoiceLine.count({ where: { materialId: id, invoice: { organizationId } } }),
       this.prisma.stockCount.count({ where: { materialId: id, organizationId } }),
+      this.prisma.storeProduct.findMany({ where: { organizationId }, select: { name: true, input: true } }),
     ]);
-    if (compras > 0 || conteos > 0) {
-      throw new ConflictException(
-        // «Se maneja con normalidad» es lo que decide si tiene sentido sugerir
-        // descontinuarla: una descontinuada o «solo pedido especial» ya salió.
-        entraEnReposicion(ficha.status)
-          ? 'Tiene compras o conteos registrados. Descontinúala en vez de borrarla.'
-          : 'Tiene compras o conteos registrados: se conserva fuera de circulación.',
-      );
+    const historial = {
+      compras,
+      lineasDeFactura,
+      conteos,
+      productos: productos.filter((p) => costeoUsaFicha(p.input, 'material', ficha.name)).map((p) => p.name),
+    };
+    if (tieneHistorial(historial)) {
+      throw rechazoDeBorrado({ nombre: ficha.name, tipo: 'material', estado: ficha.status as MaterialStatus }, historial);
     }
 
-    await this.prisma.material.delete({ where: { id } });
+    // La organización va TAMBIÉN en la escritura (segunda capa) y se mira el count:
+    // deleteMany no lanza si no borra nada.
+    exigirAfectadas(await this.prisma.material.deleteMany({ where: { id, organizationId } }), 1, 'el borrado de la ficha');
     return { ok: true };
   }
 
