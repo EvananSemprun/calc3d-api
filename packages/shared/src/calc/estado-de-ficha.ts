@@ -136,3 +136,91 @@ export const SUFIJO_DE_ESTADO: Record<MaterialStatus, string> = {
   DISCONTINUED: ' (descontinuado)',
   SOLO_PEDIDO_ESPECIAL: ' (solo pedido especial)',
 };
+
+/**
+ * UNA ACCIÓN que el panel ofrece sobre una ficha: a qué estado lleva, cómo se
+ * llama el botón, cómo se pregunta y QUÉ CAMBIA DE VERDAD.
+ */
+export interface AccionDeEstado {
+  destino: MaterialStatus;
+  /** Texto del botón y de la confirmación. */
+  etiqueta: string;
+  /** El título de la confirmación, con el nombre de la ficha. */
+  pregunta: (nombre: string) => string;
+  /** Lo que cambia de verdad al aplicarla: ni más ni menos (no afirma lo que ya estaba así). */
+  efecto: string;
+}
+
+/**
+ * LAS ACCIONES QUE SE OFRECEN SEGÚN EL ESTADO ACTUAL: una escalera, cada peldaño un
+ * acto explícito.
+ *
+ *   ACTIVE               → «Solo pedido especial» y «Descontinuar»
+ *   SOLO_PEDIDO_ESPECIAL → «Reactivar» y «Descontinuar»
+ *   DISCONTINUED         → «Reactivar»
+ *
+ * ⚠️ Es un `switch` EXHAUSTIVO por la misma razón que los predicados: con un
+ * interruptor binario («¿se repone? entonces Descontinuar, si no Reactivar») el
+ * tercer estado no tenía puerta de entrada y, para retirar del todo una ficha
+ * «solo pedido especial», había que reactivarla primero —devolviéndola al
+ * calculador y a la reposición, justo donde no va—. Un cuarto estado NO COMPILA
+ * hasta que alguien decida qué acciones tiene.
+ *
+ * ⚠️ Cada `efecto` dice lo que cambia DE VERDAD en esa transición. Descontinuar
+ * una «solo pedido especial» la saca del calculador y de las compras, pero NO de
+ * la reposición ni del conteo: ya estaba afuera, y decirlo como si cambiara sería
+ * mentir. Los textos salen de los predicados (`entraEn…`): ver el spec.
+ */
+export function accionesDeEstado(s: MaterialStatus): AccionDeEstado[] {
+  const descontinuarDesdeActiva: AccionDeEstado = {
+    destino: 'DISCONTINUED',
+    etiqueta: 'Descontinuar',
+    pregunta: (n) => `¿Descontinuar «${n}»?`,
+    efecto:
+      'Deja de aparecer al cotizar, en la reposición y en el conteo de rollos (al cerrar el mes se guarda igual). Sus compras y conteos no se tocan. Se reactiva sola al registrar una compra con rollos, o con «Reactivar».',
+  };
+  switch (s) {
+    case 'ACTIVE':
+      return [
+        {
+          destino: 'SOLO_PEDIDO_ESPECIAL',
+          etiqueta: 'Solo pedido especial',
+          pregunta: (n) => `¿Dejar «${n}» solo para pedido especial?`,
+          efecto:
+            'Sale de la reposición y del conteo de rollos (al cerrar el mes se guarda igual). Sigue disponible al cotizar y al registrar compras. Registrar una compra NO la reactiva: se vuelve a la normalidad con «Reactivar».',
+        },
+        descontinuarDesdeActiva,
+      ];
+    case 'SOLO_PEDIDO_ESPECIAL':
+      return [
+        {
+          destino: 'ACTIVE',
+          etiqueta: 'Reactivar',
+          pregunta: (n) => `¿Reactivar «${n}»?`,
+          // Nunca salió del calculador: no se dice que vuelva a él.
+          efecto: 'Vuelve a la reposición y al conteo de rollos.',
+        },
+        {
+          destino: 'DISCONTINUED',
+          etiqueta: 'Descontinuar',
+          pregunta: (n) => `¿Descontinuar «${n}»?`,
+          // Ya estaba fuera de la reposición y del conteo: el cambio real es el calculador y las compras.
+          efecto:
+            'Deja de aparecer al cotizar y al registrar compras. Sus compras y conteos no se tocan. Se vuelve a usar con «Reactivar».',
+        },
+      ];
+    case 'DISCONTINUED':
+      return [
+        {
+          destino: 'ACTIVE',
+          etiqueta: 'Reactivar',
+          pregunta: (n) => `¿Reactivar «${n}»?`,
+          efecto: 'Vuelve a aparecer al cotizar, en la reposición y en el conteo de rollos.',
+        },
+      ];
+    default: {
+      const nunca: never = s;
+      throw new Error(`Estado de ficha sin acciones decididas: ${String(nunca)}`);
+    }
+  }
+}

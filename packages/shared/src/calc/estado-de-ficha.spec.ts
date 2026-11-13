@@ -5,6 +5,7 @@ import {
   entraEnCalculadora,
   entraEnCompras,
   entraEnConteo,
+  accionesDeEstado,
   entraEnReposicion,
   estadoTrasComprar,
 } from './estado-de-ficha';
@@ -70,5 +71,36 @@ describe('SUFIJO_DE_ESTADO', () => {
     expect(SUFIJO_DE_ESTADO.ACTIVE).toBe('');
     expect(SUFIJO_DE_ESTADO.DISCONTINUED).toBe(' (descontinuado)');
     expect(SUFIJO_DE_ESTADO.SOLO_PEDIDO_ESPECIAL).toBe(' (solo pedido especial)');
+  });
+});
+
+describe('accionesDeEstado: la escalera de acciones', () => {
+  const destinos = (s: MaterialStatus) => accionesDeEstado(s).map((a) => a.destino);
+
+  it('cada estado ofrece las acciones que le tocan y ninguna más', () => {
+    expect(destinos('ACTIVE')).toEqual(['SOLO_PEDIDO_ESPECIAL', 'DISCONTINUED']);
+    expect(destinos('SOLO_PEDIDO_ESPECIAL')).toEqual(['ACTIVE', 'DISCONTINUED']);
+    expect(destinos('DISCONTINUED')).toEqual(['ACTIVE']);
+  });
+
+  it('ninguna acción lleva al estado en el que ya está', () => {
+    for (const s of MaterialStatusSchema.options) expect(destinos(s)).not.toContain(s);
+  });
+
+  // Los textos no pueden afirmar un cambio que ya había pasado: se cruzan con los predicados.
+  it('cada efecto menciona SOLO lo que cambia entre origen y destino', () => {
+    for (const origen of MaterialStatusSchema.options) {
+      for (const a of accionesDeEstado(origen)) {
+        const cambia = {
+          cotizar: entraEnCalculadora(origen) !== entraEnCalculadora(a.destino),
+          reposicion: entraEnReposicion(origen) !== entraEnReposicion(a.destino),
+        };
+        // La frase de «deja/vuelve a aparecer al cotizar» solo si el calculador cambia.
+        expect(/(Deja de|Vuelve a) aparecer al cotizar/.test(a.efecto)).toBe(cambia.cotizar);
+        // «Sale de / Vuelve a la / en la reposición» solo si la reposición cambia.
+        const hablaDeReposicion = /(Sale de la|Vuelve a la|en la) reposición/.test(a.efecto.replace('Ya estaba fuera de la reposición', ''));
+        expect(hablaDeReposicion).toBe(cambia.reposicion);
+      }
+    }
   });
 });
