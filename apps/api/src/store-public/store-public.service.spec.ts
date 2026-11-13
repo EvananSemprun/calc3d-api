@@ -76,6 +76,8 @@ function makeService(overrides: {
   findMany?: jest.Mock;
   bannerFindMany?: jest.Mock;
   categoryFindMany?: jest.Mock;
+  collectionFindMany?: jest.Mock;
+  collectionFindFirst?: jest.Mock;
   settings?: Record<string, unknown>;
 } = {}) {
   const findFirst = overrides.findFirst ?? jest.fn().mockResolvedValue(PRODUCTO);
@@ -84,6 +86,9 @@ function makeService(overrides: {
   // Por defecto la categoría destino del BANNER ('llaveros') EXISTE, así que el
   // banner sigue vivo. Los tests de destino colgado la vacían.
   const categoryFindMany = overrides.categoryFindMany ?? jest.fn().mockResolvedValue([{ slug: 'llaveros', name: 'Llaveros' }]);
+  // Por defecto NO hay colección: es el estado del día uno.
+  const collectionFindMany = overrides.collectionFindMany ?? jest.fn().mockResolvedValue([]);
+  const collectionFindFirst = overrides.collectionFindFirst ?? jest.fn().mockResolvedValue(null);
   const settingsRow = overrides.settings ?? {
     businessPhone: '0412 0366355',
     currency: 'USD',
@@ -96,6 +101,7 @@ function makeService(overrides: {
     storeProduct: { findFirst, findMany },
     storeBanner: { findMany: bannerFindMany },
     storeCategory: { findMany: categoryFindMany },
+    storeCollection: { findMany: collectionFindMany, findFirst: collectionFindFirst },
     organization: { findUnique: jest.fn().mockResolvedValue({ name: 'Banano Lab' }) },
     settings: {
       findUnique: jest.fn().mockResolvedValue(settingsRow),
@@ -118,7 +124,7 @@ function makeService(overrides: {
     rates as never,
     storage as never,
   );
-  return { service, prisma, findFirst, findMany, bannerFindMany, categoryFindMany };
+  return { service, prisma, findFirst, findMany, bannerFindMany, categoryFindMany, collectionFindMany, collectionFindFirst };
 }
 
 /** Campos que jamás pueden aparecer en una respuesta pública. */
@@ -849,5 +855,102 @@ describe('Insignia «Nuevo» en la vitrina pública', () => {
   it('sin fecha de publicación NO es nueva', async () => {
     const { service } = makeService({ findMany: jest.fn().mockResolvedValue([conFecha(null)]) });
     expect((await service.list()).products[0].nuevo).toBe(false);
+  });
+});
+
+describe('Colección de la portada', () => {
+  /** Una colección tal como la devuelve Prisma (fila interna, con id y organización). */
+  const COLECCION = {
+    id: 'col-interna-1',
+    organizationId: ORG,
+    slug: 'navidad-2026',
+    nombre: 'Navidad 2026 (interno)',
+    titulo: 'Colección Navidad',
+    subtitulo: 'Lo de la temporada',
+    verTodoTipo: 'CATEGORIA' as 'CATEGORIA' | 'COLECCION' | 'NONE',
+    verTodoValor: 'llaveros' as string | null,
+    esPrincipal: true,
+    visible: true,
+    startsAt: null as Date | null,
+    endsAt: null as Date | null,
+    createdAt: new Date('2026-11-01T00:00:00Z'),
+    updatedAt: new Date('2026-11-01T00:00:00Z'),
+    items: [{ id: 'it1', collectionId: 'col-interna-1', categoryId: 'cat1', productId: null, position: 0 }],
+    exclusions: [] as { id: string; collectionId: string; productId: string }[],
+  };
+  // La categoría 'cat1' (slug 'llaveros') existe: el «Ver todo» está vivo.
+  const CATEGORIAS = [{ id: 'cat1', slug: 'llaveros', name: 'Llaveros', parentId: null }];
+
+  const conColeccion = (c: Partial<typeof COLECCION> = {}, extra = {}) =>
+    makeService({
+      collectionFindMany: jest.fn().mockResolvedValue([{ ...COLECCION, ...c }]),
+      categoryFindMany: jest.fn().mockResolvedValue(CATEGORIAS),
+      ...extra,
+    });
+
+  it('publica la colección vigente con sus productos resueltos', async () => {
+    const { service } = conColeccion();
+    const { coleccion } = await service.coleccion();
+    expect(coleccion).not.toBeNull();
+    expect(coleccion!.titulo).toBe('Colección Navidad');
+    expect(coleccion!.subtitulo).toBe('Lo de la temporada');
+    expect(coleccion!.verTodo).toEqual({ tipo: 'CATEGORIA', valor: 'llaveros' });
+    expect(coleccion!.productos.map((p) => p.slug)).toEqual(['llavero-mundial']);
+  });
+
+  it('SIN colección vigente cae a «Destacados», no a una lista vacía', async () => {
+    // El día uno no hay ninguna colección. El endpoint lo dice con `coleccion: null` y la
+    // tienda dibuja «Destacados»; si publicara una lista vacía la portada quedaría hueca.
+    const sin = makeService();
+    expect(await sin.service.coleccion()).toEqual({ coleccion: null });
+    // Una principal VENCIDA tampoco cuenta.
+    const vencida = conColeccion({ endsAt: new Date('2020-01-01T00:00:00Z') });
+    expect(await vencida.service.coleccion()).toEqual({ coleccion: null });
+    // Ni una principal oculta.
+    const oculta = conColeccion({ visible: false });
+    expect(await oculta.service.coleccion()).toEqual({ coleccion: null });
+  });
+
+  it('nunca publica ids internos ni la fila cruda de Prisma', async () => {
+    const { service } = conColeccion();
+    const respuesta = await service.coleccion();
+    const claves = [...clavesDe(respuesta)];
+    for (const campo of [...PROHIBIDOS, 'nombre', 'esPrincipal', 'items', 'exclusions', 'verTodoTipo', 'verTodoValor'])
+      expect(claves).not.toContain(campo);
+    // El «Ver todo» viaja por SLUG: ningún id interno aparece en ningún valor.
+    const texto = JSON.stringify(respuesta);
+    expect(texto).not.toContain('col-interna-1');
+    expect(texto).not.toContain('cat1');
+  });
+
+  it('un «Ver todo» que apunta a una categoría borrada degrada a NONE', async () => {
+    const { service } = conColeccion({}, { categoryFindMany: jest.fn().mockResolvedValue([{ id: 'cat1', slug: 'otra', name: 'Otra', parentId: null }]) });
+    const { coleccion } = await service.coleccion();
+    expect(coleccion!.verTodo).toEqual({ tipo: 'NONE', valor: null });
+    // La colección sigue viva: solo el enlace colgado se cae.
+    expect(coleccion!.productos).toHaveLength(1);
+  });
+
+  it('un «Ver todo» que apunta a una colección borrada u oculta degrada a NONE', async () => {
+    const colgado = conColeccion({ verTodoTipo: 'COLECCION', verTodoValor: 'otra-coleccion' });
+    expect((await colgado.service.coleccion()).coleccion!.verTodo).toEqual({ tipo: 'NONE', valor: null });
+    // La consulta exige la organización del entorno y `visible: true`.
+    expect(colgado.collectionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: ORG, slug: 'otra-coleccion', visible: true } }),
+    );
+    // Su hermano vivo: si la colección existe, el enlace se conserva.
+    const vivo = conColeccion(
+      { verTodoTipo: 'COLECCION', verTodoValor: 'otra-coleccion' },
+      { collectionFindFirst: jest.fn().mockResolvedValue({ slug: 'otra-coleccion' }) },
+    );
+    expect((await vivo.service.coleccion()).coleccion!.verTodo).toEqual({ tipo: 'COLECCION', valor: 'otra-coleccion' });
+  });
+
+  it('la organización sale del entorno, nunca del cliente', async () => {
+    const { service, collectionFindMany } = conColeccion();
+    await service.coleccion();
+    expect(collectionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
+    );
   });
 });

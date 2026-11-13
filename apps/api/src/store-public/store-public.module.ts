@@ -37,6 +37,12 @@ export class StorePublicController {
     return this.service.banners();
   }
 
+  @Get('coleccion')
+  @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
+  coleccion() {
+    return this.service.coleccion();
+  }
+
   @Get('sale')
   @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
   sale() {

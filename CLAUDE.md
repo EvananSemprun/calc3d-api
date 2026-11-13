@@ -368,6 +368,7 @@ en el repo web: se sobrescribe al sincronizar.
           `store-public.service.spec.ts` (publica la URL, nunca la clave).
     - **Flash Sale (shared 0.54.0)** — tres columnas en `Settings`
       (`saleTitle`, `saleStartsAt`, `saleEndsAt`) + `GET /public/store/sale`.
+      `GET /public/store/coleccion` → `{ coleccion: {titulo, subtitulo, verTodo:{tipo,valor(slug)}, productos[]} | null }`: la principal vigente resuelta con `coleccionVigente`/`resolverColeccion` (shared). `null` = la tienda cae a «Destacados» (NO lista vacía); un «Ver todo» colgado degrada a NONE.
       - ⚠️ **`activeSale(settings, now)` es la ÚNICA definición de "oferta
         vigente"** (`store-public/active-sale.ts`), con **bordes inclusivos** y
         `now` **como parámetro**, no leído del reloj adentro — la misma

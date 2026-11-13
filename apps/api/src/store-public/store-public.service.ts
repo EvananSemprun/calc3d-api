@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
-import { businessDateKey, esNuevo } from '@calc3d/shared';
+import { businessDateKey, coleccionVigente, esNuevo, resolverColeccion } from '@calc3d/shared';
 import { activeSale, type SaleWindow } from './active-sale';
 
 /**
@@ -140,6 +140,23 @@ interface PublicBanner {
   categorySlug: string | null;
   linkType: 'NONE' | 'CATEGORY' | 'PRODUCT' | 'URL';
   linkValue: string | null;
+}
+
+/**
+ * Adónde lleva el «Ver todo» de la colección. Viaja por SLUG (nunca un id interno) y
+ * `NONE` lleva `valor: null`.
+ */
+interface PublicVerTodo {
+  tipo: 'NONE' | 'CATEGORIA' | 'COLECCION';
+  valor: string | null;
+}
+
+/** La colección que la portada muestra hoy. */
+interface PublicColeccion {
+  titulo: string;
+  subtitulo: string | null;
+  verTodo: PublicVerTodo;
+  productos: PublicProductCard[];
 }
 
 /** Campos de la fila de Prisma que alimentan la tarjeta. */
@@ -338,6 +355,88 @@ export class StorePublicService {
         };
       }),
     };
+  }
+
+  /**
+   * La colección de la portada, EN VIVO. `{ coleccion: null }` si no hay ninguna vigente.
+   *
+   * ⚠️ `null` y NO una lista vacía: el día uno no existe ninguna colección y la portada tiene
+   * que verse como siempre, con «Destacados». Quien decide qué mostrar en ese caso es la
+   * tienda (ahí vive `destacadosDe`); si esto publicara `productos: []` la portada quedaría
+   * hueca sin ningún error. Misma forma que `sale()`.
+   *
+   * ⚠️ Qué colección vale y qué productos entran lo deciden `coleccionVigente` y
+   * `resolverColeccion` de shared: son las MISMAS que llama la vista previa del panel. Acá
+   * no se resuelve nada por cuenta propia, o el dueño aprobaría una portada y saldría otra.
+   *
+   * ⚠️ El «hoy» es el día de NEGOCIO (Caracas), no el del servidor, que corre en UTC.
+   */
+  async coleccion(): Promise<{ coleccion: PublicColeccion | null }> {
+    const organizationId = this.organizationId;
+    // Solo la principal puede ser la de la portada: no hace falta traer las demás.
+    const filas = await this.prisma.storeCollection.findMany({
+      where: { organizationId, esPrincipal: true },
+      include: { items: true, exclusions: true },
+    });
+    const dia = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+    const vigente = coleccionVigente(
+      filas.map((f) => ({ ...f, startsAt: dia(f.startsAt), endsAt: dia(f.endsAt) })),
+      businessDateKey(new Date()),
+    );
+    if (!vigente) return { coleccion: null };
+
+    const [categorias, productos] = await Promise.all([
+      this.prisma.storeCategory.findMany({
+        where: { organizationId },
+        select: { id: true, slug: true, parentId: true },
+      }),
+      // Solo lo VISIBLE, en el orden de la tienda: lo que `resolverColeccion` espera.
+      this.prisma.storeProduct.findMany({
+        where: { organizationId, visible: true },
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+        include: includeTarjeta(),
+      }),
+    ]);
+    const entran = resolverColeccion(
+      vigente.items,
+      vigente.exclusions.map((e) => e.productId),
+      productos,
+      categorias,
+    );
+
+    return {
+      coleccion: {
+        titulo: vigente.titulo,
+        subtitulo: vigente.subtitulo,
+        verTodo: await this.verTodoVivo(organizationId, vigente, categorias),
+        productos: entran.map((p) => this.listCard(p)),
+      },
+    };
+  }
+
+  /** El «Ver todo» solo se publica si su destino EXISTE; si se borró u ocultó después de
+   *  guardar la colección, degrada a NONE en vez de publicar un enlace muerto (la misma
+   *  regla que los banners: el admin valida solo al escribir). */
+  private async verTodoVivo(
+    organizationId: string,
+    c: { verTodoTipo: string; verTodoValor: string | null },
+    categorias: { slug: string }[],
+  ): Promise<PublicVerTodo> {
+    const ninguno: PublicVerTodo = { tipo: 'NONE', valor: null };
+    if (!c.verTodoValor) return ninguno;
+    if (c.verTodoTipo === 'CATEGORIA') {
+      return categorias.some((x) => x.slug === c.verTodoValor)
+        ? { tipo: 'CATEGORIA', valor: c.verTodoValor }
+        : ninguno;
+    }
+    if (c.verTodoTipo === 'COLECCION') {
+      const destino = await this.prisma.storeCollection.findFirst({
+        where: { organizationId, slug: c.verTodoValor, visible: true },
+        select: { slug: true },
+      });
+      return destino ? { tipo: 'COLECCION', valor: c.verTodoValor } : ninguno;
+    }
+    return ninguno;
   }
 
   /** Vitrina: solo lo publicado, en el orden que fijó el dueño.
