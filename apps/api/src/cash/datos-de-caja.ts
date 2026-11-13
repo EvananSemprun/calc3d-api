@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SIN_PROVEEDOR } from '../purchase-invoices/deuda-por-proveedor';
 import {
   dia,
+  obligacionDeAplicacion,
   n,
   repartoDeAbono,
   texto,
@@ -172,7 +173,7 @@ export async function cargarDatosDeCaja(prisma: PrismaService, organizationId: s
   const porObligacion = new Map<string, number>();
   const porPago = new Map<string, number>();
   for (const a of aplicaciones) {
-    const obligacion = a.expenseId ?? a.loanPaymentId ?? a.obligationMovementId;
+    const obligacion = obligacionDeAplicacion(a);
     if (obligacion) porObligacion.set(obligacion, (porObligacion.get(obligacion) ?? 0) + n(a.amount));
     porPago.set(a.paymentId, (porPago.get(a.paymentId) ?? 0) + n(a.amount));
   }
@@ -303,8 +304,8 @@ hasta?: string,
     // al pagar de más y no mueve la caja—, aunque traiga contraparte; 2) el
     // prestamista no es bolsillo —su deuda ya vive en el saldo del préstamo y
     // contarla acá la contaría dos veces—; 3) recién ahí la contraparte, si es
-    // `refundable`. `applied` es 0 porque `DebtApplication` todavía no tiene
-    // dónde apuntar a un abono.
+    // `refundable`. `applied` sale de `DebtApplication.purchasePaymentId`,
+    // como en las otras tres.
     ...d.abonosDeCompra
       .filter(
         (a) =>
@@ -320,7 +321,7 @@ hasta?: string,
         date: dia(a.date),
         category: 'PURCHASE' as const,
         amount: n(a.amount),
-        applied: 0,
+        applied: d.porObligacion.get(a.id) ?? 0,
       })),
   ];
   return obligationLedger(items);

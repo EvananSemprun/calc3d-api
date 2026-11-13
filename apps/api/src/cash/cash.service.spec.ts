@@ -9,6 +9,7 @@ import {
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
   CashShortfallPlanQuerySchema,
+  OBLIGATION_SOURCES,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   SettingsUpdateSchema,
@@ -17,6 +18,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CashController } from './cash.module';
 import { CashService } from './cash.service';
 import { obligacionesDe } from './datos-de-caja';
+import { columnasDeObligacion, obligacionDeAplicacion } from './helpers-de-caja';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 // La OTRA lectura del saldo del préstamo. Está acá para poder exigir que diga
 // lo mismo que Caja sobre los mismos datos, no para probar Deuda.
 import { LoansService } from '../loans/loans.module';
@@ -2597,5 +2601,162 @@ describe('obligacionesDe — la precedencia de un abono de compra', () => {
     const d = datos([fila('pp1', 'cp1'), fila('pp2', 'cp1', { date: new Date('2026-10-20') })]);
 
     expect(obligacionesDe(d, 'cp1', '2026-10-10').map((o) => o.sourceId)).toEqual(['pp1']);
+  });
+});
+
+/**
+ * UN FALTANTE QUE ALCANZA UN ABONO DE BOLSILLO, DE PUNTA A PUNTA (tarea 7, 2ª parte).
+ *
+ * Sin dónde escribir la aplicación, la deuda por un abono aparecía en pantalla,
+ * nunca amortizaba y al confirmar un faltante que la alcanzara las tres FK
+ * quedaban en null: el CHECK `DebtApplication_una_obligacion` lo rechazaba con
+ * un 500.
+ *
+ * ⚠️ El mock de Prisma NO evalúa constraints: lo que prueba este bloque es que
+ * el servicio ESCRIBE la columna correcta y que la lectura la recupera. Que el
+ * CHECK de la base acepte esa fila lo cubre el test sobre el SQL de la
+ * migración (abajo) y la comprobación contra Postgres con `pg_constraint`.
+ */
+describe('CashService.confirm — el faltante alcanza un abono que puso el propietario', () => {
+  const tablas = (extra: Partial<Tablas> = {}): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [
+      { id: 'acc1', organizationId: ORG, name: 'Binance', currency: 'USD', shared: true, sharedWithId: 'cp1', autoAttributeShortfall: true, isDefault: true },
+    ],
+    cashReconciliation: [
+      // Esperado 200 (venta 200 − abono 50 + aporte 50), real 180: faltan 20.
+      { id: 'r1', organizationId: ORG, accountId: 'acc1', date: new Date('2026-09-30T00:00:00Z'), status: 'DRAFT', totalAmount: '180', personalAmount: '0', currency: 'USD', rate: null, totalUsd: null, personalUsd: null, expectedUsd: null, differenceUsd: null, explanation: null, note: null, source: 'MANUAL', confirmedAt: null, voidedAt: null, adjustment: null },
+    ],
+    loan: [],
+    payment: [],
+    loanPayment: [],
+    ownerMovement: [],
+    debtApplication: [],
+    expense: [],
+    sale: [
+      { id: 'v1', organizationId: ORG, date: new Date('2026-09-01'), amount: '200', kind: 'COUNTER', note: null, source: 'MANUAL' },
+    ],
+    purchaseInvoicePayment: [
+      {
+        id: 'pp1', organizationId: ORG, date: new Date('2026-09-10'), amount: '50',
+        counterpartyId: 'cp1', tomadoDeFacturaId: null, refundable: true, voidedAt: null,
+        invoice: {
+          code: 1, supplier: { name: 'Strato' },
+          lines: [
+            { quantity: 1, unitPrice: '50', materialId: 'mat-1', printerId: null, componentId: null, nuevoTipo: null, received: 1, expenses: [] },
+          ],
+          payments: [{ amount: '50', voidedAt: null }],
+        },
+      },
+    ],
+    ...extra,
+  });
+
+  const confirmar = (t: Tablas, target?: { targetSource: string; targetSourceId: string }) =>
+    servicioFalso(t).confirm(
+      ORG,
+      'r1',
+      CashReconciliationConfirmSchema.parse({ attributeShortfall: true, ...target }),
+      'user-1',
+    );
+
+  it('escribe la aplicación en purchasePaymentId y la obligación queda amortizada', async () => {
+    const t = tablas();
+
+    await confirmar(t);
+
+    expect(t.debtApplication).toEqual([
+      expect.objectContaining({
+        purchasePaymentId: 'pp1', expenseId: null, loanPaymentId: null, obligationMovementId: null, amount: 20,
+      }),
+    ]);
+
+    const r = await servicioFalso(t).summary(ORG);
+    expect(r.obligations).toEqual([
+      expect.objectContaining({ source: 'PURCHASE', sourceId: 'pp1', amount: 50, applied: 20, outstanding: 30 }),
+    ]);
+    expect(r.financing.owedToOwner).toBe(30);
+  });
+
+  it('se puede ELEGIR el abono como deuda destino (el contrato acepta PURCHASE)', async () => {
+    // Un gasto más viejo ganaría por FIFO; la elección manda.
+    const t = tablas({
+      expense: [
+        { id: 'g-vieja', organizationId: ORG, date: new Date('2026-08-01'), amount: '30', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta', source: 'MANUAL' },
+      ],
+    });
+
+    await confirmar(t, { targetSource: 'PURCHASE', targetSourceId: 'pp1' });
+
+    expect(t.debtApplication).toEqual([
+      expect.objectContaining({ purchasePaymentId: 'pp1', expenseId: null, amount: 20 }),
+    ]);
+  });
+
+  it('su hermano: el camino de siempre (un gasto) sigue escribiendo expenseId', async () => {
+    const t = tablas({
+      purchaseInvoicePayment: [],
+      expense: [
+        { id: 'g1', organizationId: ORG, date: new Date('2026-08-01'), amount: '30', counterpartyId: 'cp1', isInvestment: false, category: 'CONSUMABLE', materialId: null, refundable: true, description: 'Cinta', source: 'MANUAL' },
+      ],
+    });
+
+    await confirmar(t);
+
+    const [fila] = t.debtApplication;
+    expect(fila).toMatchObject({ expenseId: 'g1', purchasePaymentId: null, loanPaymentId: null, obligationMovementId: null });
+  });
+});
+
+describe('columnasDeObligacion — cada origen cuelga de UNA columna', () => {
+  it.each(OBLIGATION_SOURCES)('%s llena exactamente una columna, con su id', (source) => {
+    const cols = columnasDeObligacion(source, 'id-1');
+
+    expect(Object.values(cols).filter((v) => v !== null)).toEqual(['id-1']);
+  });
+
+  it('cada origen usa una columna DISTINTA', () => {
+    const usadas = OBLIGATION_SOURCES.map(
+      (s) => Object.entries(columnasDeObligacion(s, 'x')).find(([, v]) => v !== null)![0],
+    );
+
+    expect(new Set(usadas).size).toBe(OBLIGATION_SOURCES.length);
+  });
+
+  it('la lectura es la inversa: devuelve el id de cualquiera de las cuatro', () => {
+    for (const s of OBLIGATION_SOURCES) {
+      expect(obligacionDeAplicacion(columnasDeObligacion(s, 'abc'))).toBe('abc');
+    }
+  });
+});
+
+/**
+ * ⚠️ Lo único que ve el CHECK de verdad es el SQL: el mock de Prisma no evalúa
+ * constraints. Este test falla si la migración que lo (re)define lo deja en
+ * menos de las cuatro columnas de `DebtApplication`, o si cambia su nombre
+ * (dos nombres distintos entre bases). No reemplaza correr la migración contra
+ * Postgres; la cubre contra el descuido.
+ */
+describe('el CHECK DebtApplication_una_obligacion cubre TODAS las obligaciones', () => {
+  const migraciones = join(__dirname, '../../prisma/migrations');
+  const ultimaQueLoDefine = () => {
+    const carpetas = readdirSync(migraciones).filter((c) => /^\d{14}_/.test(c)).sort();
+    const sql = carpetas
+      .map((c) => readFileSync(join(migraciones, c, 'migration.sql'), 'utf8'))
+      .filter((s) => /ADD CONSTRAINT "DebtApplication_una_obligacion"/.test(s));
+    return sql[sql.length - 1];
+  };
+
+  it('suma las cuatro columnas', () => {
+    const sql = ultimaQueLoDefine();
+    const check = sql.slice(sql.lastIndexOf('ADD CONSTRAINT "DebtApplication_una_obligacion"'));
+
+    for (const col of ['expenseId', 'loanPaymentId', 'obligationMovementId', 'purchasePaymentId']) {
+      expect(check).toContain(`"${col}" IS NOT NULL`);
+    }
+    expect(check).toMatch(/\)\s*=\s*1/);
   });
 });

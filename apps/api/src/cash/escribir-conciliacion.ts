@@ -6,7 +6,7 @@ import {
   type CashReconciliationUpsertDto,
 } from '@calc3d/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { destinoDe, dia, n } from './helpers-de-caja';
+import { columnasDeObligacion, destinoDe, dia, n } from './helpers-de-caja';
 import { cargarDatosDeCaja, obligacionesDe } from './datos-de-caja';
 import { aUsd, repartoDeFaltante } from './conciliacion';
 
@@ -149,9 +149,7 @@ userId: string,
             organizationId,
             paymentId: ajuste.id,
             amount: a.amount,
-            expenseId: a.source === 'EXPENSE' ? a.sourceId : null,
-            loanPaymentId: a.source === 'LOAN_PAYMENT' ? a.sourceId : null,
-            obligationMovementId: a.source === 'MOVEMENT' ? a.sourceId : null,
+            ...columnasDeObligacion(a.source, a.sourceId),
           })),
         });
       }

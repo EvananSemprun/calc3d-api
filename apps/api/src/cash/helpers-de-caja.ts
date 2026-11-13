@@ -246,3 +246,55 @@ export const destinoDe = (dto: {
   dto.targetSource && dto.targetSourceId
     ? { source: dto.targetSource, sourceId: dto.targetSourceId }
     : null;
+
+/**
+ * LAS CUATRO COLUMNAS DE `DebtApplication` que apuntan a una obligación: una y
+ * solo una va con valor (CHECK `DebtApplication_una_obligacion`).
+ */
+export interface ColumnasDeObligacion {
+  expenseId: string | null;
+  loanPaymentId: string | null;
+  obligationMovementId: string | null;
+  purchasePaymentId: string | null;
+}
+
+/**
+ * De qué columna cuelga cada origen de obligación.
+ *
+ * ⚠️ **Es un `switch` exhaustivo con `never` a propósito.** Antes eran tres
+ * ternarios paralelos en `escribir-conciliacion.ts`, y el cuarto origen
+ * (`PURCHASE`) se olvidó: un faltante que alcanzaba un abono escribía las tres
+ * columnas en null y el CHECK lo rechazaba con un 500. Con esto, un origen
+ * nuevo en `OBLIGATION_SOURCES` **no compila** hasta que alguien decide su
+ * columna — el mismo cierre que `categoriaDeLinea`.
+ */
+export function columnasDeObligacion(
+  source: ObligationSource,
+  sourceId: string,
+): ColumnasDeObligacion {
+  const vacias: ColumnasDeObligacion = {
+    expenseId: null,
+    loanPaymentId: null,
+    obligationMovementId: null,
+    purchasePaymentId: null,
+  };
+  switch (source) {
+    case 'EXPENSE':
+      return { ...vacias, expenseId: sourceId };
+    case 'LOAN_PAYMENT':
+      return { ...vacias, loanPaymentId: sourceId };
+    case 'MOVEMENT':
+      return { ...vacias, obligationMovementId: sourceId };
+    case 'PURCHASE':
+      return { ...vacias, purchasePaymentId: sourceId };
+    default: {
+      // Lanza en vez de escribir una fila sin obligación: plata mal aplicada no se ve.
+      const nunca: never = source;
+      throw new Error(`Origen de obligación sin columna: ${String(nunca)}`);
+    }
+  }
+}
+
+/** El inverso: el id de la obligación a la que apunta una aplicación. */
+export const obligacionDeAplicacion = (a: ColumnasDeObligacion): string | null =>
+  a.expenseId ?? a.loanPaymentId ?? a.obligationMovementId ?? a.purchasePaymentId;

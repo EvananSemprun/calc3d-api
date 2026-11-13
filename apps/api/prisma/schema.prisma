@@ -289,8 +289,8 @@ model Material {
   status         MaterialStatus @default(ACTIVE)
   createdAt      DateTime       @default(now())
 
-  expenses    Expense[]
-  stockCounts StockCount[]
+  expenses      Expense[]
+  stockCounts   StockCount[]
   /// Las líneas de factura que piden este filamento.
   purchaseLines PurchaseInvoiceLine[]
 
@@ -350,10 +350,10 @@ model Printer {
   maintPerHour   Decimal      @default(0) @db.Decimal(12, 4)
   createdAt      DateTime     @default(now())
 
-  expenses Expense[]
-  loans    Loan[]
-  orders   Order[]
-  readings PrinterReading[]
+  expenses      Expense[]
+  loans         Loan[]
+  orders        Order[]
+  readings      PrinterReading[]
   /// Las líneas de factura que piden esta impresora.
   purchaseLines PurchaseInvoiceLine[]
 
@@ -370,37 +370,37 @@ model Component {
   scope           String       @default("PER_PIECE") // PER_PIECE | PER_ORDER
   createdAt       DateTime     @default(now())
 
-  expenses Expense[]
+  expenses      Expense[]
   purchaseLines PurchaseInvoiceLine[]
 
   @@index([organizationId])
 }
 
 model Client {
-  id             String         @id @default(cuid())
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId String
-  name           String
-  contact        String?
+  id                 String            @id @default(cuid())
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId     String
+  name               String
+  contact            String?
   // Tipo de contacto en el directorio/CRM (Fase 5). Default CLIENT.
-  type           ContactType    @default(CLIENT)
+  type               ContactType       @default(CLIENT)
   // Datos opcionales (nota de entrega, futuro CRM/mapa). El flujo rápido de
   // WhatsApp solo exige nombre + teléfono.
-  phone          String?
-  rif            String?
-  address        String?
-  municipality   String?
-  city           String?
-  notes          String?
+  phone              String?
+  rif                String?
+  address            String?
+  municipality       String?
+  city               String?
+  notes              String?
   // Ubicación en el mapa (se fija haciendo click en el mapa; sin geocodificación).
-  lat            Float?
-  lng            Float?
-  createdAt      DateTime       @default(now())
-  sales          Sale[]
-  orders         Order[]
-  storeRequests  StoreRequest[]
+  lat                Float?
+  lng                Float?
+  createdAt          DateTime          @default(now())
+  sales              Sale[]
+  orders             Order[]
+  storeRequests      StoreRequest[]
   /// Los gastos en los que este contacto es el proveedor.
-  expensesAsProvider Expense[] @relation("GastosDelProveedor")
+  expensesAsProvider Expense[]         @relation("GastosDelProveedor")
   /// Las facturas de compra que le comprás a este contacto.
   purchaseInvoices   PurchaseInvoice[] @relation("FacturasDelProveedor")
 
@@ -466,8 +466,8 @@ model Expense {
   /// `DEFAULT 'BUSINESS'` y 71 gastos quedaron afirmando que los pagó el
   /// negocio sin que nadie lo decidiera: un default se lee después como un
   /// dato. Toda compra anterior a este campo vale `null` y así se queda.
-  isRefill       Boolean?
-  endDate        DateTime? // fin del período (p. ej. publicidad: de `date` a `endDate`)
+  isRefill Boolean?
+  endDate  DateTime? // fin del período (p. ej. publicidad: de `date` a `endDate`)
 
   // Enlace polimórfico opcional al catálogo (solo uno por fila).
   material    Material?  @relation(fields: [materialId], references: [id], onDelete: SetNull)
@@ -622,7 +622,7 @@ model Payment {
   /// y se recorta a 4 decimales, así que reconstruir los bolívares desde él
   /// devuelve 1.899,9999 donde el cliente pagó 1.900. Este es el número del
   /// recibo; `amount` es el que cuenta para el negocio.
-  amountForeign  Decimal? @db.Decimal(14, 4)
+  amountForeign Decimal? @db.Decimal(14, 4)
 
   /// Mismo criterio que `Sale.source`: el abono importado del Excel lleva su
   /// insignia en el detalle de "Ventas cobradas".
@@ -848,28 +848,28 @@ model StoreProduct {
 
   /// Material con el que se imprime ("PLA", "PETG"...). Texto libre: es una
   /// etiqueta de vitrina, no un enlace al catalogo interno de filamentos.
-  material String?
+  material    String?
   /// Insignia de esquina de la tarjeta ("Nuevo", "Mas vendido"). Texto libre.
-  badge    String?
+  badge       String?
   /// Si el cliente puede pedirlo con su nombre, logo o forma.
-  custom   Boolean @default(false)
+  custom      Boolean   @default(false)
   /// Ficha tecnica libre: [{ label, value }]. Un JSON en vez de una columna por
   /// dato, para no migrar cada vez que aparece una especificacion nueva.
-  specs    Json    @default("[]")
+  specs       Json      @default("[]")
   /// Tramos de precio por cantidad: [{ minQty, discountPct }] (fracción). JSON
   /// como specs; el descuento lo aplica el servidor en el pedido.
-  priceTiers Json  @default("[]")
+  priceTiers  Json      @default("[]")
   /**
    * false = borrador (no sale por la API pública).
    */
-  visible  Boolean @default(false)
+  visible     Boolean   @default(false)
   /// Cuando se publico por PRIMERA vez (null = nunca). De aca sale la insignia «Nuevo».
   /// NO es createdAt: las fichas nacen ocultas y pueden publicarse meses despues.
   publishedAt DateTime?
   /**
    * Orden manual en la vitrina.
    */
-  position Int     @default(0)
+  position    Int       @default(0)
 
   category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   categoryId String?
@@ -1005,12 +1005,12 @@ model StoreBanner {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
 
-  kind      StoreBannerKind @default(HERO)
+  kind StoreBannerKind @default(HERO)
 
-  title     String
-  subtitle  String?
+  title    String
+  subtitle String?
   /// Obligatoria en HERO y CATEGORIA; null en TEXTO. Lo exige el contrato Zod por tipo.
-  imageKey  String?
+  imageKey String?
 
   /// EL FONDO del hero: la imagen grande detrás del texto, a todo el ancho. Solo en HERO.
   ///
@@ -1029,8 +1029,8 @@ model StoreBanner {
   /// slug de categoría/producto, o URL http(s); null para NONE.
   linkValue String?
 
-  position  Int      @default(0)
-  visible   Boolean  @default(true)
+  position Int     @default(0)
+  visible  Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1160,11 +1160,11 @@ model LoanPayment {
   loan           Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade)
   loanId         String
 
-  date      DateTime
-  amount    Decimal  @db.Decimal(12, 4)
+  date       DateTime
+  amount     Decimal      @db.Decimal(12, 4)
   /// La referencia del pago (transferencia, "cena", lo que sea): es lo que
   /// permite reconciliar con el banco después.
-  reference String?
+  reference  String?
   refundable Boolean      @default(true)
   source     RecordSource @default(MANUAL)
 
@@ -1302,11 +1302,11 @@ model Counterparty {
   active         Boolean          @default(true)
   notes          String?
 
-  movements    OwnerMovement[]
-  accounts     CashAccount[]
-  loans        Loan[]
-  expenses     Expense[]
-  loanPayments LoanPayment[]
+  movements        OwnerMovement[]
+  accounts         CashAccount[]
+  loans            Loan[]
+  expenses         Expense[]
+  loanPayments     LoanPayment[]
   /// Los abonos a facturas que puso esta contraparte de su bolsillo.
   purchasePayments PurchaseInvoicePayment[]
 
@@ -1337,8 +1337,8 @@ model CashAccount {
   active                 Boolean         @default(true)
   isDefault              Boolean         @default(false)
 
-  reconciliations CashReconciliation[]
-  loanPayments    LoanPayment[]
+  reconciliations  CashReconciliation[]
+  loanPayments     LoanPayment[]
   purchasePayments PurchaseInvoicePayment[]
 
   createdAt DateTime @default(now())
@@ -1410,13 +1410,16 @@ model DebtApplication {
   payment   OwnerMovement @relation("PaymentApplied", fields: [paymentId], references: [id], onDelete: Cascade)
   paymentId String
 
-  /// La obligación cancelada: EXACTAMENTE UNA (CHECK en la migración).
-  expense              Expense?       @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  /// La obligación cancelada: EXACTAMENTE UNA de las CUATRO (CHECK en la migración).
+  expense              Expense?                @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   expenseId            String?
-  loanPayment          LoanPayment?   @relation(fields: [loanPaymentId], references: [id], onDelete: Cascade)
+  loanPayment          LoanPayment?            @relation(fields: [loanPaymentId], references: [id], onDelete: Cascade)
   loanPaymentId        String?
-  obligationMovement   OwnerMovement? @relation("ObligationApplied", fields: [obligationMovementId], references: [id], onDelete: Cascade)
+  obligationMovement   OwnerMovement?          @relation("ObligationApplied", fields: [obligationMovementId], references: [id], onDelete: Cascade)
   obligationMovementId String?
+  /// Un abono a una factura de compra que puso la contraparte (fase B, tarea 7).
+  purchasePayment      PurchaseInvoicePayment? @relation(fields: [purchasePaymentId], references: [id], onDelete: Cascade)
+  purchasePaymentId    String?
 
   amount Decimal @db.Decimal(12, 4)
 
@@ -1427,6 +1430,7 @@ model DebtApplication {
   @@index([expenseId])
   @@index([loanPaymentId])
   @@index([obligationMovementId])
+  @@index([purchasePaymentId])
 }
 
 /// FACTURA O ENCARGO DE COMPRA: lo que pediste y todavía no llegó, o llegó y
@@ -1505,11 +1509,11 @@ model PurchaseInvoiceLine {
   invoiceId String
 
   /// Qué se compra: `materialId` **o** `printerId`, nunca los dos…
-  material   Material? @relation(fields: [materialId], references: [id], onDelete: Restrict)
-  materialId String?
-  printer    Printer?  @relation(fields: [printerId], references: [id], onDelete: Restrict)
-  printerId  String?
-  component   Component? @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  material    Material?              @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  materialId  String?
+  printer     Printer?               @relation(fields: [printerId], references: [id], onDelete: Restrict)
+  printerId   String?
+  component   Component?             @relation(fields: [componentId], references: [id], onDelete: Restrict)
   componentId String?
   /// …salvo que la ficha todavía NO EXISTA: un color que nunca compraste no
   /// tiene ficha hasta que llega. Entonces la línea lleva su nombre y la ficha
@@ -1520,7 +1524,7 @@ model PurchaseInvoiceLine {
   /// nueva —el caso normal: una máquina nueva no está en el catálogo— dejaba un
   /// rollo llamado "Impresora A2". El contrato Zod lo exige con `nombreNuevo` y
   /// lo prohíbe sin él.
-  nuevoTipo PurchaseLineNuevoTipo?
+  nuevoTipo   PurchaseLineNuevoTipo?
 
   /// MARCA, TIPO Y COLOR de la ficha de filamento que nace al recibir.
   ///
@@ -1534,9 +1538,9 @@ model PurchaseInvoiceLine {
   /// ficha nace (filamento / impresora / insumo); este es el tipo del material
   /// ("PLA Basic", "PETG"). Los nombres se parecen y significan cosas
   /// distintas; confundirlos deja la ficha otra vez sin tipo.
-  nuevaMarca          String?
-  nuevoTipoFilamento  String?
-  nuevoColor          String?
+  nuevaMarca         String?
+  nuevoTipoFilamento String?
+  nuevoColor         String?
 
   quantity  Int
   unitPrice Decimal @db.Decimal(12, 4)
@@ -1630,6 +1634,10 @@ model PurchaseInvoicePayment {
   voidReason String?
 
   createdAt DateTime @default(now())
+
+  /// Lo que un faltante de conciliación ya canceló de este abono, si lo puso
+  /// una contraparte (ver `DebtApplication.purchasePayment`).
+  debtApplications DebtApplication[]
 
   @@index([invoiceId])
   @@index([organizationId])
