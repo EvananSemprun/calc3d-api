@@ -24,6 +24,7 @@ import {
   orderPaid,
   orderTotal,
   usdDesdeMoneda,
+  AbonoRedondeaACeroError,
   type OrderCreateDto,
   type OrderLine,
   type OrderUpdateDto,
@@ -193,12 +194,25 @@ export class OrdersService {
           `Ya no existe la tasa "${dto.currencyLabel}". Cárgala en Configuración → Moneda y vuelve a intentar.`,
         );
       }
+      // ⚠️ El motor lanza si los Bs no llegan ni a 0,0001 USD a esa tasa: un
+      // abono de $0 no baja el saldo. Sin esta traducción saldría como 500.
+      let amount: number;
+      try {
+        amount = usdDesdeMoneda(dto.amountForeign, dto.rate);
+      } catch (e) {
+        if (e instanceof AbonoRedondeaACeroError) {
+          throw new BadRequestException(
+            `Lo cobrado (${dto.amountForeign} ${moneda.currencyCode}) a la tasa ${dto.rate} no llega ni a un centavo de dólar, así que no bajaría el saldo del pedido. Revisa el monto o la tasa que escribiste.`,
+          );
+        }
+        throw e;
+      }
       await this.prisma.payment.create({
         data: {
           orderId,
           organizationId,
           date: new Date(dto.date),
-          amount: usdDesdeMoneda(dto.amountForeign, dto.rate),
+          amount,
           amountForeign: dto.amountForeign,
           note: dto.note ?? null,
           rate: dto.rate,

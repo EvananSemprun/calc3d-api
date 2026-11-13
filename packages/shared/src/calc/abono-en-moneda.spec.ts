@@ -1,4 +1,4 @@
-import { usdDesdeMoneda, saldoAFavorDelAbono } from './abono-en-moneda';
+import { usdDesdeMoneda, saldoAFavorDelAbono, AbonoRedondeaACeroError } from './abono-en-moneda';
 
 describe('usdDesdeMoneda', () => {
   it('DIVIDE entre la tasa, no multiplica', () => {
@@ -32,6 +32,31 @@ describe('usdDesdeMoneda', () => {
   it('un valor ilegible lanza en vez de producir NaN', () => {
     expect(() => usdDesdeMoneda(Number('x'), 250)).toThrow(/números/);
     expect(() => usdDesdeMoneda(1900, Number.POSITIVE_INFINITY)).toThrow(/números/);
+  });
+});
+
+describe("usdDesdeMoneda: el resultado que redondea a cero", () => {
+  it("Bs 0,001 a tasa 250 lanza el error CON NOMBRE y lleva el monto y la tasa", () => {
+    let error: unknown;
+    try {
+      usdDesdeMoneda(0.001, 250);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(AbonoRedondeaACeroError);
+    const e = error as AbonoRedondeaACeroError;
+    expect(e.name).toBe("AbonoRedondeaACeroError");
+    expect(e.montoEnMoneda).toBe(0.001);
+    expect(e.tasa).toBe(250);
+  });
+
+  it("hermano: 0,025 a 250 da justo 0,0001 y NO lanza", () => {
+    expect(usdDesdeMoneda(0.025, 250)).toBe(0.0001);
+  });
+
+  it("las entradas inválidas siguen lanzando su Error de siempre, no este", () => {
+    expect(() => usdDesdeMoneda(0, 250)).not.toThrow(AbonoRedondeaACeroError);
+    expect(() => usdDesdeMoneda(0, 250)).toThrow(/mayor que cero/);
   });
 });
 

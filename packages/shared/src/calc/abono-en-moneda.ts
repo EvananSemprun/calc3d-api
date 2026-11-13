@@ -19,13 +19,39 @@ import { D, toMoney } from './money';
  * Es el mismo criterio que `rate` en `Payment` y en los snapshots de los
  * documentos — no inventar otra dirección acá.
  */
+/**
+ * EL ABONO QUE, CONVERTIDO, NO LLEGA NI A UN CENTAVO DE DÓLAR.
+ *
+ * `toMoney` redondea a 4 decimales: Bs 0,001 a tasa 250 son 0,000004 y dan 0.
+ * Un abono de 0 no baja ningún saldo y se saltaba el `positive()` que sí
+ * protege al abono en USD. La regla vive ACÁ y no en cada servicio porque hay
+ * dos llamadores (abonos de pedido y de factura) y con la guarda copiada, un
+ * tercero sin ella reabriría el agujero: es el patrón de "dos definiciones de
+ * lo mismo".
+ *
+ * ⚠️ Lleva un NOMBRE para que los servicios lo atrapen con `instanceof` y lo
+ * traduzcan a 400 con su propia redacción (el motor decide, el servicio
+ * escribe el mensaje). Uno que escape sin traducir sale como 500.
+ */
+export class AbonoRedondeaACeroError extends Error {
+  constructor(
+    readonly montoEnMoneda: number,
+    readonly tasa: number,
+  ) {
+    super(`${montoEnMoneda} a tasa ${tasa} no llega a 0,0001 USD: el abono quedaría en cero`);
+    this.name = "AbonoRedondeaACeroError";
+  }
+}
+
 export function usdDesdeMoneda(montoEnMoneda: number, tasa: number): number {
   if (!Number.isFinite(montoEnMoneda) || !Number.isFinite(tasa)) {
     throw new Error('El monto y la tasa tienen que ser números');
   }
   if (tasa <= 0) throw new Error('La tasa tiene que ser mayor que cero');
   if (montoEnMoneda <= 0) throw new Error('El monto tiene que ser mayor que cero');
-  return toMoney(D(montoEnMoneda).div(D(tasa)));
+  const usd = toMoney(D(montoEnMoneda).div(D(tasa)));
+  if (usd <= 0) throw new AbonoRedondeaACeroError(montoEnMoneda, tasa);
+  return usd;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { OrdersService } from './orders.module';
 
 function makePrisma() {
@@ -211,6 +211,25 @@ describe('OrdersService', () => {
         conTasas();
         await service.addPayment(ORG, 'o1', enBs({ amount: 999999 }) as any);
         expect(prisma.payment.create.mock.calls[0][0].data.amount).toBe(7.6);
+      });
+
+      /**
+       * ⚠️ Bs 0,001 a tasa 250 son $0,000004, que `toMoney` redondea a 0: un
+       * abono de $0 no baja el saldo y se colaba sin pasar por el `positive()`
+       * del abono en USD. El motor lanza; el servicio lo traduce a 400 y no escribe.
+       */
+      it("un abono en Bs que convierte a $0 se rechaza con 400 y NO escribe", async () => {
+        conTasas();
+        await expect(
+          service.addPayment(ORG, "o1", enBs({ amountForeign: 0.001 }) as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(prisma.payment.create).not.toHaveBeenCalled();
+      });
+
+      it("…y su hermano: un monto chico pero que da >= 0,0001 SÍ se registra", async () => {
+        conTasas();
+        await service.addPayment(ORG, "o1", enBs({ amountForeign: 0.025 }) as any);
+        expect(prisma.payment.create.mock.calls[0][0].data.amount).toBe(0.0001);
       });
 
       it('con una moneda que ya no existe corta ANTES de escribir', async () => {

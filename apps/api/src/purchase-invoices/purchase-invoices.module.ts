@@ -26,6 +26,7 @@ import {
   invoiceTotals,
   purchaseCostPerRoll,
   usdDesdeMoneda,
+  AbonoRedondeaACeroError,
   type PurchaseInvoicePaymentDto,
   type PurchaseInvoiceUpsertDto,
   type PurchaseReceiveDto,
@@ -585,17 +586,20 @@ export class PurchaseInvoicesService {
       );
     }
     const rate = n(tasa.rate);
-    const amount = usdDesdeMoneda(dto.amountForeign, rate);
-    // ⚠️ La guarda va ACÁ y no en `usdDesdeMoneda`: esa función solo mira que
-    // la ENTRADA sea positiva, y `toMoney` redondea a 4 decimales, así que Bs
-    // 0,001 a tasa 250 da 0 y se colaba un abono de $0 saltándose el
-    // `positive()` que sí protege al abono en USD. Es una regla del abono (un
-    // abono de 0 no baja el saldo), no de la conversión, que sirve igual a
-    // quien solo quiere mostrar el equivalente.
-    if (!(amount > 0)) {
-      throw new BadRequestException(
-        `Lo pagado en "${dto.currencyLabel}" no llega ni a un centavo de dólar a esa tasa, así que no bajaría el saldo. Revisa el monto que escribiste.`,
-      );
+    // ⚠️ La decisión ('no llega a un centavo') es del motor
+    // (`AbonoRedondeaACeroError`), la misma para los abonos de pedido; acá solo
+    // se escribe el mensaje, que necesita el nombre de la tasa y dice qué
+    // hacer. Sin la traducción saldría como 500.
+    let amount: number;
+    try {
+      amount = usdDesdeMoneda(dto.amountForeign, rate);
+    } catch (e) {
+      if (e instanceof AbonoRedondeaACeroError) {
+        throw new BadRequestException(
+          `Lo pagado en "${dto.currencyLabel}" no llega ni a un centavo de dólar a esa tasa, así que no bajaría el saldo. Revisa el monto que escribiste.`,
+        );
+      }
+      throw e;
     }
     return {
       amount,
