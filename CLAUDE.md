@@ -3814,3 +3814,39 @@ estos guardianes (una lista fija dejó 19 formas sin corregir).
 - ⚠️ **Dos fichas de filamento con distinto `rollGrams` NO se unen**: el costo por gramo de las compras pasadas sale de esos gramos.
 - ⚠️ **Conteos del mismo mes en las dos fichas se SUMAN** (cerrar escribe todas las fichas, así que chocar es lo normal; `@@unique([materialId, month])`).
 - ⚠️ **Las escrituras llevan `organizationId` en el `where`** (`updateMany`/`deleteMany`) y se mira el `count` (`exigirAfectadas`): segunda capa tras la lectura acotada. Los tests lo prueban aflojando la lectura (`aflojarLectura` de `common/unir-fichas.fake.ts`, una base en memoria con FK, unicidad y rollback).
+
+## Tres estados de ficha: ACTIVE, SOLO_PEDIDO_ESPECIAL, DISCONTINUED (2026-11-13, fase h, shared 0.83.0 → 0.90.0)
+
+`MaterialStatus` pasó de dos valores a tres. **Solo pedido especial** = «ya no la repongo ni la cuento, pero la cotizo cuando un cliente la pide». Todo lo que decide «¿esta ficha entra acá?» vive en `packages/shared/src/calc/estado-de-ficha.ts`, y **cada función es un `switch` exhaustivo con `const nunca: never`**: un cuarto valor del enum **no compila** hasta que cada una decide. Medido: con un quinto valor, `tsc` falla en las cuatro líneas `nunca`.
+
+| Función | ACTIVE | SOLO_PEDIDO_ESPECIAL | DISCONTINUED |
+|---|---|---|---|
+| `entraEnReposicion` | sí | no | no |
+| `entraEnConteo` | sí | no | no |
+| `entraEnCalculadora` | sí | **sí** | no |
+
+- ⚠️ **El tercer valor ES el punto del estado**: si «solo pedido especial» quedara fuera de la calculadora, el dueño no podría cotizar justamente el pedido para el que la ficha existe. Lo fija el test de las tres columnas.
+- `estadoTrasComprar(s)`: comprar reactiva una DESCONTINUADA (→ ACTIVE, comportamiento de siempre) pero **NO reactiva** una solo-pedido-especial: si el dueño la marcó así, comprar un rollo para un encargo no puede cambiarle el estado. Reactivar es un acto explícito.
+- `accionesDeEstado(s)`: qué botones ofrece la ficha (ACTIVE → «Solo pedido especial» y «Descontinuar»; SOLO → «Reactivar» y «Descontinuar»; DISCONTINUED → «Reactivar»). Sin esto **el tercer estado no se podía poner desde ninguna pantalla** (medido: fuera de los specs aparecía solo en el desplegable del filtro). `ofreceDescontinuar(s)` es la misma pregunta para el mensaje de borrado; un test la cruza con `accionesDeEstado`.
+- ⚠️ **El `switch` exhaustivo protege a quien LLAMA a los predicados, NO a quien compara contra texto** (`status === 'DISCONTINUED'` compila igual con el valor nuevo y trata el tercer estado como ACTIVE). La primera versión del plan decía lo contrario y era falsa. Lo que de verdad garantiza que nadie compare a mano es **un inventario**, y hay DOS que barren el código: `apps/api/src/common/estado-de-ficha.inventario.spec.ts` y, en el panel, `src/lib/estado-de-ficha.inventario.spec.ts`. Fallan nombrando archivo:línea y la expresión. El de la API ya cazó una comparación vieja devuelta a propósito y la de `a.destino === 'DISCONTINUED'` del propio código nuevo. Su primera versión del panel tenía los escapes de regex mal y pasaba en verde **sin mirar nada**: lo delató el test del propio detector (por eso hay tests de lo que caza y de lo que no).
+- ⚠️ **`entraEnCompras` se planeó y se BORRÓ.** Compras no filtra por estado: `GET /materials` no tiene `where` de estado y el desplegable ofrece las tres fichas (medido: 51 ACTIVE + 2 DISCONTINUED). Volver a comprar una descontinuada **es la señal de que volvió**, así que esconderla de compras rompería la reactivación. El predicado tenía cero consumidores y afirmaba una regla que nadie decidió; la razón queda escrita en `estadoTrasComprar` para que el próximo que vea el desplegable sin filtrar no lo «arregle».
+- No hay un predicado «está en circulación» aparte de `entraEnReposicion`: hoy las dos preguntas tienen la misma respuesta. Si algún día una ficha ACTIVE debe quedar fuera de la reposición por una razón de negocio, se separan.
+- Descontinuar en lote: `PATCH /materials/status/batch` (`setStatusBatch`), **atómico** (una ficha ajena rechaza TODO el lote) y con `organizationId` también en el `updateMany`.
+- `entraEnConteo` fuera = **no se muestra por defecto en la grilla del conteo** (con su aviso «Mostrarlas»), pero **NO se excluye del cierre**: el cierre es la foto completa del estante, y con una ficha fuera el rollo que quede se perdería sin que nadie lo vea.
+
+### Unir: regla del precio y de los conteos (resumen; detalle arriba)
+
+- **El precio del destino se recalcula desde la ÚLTIMA compra del conjunto unido** (decisión del dueño): «Argollas» dentro de «Argolla llavero» quedó en $0,29 (la única compra real: $7,27 por 25) y no en los $0,50 escritos a mano, que no salen de ninguna compra. Verificado en el navegador: la vista previa dijo «queda en $15.00 (hoy $25.00)» y tras unir el destino quedó en 15.
+- **Los conteos del mismo mes se SUMAN**: si había 3 rollos anotados en una ficha y 1 en su duplicada, en el estante había 4. Quedarse con el del destino borraría rollos de un mes ya cerrado. Lo que cambia es el **desglose por ficha** de meses pasados, no el total.
+- **Dos fichas de filamento de distinto `rollGrams` NO se unen** (400): cambiaría el costo por gramo de las compras pasadas.
+
+### Borrar con historial: el rechazo ofrece la salida
+
+Tres mensajes, cada uno nombra SOLO puertas que existen: una ficha activa → «Descontinuar» (y «Unir con otra ficha…» si es duplicada); una ya descontinuada → solo unir; **un insumo → «Un insumo no se descontinúa»**, porque los insumos **no tienen estado** y ofrecerles descontinuar mandaría a una puerta que no existe (darles una salida exigiría un estado en insumos = migración, decisión del dueño). `ficha` es una unión discriminada y `estado` solo existe en la variante `material`: mutar el insumo a la rama de filamento **no compila** (`TS2339`, «Tests: 0 total»). Una línea de factura apunta a la ficha con `Restrict`: borrarla daba un 500 mudo; ahora cae en el rechazo y `canDelete` de `GET /filament/stock` también las cuenta. `canDelete` NO cuenta los productos de la tienda (medido: 0 fichas sin historial usadas en un costeo; si aparecen fichas sin historial, revisar).
+
+### El histórico NO se reescribe (`filament/historico-no-cambia.spec.ts`, 13 tests)
+
+Un cierre mensual es un documento. El spec corre los servicios REALES (`MaterialsService` + `FilamentService`) sobre `common/unir-fichas.fake.ts` con un escenario de **números clavados a mano** (12 rollos / $261 comprados; agosto cerrado = 8 rollos, julio = 6; consumo de agosto = 6 + 3 − 8 = 1). Cada medición se compara contra una **constante literal ANTES y DESPUÉS**: medir dos veces con la misma función y comparar entre sí sería tautológico. Cubre descontinuar (una ficha, lote, solo-pedido-especial, y ida y vuelta) y unir (total comprado, costo de cada compra, análisis por marca/tipo/color, total de rollos de un mes cerrado, y rollback a mitad de camino).
+- Lo que SÍ cambia al unir, y el test lo dice: el desglose por ficha (m1 [2,1,0] + m2 [1,0,1] = [3,1,1]) y el precio del destino. Si las dos fichas tuvieran **marca distinta**, el análisis por marca sí se movería (el total no): el escenario las hace de la misma marca a propósito.
+- Para poder correrlo, `unir-fichas.fake.ts` ganó (aditivo): `stockMonth`, `findUnique` con clave compuesta, `orderBy`/`distinct`/`include` en `findMany`, y operadores `gte/lt/lte/gt` sobre fechas.
+- Mutaciones (compilan, imprimen conteo): sumar el conteo del origen sin sumarlo → **3**; que `setStatusBatch` borre los conteos → **2**; no repuntar las compras al unir → **6**.
