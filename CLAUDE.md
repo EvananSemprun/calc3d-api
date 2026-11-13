@@ -3839,6 +3839,7 @@ estos guardianes (una lista fija dejó 19 formas sin corregir).
 - **El precio del destino se recalcula desde la ÚLTIMA compra del conjunto unido** (decisión del dueño): «Argollas» dentro de «Argolla llavero» quedó en $0,29 (la única compra real: $7,27 por 25) y no en los $0,50 escritos a mano, que no salen de ninguna compra. Verificado en el navegador: la vista previa dijo «queda en $15.00 (hoy $25.00)» y tras unir el destino quedó en 15.
 - **Los conteos del mismo mes se SUMAN**: si había 3 rollos anotados en una ficha y 1 en su duplicada, en el estante había 4. Quedarse con el del destino borraría rollos de un mes ya cerrado. Lo que cambia es el **desglose por ficha** de meses pasados, no el total.
 - **Dos fichas de filamento de distinto `rollGrams` NO se unen** (400): cambiaría el costo por gramo de las compras pasadas.
+- ⚠️ **«Unir no cambia el análisis por marca/tipo/color» SOLO vale si las dos fichas comparten marca, tipo y color.** Unir repunta compras a la ficha destino, y el análisis agrupa por la marca/tipo/color de LA FICHA de cada compra: si difieren (p. ej. el origen sin marca y el destino «Sunlu»), el **total** comprado (rollos y dinero) se mantiene al centavo pero el **desglose** se mueve de grupo. El plan original lo pedía sin este matiz y estaba mal; `historico-no-cambia.spec.ts` fija el caso de igual marca y color, y el total en general. Tampoco es invariante `valor.techo` del inventario: el precio del destino se recalcula.
 
 ### Borrar con historial: el rechazo ofrece la salida
 
