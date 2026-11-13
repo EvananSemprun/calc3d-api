@@ -15,14 +15,18 @@ import Decimal from 'decimal.js';
 import { D, toCents } from './money';
 
 /**
- * Los tres orígenes de una obligación, como VALOR.
+ * Los cuatro orígenes de una obligación, como VALOR.
  *
  * El tipo se borra al compilar; lo único que puede frenar un origen inventado
  * que llega por la red es un enum en tiempo de ejecución. Para que las dos
  * declaraciones no puedan divergir, el schema Zod (`ObligationSourceSchema`)
  * se construye a partir de esta lista en vez de repetirla.
+ *
+ * `PURCHASE` es un abono a una factura de compra que puso la contraparte de su
+ * bolsillo (fase B, 2026-11-12): Caja ya lo contaba como aporte, faltaba verlo
+ * como deuda.
  */
-export const OBLIGATION_SOURCES = ['EXPENSE', 'LOAN_PAYMENT', 'MOVEMENT'] as const;
+export const OBLIGATION_SOURCES = ['EXPENSE', 'LOAN_PAYMENT', 'MOVEMENT', 'PURCHASE'] as const;
 
 export type ObligationSource = (typeof OBLIGATION_SOURCES)[number];
 

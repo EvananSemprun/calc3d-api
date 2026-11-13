@@ -1,5 +1,6 @@
 import {
   codigoDeCompra,
+  generaObligacion,
   invoiceTotals,
   obligationLedger,
   purchaseCostPerRoll,
@@ -197,7 +198,9 @@ export async function cargarDatosDeCaja(prisma: PrismaService, organizationId: s
       date: dia(a.date),
       amount: n(a.amount),
       payer: tipoPagador(a, contrapartes),
-      refundable: true,
+      // Caja y Deuda lo leen del MISMO campo: si Caja lo contara siempre como
+      // reembolsable, el aporte subiría y la deuda no.
+      refundable: a.refundable,
       /**
        * ⚠️ **El reparto mira el tipo REAL de cada línea y separa el anticipo.**
        * Hasta la fase B era una sola fracción binaria —impresora o filamento— y
@@ -293,6 +296,31 @@ hasta?: string,
         category: 'CONTRIBUTION' as const,
         amount: n(m.amount),
         applied: d.porObligacion.get(m.id) ?? 0,
+      })),
+    // ⚠️ Un abono a una factura de compra que puso la contraparte de su bolsillo
+    // es deuda con ella. La precedencia es la MISMA de `cashEntries` (no la
+    // reinventes): 1) tomado del saldo a favor gana siempre —esa plata ya salió
+    // al pagar de más y no mueve la caja—, aunque traiga contraparte; 2) el
+    // prestamista no es bolsillo —su deuda ya vive en el saldo del préstamo y
+    // contarla acá la contaría dos veces—; 3) recién ahí la contraparte, si es
+    // `refundable`. `applied` es 0 porque `DebtApplication` todavía no tiene
+    // dónde apuntar a un abono.
+    ...d.abonosDeCompra
+      .filter(
+        (a) =>
+          a.tomadoDeFacturaId == null &&
+          generaObligacion(tipoPagador(a, d.contrapartes)) &&
+          loPuso(a) &&
+          a.refundable &&
+          vale(a.date),
+      )
+      .map((a) => ({
+        source: 'PURCHASE' as const,
+        sourceId: a.id,
+        date: dia(a.date),
+        category: 'PURCHASE' as const,
+        amount: n(a.amount),
+        applied: 0,
       })),
   ];
   return obligationLedger(items);

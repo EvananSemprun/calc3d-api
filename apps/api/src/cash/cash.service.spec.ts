@@ -16,6 +16,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CashController } from './cash.module';
 import { CashService } from './cash.service';
+import { obligacionesDe } from './datos-de-caja';
 // La OTRA lectura del saldo del préstamo. Está acá para poder exigir que diga
 // lo mismo que Caja sobre los mismos datos, no para probar Deuda.
 import { LoansService } from '../loans/loans.module';
@@ -2435,5 +2436,166 @@ describe('CashService.summary — el abono se reparte por el tipo REAL de cada l
 
     expect(r.total).toBe(140);
     expect(r.entries[0]).toMatchObject({ label: 'Factura C-0001 · Strato', amount: 140 });
+  });
+});
+
+/**
+ * EL ABONO QUE PUSO EL PROPIETARIO ES UNA DEUDA CON ÉL (fase B, tarea 7).
+ *
+ * Los gastos y las cuotas de préstamo de su bolsillo ya generaban obligación;
+ * los abonos a facturas de compra quedaron afuera, aunque el motor de caja SÍ
+ * los contaba como aporte (`contributionsRefundable`). Resultado: la caja subía
+ * y la deuda no, o sea el negocio recibía plata y no la debía.
+ *
+ * ⚠️ La precedencia es la de `cashEntries` y no se inventa de nuevo: 1) tomado
+ * del saldo a favor gana siempre; 2) el prestamista no es bolsillo (su deuda ya
+ * vive en el saldo del préstamo); 3) recién ahí la contraparte, si `refundable`.
+ */
+describe('CashService.summary — el abono de bolsillo genera obligación', () => {
+  /** Un abono de $50 a una factura recibida y pagada entera. */
+  const abono = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    organizationId: ORG,
+    date: new Date('2026-10-05'),
+    amount: '50',
+    counterpartyId: null,
+    tomadoDeFacturaId: null,
+    refundable: true,
+    voidedAt: null,
+    invoice: {
+      code: 1,
+      supplier: { name: 'Strato' },
+      lines: [
+        {
+          quantity: 1, unitPrice: '50', materialId: 'mat-1', printerId: null,
+          componentId: null, nuevoTipo: null, received: 1, expenses: [],
+        },
+      ],
+      payments: [{ amount: '50', voidedAt: null }],
+    },
+    ...over,
+  });
+
+  const negocio = (abonos: Record<string, unknown>[], extra: Partial<Tablas> = {}): Tablas => ({
+    counterparty: [
+      { id: 'cp1', organizationId: ORG, name: 'Propietario', kind: 'OWNER', active: true, isDefault: true },
+    ],
+    settings: [{ organizationId: ORG, debtApplicationOrder: 'OLDEST_FIRST' }],
+    cashAccount: [],
+    cashReconciliation: [],
+    loan: [],
+    expense: [],
+    loanPayment: [],
+    ownerMovement: [],
+    debtApplication: [],
+    payment: [],
+    sale: [
+      { id: 'v1', organizationId: ORG, date: new Date('2026-10-01'), amount: '500', kind: 'COUNTER', note: null, source: 'MANUAL' },
+    ],
+    purchaseInvoicePayment: abonos,
+    ...extra,
+  });
+
+  it('un abono que puso el propietario entra en lo que el negocio le debe', async () => {
+    const r = await servicioFalso(negocio([abono('pp1', { counterpartyId: 'cp1' })])).summary(ORG);
+
+    expect(r.financing.owedToOwner).toBe(50);
+    expect(r.obligations).toEqual([
+      expect.objectContaining({
+        source: 'PURCHASE', sourceId: 'pp1', category: 'PURCHASE', amount: 50, applied: 0, outstanding: 50,
+      }),
+    ]);
+    // Y la caja ya lo contaba como aporte reembolsable: las dos lecturas cuadran.
+    expect(r.balance.contributionsRefundable).toBe(50);
+  });
+
+  it('con los datos de HOY, la deuda con el propietario sigue dando 967,77', async () => {
+    // Medido en producción: los 8 abonos existentes los puso la CAJA, ninguno el
+    // propietario. Arreglar el bug NO mueve el número; si se mueve, cambió otra cosa.
+    const ocho = Array.from({ length: 8 }, (_, i) => abono(`pp${i}`, { amount: '10' }));
+    const deHoy = negocio(ocho, {
+      expense: [
+        { id: 'g1', organizationId: ORG, date: new Date('2026-09-06'), amount: '1000', counterpartyId: 'cp1', isInvestment: true, category: 'EQUIPMENT', materialId: null, refundable: true, description: 'Impresora', source: 'MANUAL' },
+      ],
+      ownerMovement: [
+        { id: 'mv1', organizationId: ORG, date: new Date('2026-09-12'), kind: 'WITHDRAWAL', amount: '32.23', concept: 'Retiro', note: null, counterpartyId: 'cp1', refundable: true, source: 'MANUAL', cashReconciliationId: null },
+      ],
+      debtApplication: [
+        { id: 'da1', organizationId: ORG, paymentId: 'mv1', expenseId: 'g1', loanPaymentId: null, obligationMovementId: null, amount: '32.23' },
+      ],
+    });
+
+    const r = await servicioFalso(deHoy).summary(ORG);
+
+    expect(r.financing.owedToOwner).toBe(967.77);
+    expect(r.obligations.some((o) => (o.source as string) === 'PURCHASE')).toBe(false);
+  });
+
+  it('un abono tomado del saldo a favor NO genera obligación ni mueve la caja, aunque traiga contraparte', async () => {
+    const sin = await servicioFalso(negocio([])).summary(ORG);
+    const r = await servicioFalso(
+      negocio([abono('pp1', { counterpartyId: 'cp1', tomadoDeFacturaId: 'f-origen' })]),
+    ).summary(ORG);
+
+    expect(r.financing.owedToOwner).toBe(0);
+    expect(r.obligations).toEqual([]);
+    expect(r.balance.balance).toBe(sin.balance.balance);
+  });
+
+  it('un abono con refundable en false es capital: no se le debe', async () => {
+    const r = await servicioFalso(
+      negocio([abono('pp1', { counterpartyId: 'cp1', refundable: false })]),
+    ).summary(ORG);
+
+    expect(r.financing.owedToOwner).toBe(0);
+    expect(r.balance.contributionsCapital).toBe(50);
+    expect(r.balance.contributionsRefundable).toBe(0);
+  });
+});
+
+describe('obligacionesDe — la precedencia de un abono de compra', () => {
+  /** Solo lo que `obligacionesDe` lee: sin base, sin servicio. */
+  const datos = (abonosDeCompra: Record<string, unknown>[]) =>
+    ({
+      gastos: [], cuotas: [], movimientos: [],
+      contrapartes: [
+        { id: 'cp1', kind: 'OWNER' },
+        { id: 'socio', kind: 'PARTNER' },
+        { id: 'edwin', kind: 'EXTERNAL_LENDER' },
+      ],
+      porObligacion: new Map<string, number>(),
+      abonosDeCompra,
+    }) as unknown as Parameters<typeof obligacionesDe>[0];
+
+  const fila = (id: string, counterpartyId: string | null, over: Record<string, unknown> = {}) => ({
+    id, date: new Date('2026-10-05'), amount: '50', counterpartyId,
+    tomadoDeFacturaId: null, refundable: true, ...over,
+  });
+
+  it('el abono del PRESTAMISTA no es bolsillo: su deuda ya vive en el saldo del préstamo', () => {
+    expect(obligacionesDe(datos([fila('pp1', 'edwin')]), 'edwin')).toEqual([]);
+  });
+
+  it('un SOCIO se trata como el propietario, y cada uno ve solo lo suyo', () => {
+    const d = datos([fila('pp1', 'socio'), fila('pp2', 'cp1')]);
+
+    expect(obligacionesDe(d, 'socio').map((o) => o.sourceId)).toEqual(['pp1']);
+    expect(obligacionesDe(d, 'cp1').map((o) => o.sourceId)).toEqual(['pp2']);
+  });
+
+  it('el saldo a favor gana sobre la contraparte', () => {
+    const d = datos([fila('pp1', 'cp1', { tomadoDeFacturaId: 'f1' })]);
+
+    expect(obligacionesDe(d, 'cp1')).toEqual([]);
+  });
+
+  it('refundable en false no genera obligación', () => {
+    expect(obligacionesDe(datos([fila('pp1', 'cp1', { refundable: false })]), 'cp1')).toEqual([]);
+  });
+
+  it('con `hasta` solo entran los abonos de ese día o anteriores', () => {
+    const d = datos([fila('pp1', 'cp1'), fila('pp2', 'cp1', { date: new Date('2026-10-20') })]);
+
+    expect(obligacionesDe(d, 'cp1', '2026-10-10').map((o) => o.sourceId)).toEqual(['pp1']);
   });
 });
