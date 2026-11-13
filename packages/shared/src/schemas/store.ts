@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CalcInputSchema } from './calc';
+import { FECHA_OPCIONAL } from './api';
 
 
 /**
@@ -387,3 +388,89 @@ export type StoreBannerCreateDto = z.infer<typeof StoreBannerCreateSchema>;
  */
 export const StoreBannerUpdateSchema = StoreBannerCreateSchema;
 export type StoreBannerUpdateDto = z.infer<typeof StoreBannerUpdateSchema>;
+
+// ----- Colección principal de la portada -----
+
+export const StoreCollectionVerTodoSchema = z.enum(['CATEGORIA', 'COLECCION', 'NONE']);
+export type StoreCollectionVerTodo = z.infer<typeof StoreCollectionVerTodoSchema>;
+
+/**
+ * Una entrada de la colección: una categoría entera O un producto suelto, nunca las dos
+ * ni ninguna (la tabla lo impone con un CHECK; esto lo dice antes, con un mensaje).
+ *
+ * `id` es OPCIONAL a propósito: sin id es una entrada nueva; con id es una que ya existe
+ * y el servidor la ACTUALIZA. Es lo que permite el diff por id y evita borrar y recrear.
+ */
+export const StoreCollectionItemInputSchema = z
+  .object({
+    id: z.string().min(1).max(60).optional(),
+    categoryId: z.string().min(1).max(60).nullable().optional(),
+    productId: z.string().min(1).max(60).nullable().optional(),
+    position: z.number().int().min(0).max(10_000),
+  })
+  .superRefine((v, ctx) => {
+    const cuantos = (v.categoryId ? 1 : 0) + (v.productId ? 1 : 0);
+    if (cuantos !== 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['categoryId'],
+        message: 'Cada entrada es una categoría o un producto suelto, no las dos ni ninguna',
+      });
+    }
+  });
+export type StoreCollectionItemInput = z.infer<typeof StoreCollectionItemInputSchema>;
+
+/**
+ * Crear y editar una colección. El panel manda la colección ENTERA (como los banners).
+ *
+ * ⚠️ `esPrincipal` NO está acá: cuál es la principal se decide con su propio endpoint
+ * (tarea 3), dentro de una transacción. Si viajara en el cuerpo, dos ediciones podrían
+ * dejar dos principales a la vez.
+ */
+export const StoreCollectionUpsertSchema = z
+  .object({
+    nombre: z.string().min(1, 'El nombre es obligatorio').max(80),
+    titulo: z.string().min(1, 'El título es obligatorio').max(120),
+    subtitulo: z.string().max(200).nullable().optional(),
+    verTodoTipo: StoreCollectionVerTodoSchema.default('NONE'),
+    verTodoValor: z.string().min(1).max(120).nullable().optional(),
+    visible: z.boolean().default(true),
+    // Fechas de NEGOCIO (día pelado AAAA-MM-DD, validado contra el calendario): un
+    // '2026-02-30' guardado se corre al 2 de marzo y la colección arrancaría otro día.
+    startsAt: FECHA_OPCIONAL,
+    endsAt: FECHA_OPCIONAL,
+    items: z.array(StoreCollectionItemInputSchema).max(200).default([]),
+    /** ids de producto excluidos aunque entren por su categoría. */
+    exclusiones: z.array(z.string().min(1).max(60)).max(500).default([]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.verTodoTipo === 'NONE') {
+      if (v.verTodoValor) {
+        ctx.addIssue({ code: 'custom', path: ['verTodoValor'], message: 'Sin «Ver todo» no hay destino' });
+      }
+    } else if (!v.verTodoValor) {
+      ctx.addIssue({ code: 'custom', path: ['verTodoValor'], message: 'Falta el destino del «Ver todo»' });
+    }
+
+    // Repetir la misma categoría o producto es un error del formulario, no dos entradas:
+    // la tabla lo rechazaría con un 500 de índice único; acá sale con mensaje.
+    const vistas = new Set<string>();
+    v.items.forEach((it, i) => {
+      const clave = it.categoryId ? `c:${it.categoryId}` : it.productId ? `p:${it.productId}` : null;
+      if (!clave) return;
+      if (vistas.has(clave)) {
+        ctx.addIssue({ code: 'custom', path: ['items', i], message: 'Esa categoría o producto ya está en la colección' });
+      }
+      vistas.add(clave);
+    });
+
+    if (new Set(v.exclusiones).size !== v.exclusiones.length) {
+      ctx.addIssue({ code: 'custom', path: ['exclusiones'], message: 'Hay un producto excluido dos veces' });
+    }
+
+    // Bordes inclusivos (tarea 3), así que el mismo día es una ventana válida de un día.
+    if (v.startsAt && v.endsAt && v.startsAt > v.endsAt) {
+      ctx.addIssue({ code: 'custom', path: ['endsAt'], message: 'La colección no puede terminar antes de empezar' });
+    }
+  });
+export type StoreCollectionUpsertDto = z.infer<typeof StoreCollectionUpsertSchema>;

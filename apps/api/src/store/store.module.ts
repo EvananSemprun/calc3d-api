@@ -13,6 +13,7 @@ import {
   StoreBannerCreateSchema,
   StoreBannerUpdateSchema,
   StoreCategorySchema,
+  StoreCollectionUpsertSchema,
   StoreImageConfirmSchema,
   StoreImageUploadUrlSchema,
   StoreProductCreateSchema,
@@ -21,6 +22,7 @@ import {
   type StoreBannerCreateDto,
   type StoreBannerUpdateDto,
   type StoreCategoryDto,
+  type StoreCollectionUpsertDto,
   type StoreCategoryUpdateDto,
   StoreCategoryUpdateSchema,
   type StoreImageConfirmDto,
@@ -34,6 +36,7 @@ import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { RecostService } from './recost.service';
 import { StoreBannersService } from './store-banners.service';
+import { StoreColeccionesService } from './store-colecciones.service';
 import { StoreService } from './store.service';
 
 /**
@@ -46,6 +49,7 @@ export class StoreController {
   constructor(
     private readonly service: StoreService,
     private readonly banners: StoreBannersService,
+    private readonly colecciones: StoreColeccionesService,
   ) {}
 
   // Las rutas literales van ANTES de ':id' para que no las capture como un id.
@@ -212,11 +216,45 @@ export class StoreController {
   removeBanner(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.banners.remove(user.organizationId, id);
   }
+
+  // ----- Colecciones de la portada -----
+
+  @Get('colecciones')
+  listColecciones(@CurrentUser() user: AuthUser) {
+    return this.colecciones.list(user.organizationId);
+  }
+
+  @Post('colecciones')
+  createColeccion(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(StoreCollectionUpsertSchema)) dto: StoreCollectionUpsertDto,
+  ) {
+    return this.colecciones.create(user.organizationId, dto);
+  }
+
+  @Get('colecciones/:id')
+  getColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.colecciones.get(user.organizationId, id);
+  }
+
+  @Patch('colecciones/:id')
+  updateColeccion(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(StoreCollectionUpsertSchema)) dto: StoreCollectionUpsertDto,
+  ) {
+    return this.colecciones.update(user.organizationId, id, dto);
+  }
+
+  @Delete('colecciones/:id')
+  removeColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.colecciones.remove(user.organizationId, id);
+  }
 }
 
 @Module({
   controllers: [StoreController],
-  providers: [StoreService, RecostService, StoreBannersService],
+  providers: [StoreService, RecostService, StoreBannersService, StoreColeccionesService],
   exports: [StoreService],
 })
 export class StoreModule {}

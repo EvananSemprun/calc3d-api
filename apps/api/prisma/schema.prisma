@@ -105,29 +105,30 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
 
-  members         Membership[]
-  settings        Settings?
-  materials       Material[]
-  stockCounts     StockCount[]
-  stockMonths     StockMonth[]
-  printers        Printer[]
-  components      Component[]
-  clients         Client[]
-  sales           Sale[]
-  expenses        Expense[]
-  exchangeRates   ExchangeRate[]
-  ownerMovements  OwnerMovement[]
-  orders          Order[]
-  catalogOptions  CatalogOption[]
-  storeProducts   StoreProduct[]
-  storeCategories StoreCategory[]
-  storeBanners    StoreBanner[]
-  campaigns       Campaign[]
-  storeRequests   StoreRequest[]
-  loans           Loan[]
-  loanPayments    LoanPayment[]
-  goals           Goal[]
-  printerReadings PrinterReading[]
+  members          Membership[]
+  settings         Settings?
+  materials        Material[]
+  stockCounts      StockCount[]
+  stockMonths      StockMonth[]
+  printers         Printer[]
+  components       Component[]
+  clients          Client[]
+  sales            Sale[]
+  expenses         Expense[]
+  exchangeRates    ExchangeRate[]
+  ownerMovements   OwnerMovement[]
+  orders           Order[]
+  catalogOptions   CatalogOption[]
+  storeProducts    StoreProduct[]
+  storeCategories  StoreCategory[]
+  storeBanners     StoreBanner[]
+  storeCollections StoreCollection[]
+  campaigns        Campaign[]
+  storeRequests    StoreRequest[]
+  loans            Loan[]
+  loanPayments     LoanPayment[]
+  goals            Goal[]
+  printerReadings  PrinterReading[]
 
   counterparties   Counterparty[]
   cashAccounts     CashAccount[]
@@ -804,8 +805,9 @@ model StoreCategory {
   parentId String?
   children StoreCategory[] @relation("CategoriaMadre")
 
-  products StoreProduct[]
-  banners  StoreBanner[]
+  products        StoreProduct[]
+  banners         StoreBanner[]
+  collectionItems StoreCollectionItem[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -889,8 +891,10 @@ model StoreProduct {
   /// `Product`— es justamente lo que permite un catálogo único.
   input Json?
 
-  images       StoreImage[]
-  optionGroups StoreOptionGroup[]
+  images               StoreImage[]
+  optionGroups         StoreOptionGroup[]
+  collectionItems      StoreCollectionItem[]
+  collectionExclusions StoreCollectionExclusion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1038,6 +1042,90 @@ model StoreBanner {
   @@index([organizationId])
   @@index([organizationId, visible])
   @@index([organizationId, kind, visible])
+}
+
+// ----- Colección principal de la portada (2026-11-13) -----
+
+/// A dónde lleva el «Ver todo» de una colección. Mismo criterio que el destino de un
+/// banner: se guarda el SLUG (de la categoría) para que el enlace público no exponga ids.
+enum StoreCollectionVerTodo {
+  CATEGORIA
+  COLECCION
+  NONE
+}
+
+/// Una colección guardada de la tienda: qué se muestra en la portada y bajo qué título.
+/// Puede haber varias; cuál es la PRINCIPAL y la ventana de fechas se resuelven aparte
+/// (tarea 3), pero las columnas ya están para que esa tarea no migre dos veces.
+model StoreCollection {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  /// Nombre INTERNO, para reconocerla en el panel ("Navidad 2026").
+  nombre    String
+  /// Lo que lee el visitante sobre la fila de productos.
+  titulo    String
+  subtitulo String?
+
+  verTodoTipo  StoreCollectionVerTodo @default(NONE)
+  /// slug de categoría o id de colección; null para NONE. Lo exige el contrato Zod.
+  verTodoValor String?
+
+  esPrincipal Boolean @default(false)
+  visible     Boolean @default(true)
+
+  /// Ventana de fechas: FECHAS DE NEGOCIO a medianoche UTC (se leen con
+  /// `toISOString().slice(0, 10)`, no con `businessDateKey`). Ambas null = siempre vale.
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items      StoreCollectionItem[]
+  exclusions StoreCollectionExclusion[]
+
+  @@index([organizationId])
+}
+
+/// Una entrada de la colección: una CATEGORÍA entera o un producto SUELTO (exactamente
+/// una de las dos; lo impone un CHECK en la migración, que Prisma no declara).
+///
+/// ⚠️ onDelete: Cascade desde el producto y la categoría: si se borra uno, su fila de
+/// item se va con él. Sin eso, la colección quedaría apuntando a algo que no existe y
+/// el estado imposible lo tendría que descubrir cada lector.
+model StoreCollectionItem {
+  id           String          @id @default(cuid())
+  collection   StoreCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId String
+
+  category   StoreCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId String?
+  product    StoreProduct?  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  String?
+
+  position Int @default(0)
+
+  // Postgres trata los NULL como distintos: estos únicos solo frenan repetir el MISMO
+  // producto/categoría, no impiden tener varios items del otro tipo.
+  @@unique([collectionId, categoryId])
+  @@unique([collectionId, productId])
+  @@index([collectionId])
+  @@index([categoryId])
+  @@index([productId])
+}
+
+/// Un producto que NO debe salir en la colección aunque entre por su categoría.
+model StoreCollectionExclusion {
+  id           String          @id @default(cuid())
+  collection   StoreCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId String
+  product      StoreProduct    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId    String
+
+  @@unique([collectionId, productId])
+  @@index([productId])
 }
 
 // ----- Bandeja de la tienda (lo que llega SIN sesión) -----

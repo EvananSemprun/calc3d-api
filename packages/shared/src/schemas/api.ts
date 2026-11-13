@@ -53,7 +53,7 @@ const CatalogScopeSchema = z.enum(['PER_PIECE', 'PER_ORDER']);
  * por estos schemas. Nadie manda un ISO con hora. Si algún día un cliente
  * nuevo lo necesitara, se amplía ACÁ y en un solo lugar.
  */
-const FECHA = z
+export const FECHA = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD')
   .refine(isCalendarDay, 'Ese día no existe en el calendario');
@@ -72,7 +72,7 @@ const FECHA = z
  * Exigirles una fecha no cerraría ningún agujero: rompería al panel. Lo que se
  * cierra es el día inventado, que es lo que se guardaba corrido.
  */
-const FECHA_OPCIONAL = z
+export const FECHA_OPCIONAL = z
   .string()
   .regex(/^(\d{4}-\d{2}-\d{2})?$/, 'La fecha va como AAAA-MM-DD')
   .refine((v) => v === '' || isCalendarDay(v), 'Ese día no existe en el calendario')
