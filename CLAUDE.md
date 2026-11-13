@@ -1826,10 +1826,14 @@ en el repo web: se sobrescribe al sincronizar.
         más nueva de ese label, de ESTA organización. Una vez guardada, **no se
         recalcula nunca al leer**. Label sin tasa → 400 que manda a Configuración
         → Moneda.
-      - ⚠️ **Un abono que convierte a $0 se RECHAZA** (400): `toMoney` redondea a
-        4 decimales y Bs 0,001 a tasa 250 daba 0, saltándose el `positive()` del
-        abono en USD. La guarda vive en el servicio y no en `usdDesdeMoneda`
-        porque es una regla del abono, no de la conversión.
+      - ⚠️ **Un abono que convierte a $0 se RECHAZA** (400), en los DOS
+        caminos (factura y pedido): `toMoney` redondea a 4 decimales y Bs 0,001 a
+        tasa 250 daba 0, saltándose el `positive()` del abono en USD. La regla
+        vive en **`usdDesdeMoneda`** (shared 0.76.0), que lanza
+        `AbonoRedondeaACeroError` (con monto y tasa) y cada servicio lo traduce
+        con `instanceof` a 400 con su redacción. Con la guarda copiada en cada
+        servicio, un tercer llamador sin ella reabriría el agujero. Uno que
+        escape sin traducir sale como 500.
       - ⚠️ **`tomadoDeFacturaId` PROHÍBE el par foráneo**: el saldo a favor es
         un saldo derivado en USD, no hubo pago en otra moneda que congelar.
       - ⚠️ **`refundable` solo se guarda como `false` con contraparte y sin
