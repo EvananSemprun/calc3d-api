@@ -344,6 +344,71 @@ nada.
 
 ---
 
+### Resultado de la verificación (2026-11-13, fase b, tarea 10)
+
+**Método.** Todo contra una copia local (`calc3d_prod_copia`, restaurada de un `pg_dump` de
+producción; último movimiento cargado: 2026-11-10 22:52 UTC). **Nunca se tocó producción.**
+Las cuentas las hicieron los **servicios reales** (`CashService.summary`/`breakdown`,
+`LoansService.overview`, `PurchaseInvoicesService.list`) apuntados a la copia, no SQL
+reescrito. Como la copia es anterior a tres migraciones, se aplicó `migrate deploy` sobre
+un **clon** (la copia original quedó intacta) y los clones se borraron al terminar.
+Antes: `test:shared` 1068, `jest` de la API 1134 (46 suites) y `tsc --noEmit` limpio.
+
+| Fila | Esperado | Medido en la copia | Veredicto |
+|---|---|---|---|
+| Saldo del negocio | $49,00 | **$49,00** | igual |
+| Deuda con el propietario | $967,77 | **$967,77** | igual |
+| Deuda con el prestamista | $650,00 | **$650,00** | igual |
+| Caja «Filamento comprado» | −$1.663,91 | **−$1.663,91** | igual |
+| «Anticipos a proveedores» | −$140,00 | **−$145,00** | difiere **+$5,00** — dato nuevo |
+| «A proveedores» (deuda) | $0,00 | **$0,00** | igual |
+| «Comprometido» | $334,00 | **$329,00** | difiere **−$5,00** — dato nuevo |
+| Deuda total | $1.617,77 | **$1.617,77** | igual |
+
+**Las dos diferencias son UN solo dato nuevo, no una regresión.** La copia tiene un abono de
+**$5,00** a C-0001 (fecha 2026-11-10, creado 2026-11-10 13:40 UTC) que no existía cuando se
+midieron los ocho números. Un abono sube el anticipo y baja lo comprometido de esa factura
+por el mismo monto: C-0001 pasa de pagado $140 / comprometido $120 a **$145 / $115**.
+El saldo se mantiene en $49 porque ese mismo día hay una **venta de $5,00** (creada
+2026-11-10 22:52 UTC) que compensa la salida.
+
+**Prueba de que es dato y no código.** En un clon se borraron exactamente ese abono y esa
+venta (nada más) y se volvió a medir con los mismos servicios: saldo **$49,00**, anticipos
+**$140,00**, comprometido **$334,00**, «A proveedores» **$0,00**, «Filamento comprado»
+**−$1.663,91**, deuda total **$1.617,77**, propietario **$967,77**, prestamista **$650,00**.
+Las ocho filas quedan **exactas**. Limitación honesta: que el abono y la venta sean
+posteriores a la verificación original se deduce de sus `createdAt`; no hay registro de la
+hora exacta en que se midieron los ocho números.
+
+**Efectivo por fecha y monto (no por cuenta, §12.3).** Los 9 abonos vigentes aparecen en
+Caja con su fecha y monto exactos y con su factura de origen, ninguno como «Sin detalle»:
+C-0001 → Anticipos ($60 del 15/10, $25 y $20 del 23/10, $35 del 02/11, $5 del 10/11);
+C-0002 → Filamento ($15 del 09/10, $10 del 15/10); C-0003 → Filamento ($25 del 23/10);
+C-0005 → Filamento ($25 del 02/11). Los dos del 23/10 por $25 y $20 coinciden en fecha y
+monto con otros asientos; se distinguió por la etiqueta de factura.
+
+**Lo que esta copia NO puede medir** (y no se afirma): la copia es del 10/11 y la
+recepción de C-0001 ($260, 11 líneas, con la placa de $40 como insumo) se registró el
+12/11, después. Esa recepción creó gastos por $240 que la copia no tiene (los ingresos
+coinciden al centavo, los gastos difieren exactamente en $240,00). Por eso **la fila «Placa
+Effect Plate → insumo, al recibirse» y «Insumos comprados por factura» no se ejercieron
+contra datos reales**: quedan cubiertas solo por los tests (`consumables` = $0,00 en la
+copia, como corresponde sin recepción). Tampoco se compara el «de» (−$1.803,91 / $334 /
+$1.951,77): requeriría correr el código anterior, que ya no está.
+
+### Definición oficial del invariante de cierre
+
+```
+Gastos recibidos + Anticipos − Deuda − Crédito tomado = lo que salió de Caja por compras
+```
+
+⚠️ **El último término es necesario.** Sin `− Crédito tomado` la fórmula es falsa en cuanto
+se usa un saldo a favor: un abono tomado del saldo cuenta como pagado en la factura de
+destino pero **no mueve la caja** (esa plata ya salió al pagar de más). Medido: sin el
+término da 140 donde de Caja salieron 134.
+
+---
+
 ## 6b. ⚠️ Lo que este cambio REDEFINE (y ya tiene tests)
 
 Esto no agrega un cálculo: **cambia la definición de uno que existe, está testeado y lo leen
