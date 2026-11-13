@@ -2730,6 +2730,23 @@ insertó `if (false) continue;` *antes* del `continue` de verdad: no mutaba nada
 y el resultado («nadie la caza») era mentira. Si una mutación da 0, revisá
 primero que de verdad cambie el comportamiento.
 
+⚠️ **MUTAR `packages/shared/src` Y CORRER UN TEST DE `apps/api` NO PRUEBA NADA
+SIN RECOMPILAR** (2026-11-12). La API no consume la fuente de `shared`: consume
+su **build** (`dist/cjs`). Así que la mutación se escribe, el test corre, pasa
+**verde**, y la conclusión que uno saca —«el test no tiene dientes»— es falsa:
+la mutación nunca llegó al código que se ejecutó. Medido ese día sobre
+`abono.audit.spec.ts`: sin recompilar daba 3/3 en verde con la guarda apagada;
+recompilando (`npx tsc -p tsconfig.json` en `packages/shared`) **tumba 1**.
+- Es el **espejo del verde falso**: ahí la mutación no compila y parece que el
+  test aguanta; acá compila, no se aplica, y parece que el test no sirve. Los
+  dos terminan en una afirmación inventada sobre la calidad de un test.
+- La regla práctica: **mutá en la capa donde corre el test**. Un test de
+  `shared` se muta en `shared/src` y se corre con el jest de `shared` (lee la
+  fuente, no hace falta build). Un test de `apps/api` que ejercita un contrato
+  de `shared` exige **recompilar entre mutar y correr, y otra vez al restaurar**.
+- Verificá que la mutación llegó: `grep` el texto mutado **en `dist/cjs`**, no
+  en el `.ts`. Si no está ahí, lo que medís es el build viejo.
+
 ### Medir, no suponer — y creerle a la foto
 
 Tres veces en dos días la medición por código dijo lo contrario de la realidad:
