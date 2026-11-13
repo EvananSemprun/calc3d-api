@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { slugify, type StoreCollectionUpsertDto } from '@calc3d/shared';
+import {
+  businessDateKey,
+  coleccionVigente,
+  resolverColeccion,
+  slugify,
+  type StoreCollectionUpsertDto,
+} from '@calc3d/shared';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -25,6 +31,20 @@ export interface ColeccionVista {
   endsAt: string | null;
   items: ColeccionItemVista[];
   exclusiones: string[];
+}
+
+/** Un producto de la vista previa: lo justo para que el dueño lo reconozca. */
+export interface ColeccionPreviewProducto {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface ColeccionPreview {
+  /** ¿La portada la mostraría HOY? (principal, visible y dentro de su ventana). Informativo:
+   *  la lista de `productos` se devuelve igual, para poder verla antes de activarla. */
+  vigente: boolean;
+  productos: ColeccionPreviewProducto[];
 }
 
 type ColeccionRow = {
@@ -314,6 +334,39 @@ export class StoreColeccionesService {
       await tx.storeCollection.update({ where: { id }, data: { esPrincipal: true } });
     });
     return this.list(organizationId);
+  }
+
+  /**
+   * La lista que la tienda publicaría con esta colección, para verla ANTES de activarla.
+   *
+   * ⚠️ La resuelve el SERVIDOR con `resolverColeccion` de shared, la MISMA función que usa
+   * el endpoint público: el panel no arma la lista. Una previa calculada aparte sería una
+   * segunda definición y mentiría el día que una de las dos cambie (el dueño aprobaría una
+   * portada y saldría otra). El catálogo se pide con el mismo criterio que el público
+   * (solo VISIBLE, mismo orden), y por organización.
+   *
+   * No filtra por ventana ni por `visible` de la colección: previsualizar una que todavía no
+   * arranca es justo para lo que sirve. `vigente` avisa si hoy se publicaría.
+   */
+  async preview(organizationId: string, id: string): Promise<ColeccionPreview> {
+    const fila = await this.findOwn(organizationId, id);
+    const [vista] = await this.armar([fila]);
+    const [categorias, productos] = await Promise.all([
+      this.prisma.storeCategory.findMany({
+        where: { organizationId },
+        select: { id: true, parentId: true },
+      }),
+      this.prisma.storeProduct.findMany({
+        where: { organizationId, visible: true },
+        orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+        select: { id: true, slug: true, name: true, categoryId: true },
+      }),
+    ]);
+    const entran = resolverColeccion(vista.items, vista.exclusiones, productos, categorias);
+    return {
+      vigente: coleccionVigente([vista], businessDateKey(new Date())) !== null,
+      productos: entran.map((p) => ({ id: p.id, slug: p.slug, name: p.name })),
+    };
   }
 
   async remove(organizationId: string, id: string) {

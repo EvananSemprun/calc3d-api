@@ -246,6 +246,12 @@ export class StoreController {
     return this.colecciones.update(user.organizationId, id, dto);
   }
 
+  /** La lista que se publicaría, resuelta por el servidor (ver `preview`). */
+  @Get('colecciones/:id/preview')
+  previewColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.colecciones.preview(user.organizationId, id);
+  }
+
   /** Marca la principal (desmarca la anterior en una transacción). */
   @Post('colecciones/:id/principal')
   setPrincipalColeccion(@CurrentUser() user: AuthUser, @Param('id') id: string) {

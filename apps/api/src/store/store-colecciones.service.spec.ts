@@ -484,3 +484,77 @@ describe('StoreColeccionesService — la principal', () => {
     expect(collections.find((c) => c.id === 'ajena')?.esPrincipal).toBe(true);
   });
 });
+
+/**
+ * La vista previa del panel. ⚠️ La lista la resuelve el SERVIDOR con la misma
+ * `resolverColeccion` que el endpoint público: el panel no la arma. Estos tests fijan que
+ * la previa sea la lista REAL (categoría, madre con hijas, exclusiones) y que no cruce
+ * organizaciones.
+ */
+describe('StoreColeccionesService — vista previa', () => {
+  const catalogo = () => ({
+    categories: [
+      { id: 'cat-1', organizationId: ORG, slug: 'navidad', parentId: null },
+      { id: 'cat-h', organizationId: ORG, slug: 'adornos', parentId: 'cat-1' },
+      { id: 'cat-x', organizationId: OTHER, slug: 'ajena', parentId: null },
+    ],
+    products: [
+      { id: 'p-1', organizationId: ORG, visible: true, categoryId: 'cat-1', name: 'Estrella', slug: 'estrella' },
+      { id: 'p-2', organizationId: ORG, visible: true, categoryId: 'cat-h', name: 'Bola', slug: 'bola' },
+      { id: 'p-3', organizationId: ORG, visible: true, categoryId: null, name: 'Llavero', slug: 'llavero' },
+      { id: 'p-oculto', organizationId: ORG, visible: false, categoryId: 'cat-1', name: 'Oculto', slug: 'oculto' },
+      { id: 'p-x', organizationId: OTHER, visible: true, categoryId: 'cat-x', name: 'Ajeno', slug: 'ajeno' },
+    ],
+  });
+
+  it('devuelve los productos que publicaría: la madre con sus hijas, el suelto, sin ocultos ni excluidos', async () => {
+    const { service } = makeDeps(catalogo());
+    const c = await service.create(
+      ORG,
+      dto({ items: [{ categoryId: 'cat-1', position: 0 }, { productId: 'p-3', position: 1 }], exclusiones: ['p-2'] }),
+    );
+    const r = await service.preview(ORG, c.id);
+    expect(r.productos.map((p) => p.id)).toEqual(['p-1', 'p-3']);
+    expect(r.productos[0]).toEqual({ id: 'p-1', slug: 'estrella', name: 'Estrella' });
+  });
+
+  it('una colección FUERA de su ventana y oculta igual se previsualiza (es para ver antes de activar)', async () => {
+    const { service } = makeDeps(catalogo());
+    const c = await service.create(
+      ORG,
+      dto({
+        items: [{ productId: 'p-1', position: 0 }],
+        visible: false,
+        startsAt: '2099-01-01',
+        endsAt: '2099-01-31',
+      }),
+    );
+    const r = await service.preview(ORG, c.id);
+    expect(r.productos.map((p) => p.id)).toEqual(['p-1']);
+    expect(r.vigente).toBe(false);
+  });
+
+  it('avisa que HOY se publicaría solo si es la principal, visible y en ventana', async () => {
+    const { service } = makeDeps(catalogo());
+    const c = await service.create(ORG, dto({ items: [{ productId: 'p-1', position: 0 }] }));
+    expect((await service.preview(ORG, c.id)).vigente).toBe(false);
+    await service.setPrincipal(ORG, c.id);
+    expect((await service.preview(ORG, c.id)).vigente).toBe(true);
+  });
+
+  it('no previsualiza la colección de OTRA organización (y la propia sí)', async () => {
+    const { service } = makeDeps(catalogo());
+    const c = await service.create(ORG, dto({ items: [{ productId: 'p-1', position: 0 }] }));
+    await expect(service.preview(OTHER, c.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.preview(ORG, c.id)).resolves.toBeDefined();
+  });
+
+  it('el catálogo es el de SU organización: un item con producto ajeno no cuela nada', async () => {
+    const { service, items } = makeDeps(catalogo());
+    const c = await service.create(ORG, dto({ items: [{ productId: 'p-1', position: 0 }] }));
+    // Dato roto sembrado a mano (el servicio de escritura lo rechazaría): el borde lo resuelve.
+    items.push({ id: 'it-roto', collectionId: c.id, categoryId: null, productId: 'p-x', position: 1 });
+    const r = await service.preview(ORG, c.id);
+    expect(r.productos.map((p) => p.id)).toEqual(['p-1']);
+  });
+});
