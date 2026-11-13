@@ -33,6 +33,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { CashModule } from '../cash/cash.module';
 import { CashService } from '../cash/cash.service';
@@ -341,6 +342,7 @@ export class LoansService {
       );
     }
 
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
     const counterpartyId = await this.pagador(organizationId, dto);
     await this.prisma.loanPayment.create({
       data: {
@@ -370,6 +372,8 @@ export class LoansService {
     if (!pago) throw new NotFoundException('No existe ese pago');
     // Anular dos veces no puede mover el saldo dos veces.
     if (pago.voidedAt) throw new ConflictException('Ese pago ya está anulado');
+    // Anular DEVUELVE la plata a la caja en la fecha del pago: también la mueve.
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [pago.date], dto.confirmoConciliacion);
 
     await this.prisma.loanPayment.update({
       where: { id: paymentId },

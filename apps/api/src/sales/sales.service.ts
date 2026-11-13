@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { type SaleCreateDto, type SaleUpdateDto } from '@calc3d/shared';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Rango de fechas opcional [from, to] en ISO; el día `to` se incluye completo.
@@ -32,6 +33,7 @@ export class SalesService {
   }
 
   async create(organizationId: string, dto: SaleCreateDto) {
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
     return this.prisma.sale.create({
       data: {
         organizationId,
@@ -50,7 +52,14 @@ export class SalesService {
 
 
   async update(organizationId: string, id: string, dto: SaleUpdateDto) {
-    await this.ensureOwned(organizationId, id);
+    const antes = await this.ensureOwned(organizationId, id);
+    // La fecha VIEJA y la nueva: editar saca el monto de un día y lo pone en otro.
+    await exigirConfirmacionDeConciliacion(
+      this.prisma,
+      organizationId,
+      [antes.date, ...(dto.date ? [dto.date] : [])],
+      dto.confirmoConciliacion,
+    );
     return this.prisma.sale.update({
       where: { id },
       data: {
@@ -65,8 +74,9 @@ export class SalesService {
     });
   }
 
-  async remove(organizationId: string, id: string) {
-    await this.ensureOwned(organizationId, id);
+  async remove(organizationId: string, id: string, confirmoConciliacion?: boolean) {
+    const venta = await this.ensureOwned(organizationId, id);
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [venta.date], confirmoConciliacion);
     await this.prisma.sale.delete({ where: { id } });
     return { ok: true };
   }
@@ -74,5 +84,6 @@ export class SalesService {
   private async ensureOwned(organizationId: string, id: string) {
     const found = await this.prisma.sale.findFirst({ where: { id, organizationId } });
     if (!found) throw new NotFoundException('Venta no encontrada');
+    return found;
   }
 }

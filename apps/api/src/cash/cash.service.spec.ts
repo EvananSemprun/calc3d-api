@@ -102,6 +102,7 @@ function makePrisma() {
         },
       ]),
       create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     debtApplication: {
@@ -225,9 +226,12 @@ describe('CashService — borrar algo ajeno (IDOR)', () => {
     const p = makePrisma();
 
     await expect(service(p).removeMovement(ORG, 'mv-ajeno')).rejects.toThrow(NotFoundException);
-    expect(p.ownerMovement.deleteMany).toHaveBeenCalledWith({
-      where: { id: 'mv-ajeno', organizationId: ORG },
-    });
+    // Se busca SIEMPRE con la organización: un id ajeno no se encuentra, no se
+    // consulta su fecha y no se borra nada.
+    expect(p.ownerMovement.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'mv-ajeno', organizationId: ORG } }),
+    );
+    expect(p.ownerMovement.deleteMany).not.toHaveBeenCalled();
   });
 });
 

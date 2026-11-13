@@ -3,6 +3,7 @@ import { OrdersService } from './orders.module';
 
 function makePrisma() {
   return {
+    cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) },
     order: {
       findMany: jest.fn(),
       findFirst: jest.fn(),

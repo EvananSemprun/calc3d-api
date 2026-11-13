@@ -18,6 +18,7 @@ import type { Response } from 'express';
 import {
   OrderCreateSchema,
   OrderUpdateSchema,
+  ConfirmoConciliacionQuerySchema,
   PaymentCreateSchema,
   RangoQuerySchema,
   orderBalance,
@@ -28,6 +29,7 @@ import {
   type OrderCreateDto,
   type OrderLine,
   type OrderUpdateDto,
+  type ConfirmoConciliacionQueryDto,
   type PaymentCreateDto,
   type RangoQueryDto,
 } from '@calc3d/shared';
@@ -37,6 +39,7 @@ import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { DocumentsModule } from '../documents/documents.module';
 import { DeliveryNoteService } from '../documents/delivery-note.service';
@@ -183,6 +186,8 @@ export class OrdersService {
       select: { currencyLabel: true },
     });
     if (!order) throw new NotFoundException('Pedido no encontrado');
+    // Un abono es plata que entra a la caja en `dto.date`.
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
 
     if (dto.amountForeign != null && dto.rate != null && dto.currencyLabel != null) {
       // La moneda tiene que existir en las tasas del negocio: de ahí sale el
@@ -264,11 +269,17 @@ export class OrdersService {
     return this.get(organizationId, id);
   }
 
-  async removePayment(organizationId: string, orderId: string, paymentId: string) {
+  async removePayment(
+    organizationId: string,
+    orderId: string,
+    paymentId: string,
+    confirmoConciliacion?: boolean,
+  ) {
     const payment = await this.prisma.payment.findFirst({
       where: { id: paymentId, orderId, organizationId },
     });
     if (!payment) throw new NotFoundException('Abono no encontrado');
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [payment.date], confirmoConciliacion);
     await this.prisma.payment.delete({ where: { id: paymentId } });
     return this.get(organizationId, orderId);
   }
@@ -351,8 +362,9 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('paymentId') paymentId: string,
+    @Query(new ZodValidationPipe(ConfirmoConciliacionQuerySchema)) q: ConfirmoConciliacionQueryDto,
   ) {
-    return this.service.removePayment(user.organizationId, id, paymentId);
+    return this.service.removePayment(user.organizationId, id, paymentId, q.confirmoConciliacion);
   }
 
   // Cerrar el pedido en bolívares (congela la tasa final). Lo dispara el front al

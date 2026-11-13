@@ -1,3 +1,4 @@
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   purchaseCostPerRoll,
@@ -150,6 +151,7 @@ export class ExpensesService {
   }
 
   async create(organizationId: string, dto: ExpenseCreateDto) {
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
     const quien = await this.quienPago(organizationId, dto);
     const proveedor = await this.resolverProveedor(organizationId, dto);
     const gasto = await this.prisma.expense.create({
@@ -224,6 +226,7 @@ export class ExpensesService {
 
   async createWithDefinition(organizationId: string, dto: ExpenseWithDefinitionDto) {
     const { expense, link } = dto;
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [expense.date], dto.confirmoConciliacion);
     // Filamento: el precio del rollo sale SOLO de la compra (monto ÷ rollos). Sin
     // rollos no hay precio que calcular, y aceptarla dejaba entrar uno a mano.
     const rollos = expense.quantity ?? 0;
@@ -302,6 +305,14 @@ export class ExpensesService {
   async update(organizationId: string, id: string, dto: ExpenseUpdateDto) {
     const antes = await this.ensureOwned(organizationId, id);
     this.noSeTocaDesdeGastos(antes);
+    // La fecha VIEJA y la nueva: mover un gasto fuera de una conciliación la
+    // deja mintiendo igual que meterlo.
+    await exigirConfirmacionDeConciliacion(
+      this.prisma,
+      organizationId,
+      [antes.date, ...(dto.date ? [dto.date] : [])],
+      dto.confirmoConciliacion,
+    );
     const quien = await this.quienPago(organizationId, dto);
     const proveedor = await this.resolverProveedor(organizationId, dto);
     const gasto = await this.prisma.expense.update({
@@ -340,9 +351,10 @@ export class ExpensesService {
     return gasto;
   }
 
-  async remove(organizationId: string, id: string) {
+  async remove(organizationId: string, id: string, confirmoConciliacion?: boolean) {
     const gasto = await this.ensureOwned(organizationId, id);
     this.noSeTocaDesdeGastos(gasto);
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [gasto.date], confirmoConciliacion);
     await this.prisma.expense.delete({ where: { id } });
     // Borrar la última compra deja el precio congelado en una que ya no existe.
     await this.recalcularPrecioDelRollo(organizationId, gasto.materialId);

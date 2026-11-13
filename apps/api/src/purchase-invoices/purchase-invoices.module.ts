@@ -37,6 +37,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/auth-user';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { ExpensesService } from '../expenses/expenses.service';
@@ -483,6 +484,14 @@ export class PurchaseInvoicesService {
       );
     }
     this.exigirConfirmacion(f.createdAt, dto, 'Esta factura');
+    // Anular la factura saca de la caja sus abonos vigentes (cada uno en su
+    // fecha). Los tomados de un saldo a favor no mueven la caja: no cuentan.
+    await exigirConfirmacionDeConciliacion(
+      this.prisma,
+      organizationId,
+      f.payments.filter((p) => !p.voidedAt && !p.tomadoDeFacturaId).map((p) => p.date),
+      dto.confirmoConciliacion,
+    );
     await this.prisma.purchaseInvoice.update({
       where: { id },
       data: { voidedAt: new Date(), voidReason: dto.reason },
@@ -510,6 +519,11 @@ export class PurchaseInvoicesService {
   async addPayment(organizationId: string, id: string, dto: PurchaseInvoicePaymentDto) {
     const f = await this.mia(organizationId, id);
     if (f.voidedAt) throw new BadRequestException('La factura está anulada');
+    // El abono mueve la caja en `dto.date`. Un abono tomado de saldo a favor NO
+    // la mueve (esa plata ya salió al pagar de más): no hay nada que invalidar.
+    if (!dto.tomadoDeFacturaId) {
+      await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
+    }
 
     if (dto.counterpartyId) {
       const cp = await this.prisma.counterparty.findFirst({
@@ -930,6 +944,9 @@ export class PurchaseInvoicesService {
     if (!pago) throw new NotFoundException('No existe ese abono');
     if (pago.voidedAt) throw new BadRequestException('Ese abono ya estaba anulado');
     this.exigirConfirmacion(pago.createdAt, dto, 'Este abono');
+    if (!pago.tomadoDeFacturaId) {
+      await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [pago.date], dto.confirmoConciliacion);
+    }
 
     await this.prisma.purchaseInvoicePayment.update({
       where: { id: paymentId },

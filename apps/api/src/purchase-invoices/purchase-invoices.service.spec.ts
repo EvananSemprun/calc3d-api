@@ -108,6 +108,7 @@ function makePrisma(
     findFirst: jest.fn(({ where }: any) => Promise.resolve(filas.find((f) => coincide(f, where)) ?? null)),
   });
   return {
+    cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) },
     client: tabla(FILAS.client),
     printer: {
       ...tabla(FILAS.printer),
@@ -438,6 +439,7 @@ describe('PurchaseInvoicesService — lo ya recibido no se toca', () => {
         organizationId: ORG,
         voidedAt: null,
         createdAt: haceDias(40),
+        date: new Date('2026-09-01'),
       } as never);
       await expect(
         servicio(p).voidPayment(ORG, 'f1', 'ab1', { reason: 'x' }),

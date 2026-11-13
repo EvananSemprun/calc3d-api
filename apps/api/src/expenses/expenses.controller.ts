@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  ConfirmoConciliacionQuerySchema,
   ExpenseCreateSchema,
   RangoQuerySchema,
   ExpenseUpdateSchema,
   ExpenseWithDefinitionSchema,
+  type ConfirmoConciliacionQueryDto,
   type ExpenseCreateDto,
   type ExpenseUpdateDto,
   type ExpenseWithDefinitionDto,
@@ -58,7 +60,11 @@ export class ExpensesController {
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.service.remove(user.organizationId, id);
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(ConfirmoConciliacionQuerySchema)) q: ConfirmoConciliacionQueryDto,
+  ) {
+    return this.service.remove(user.organizationId, id, q.confirmoConciliacion);
   }
 }

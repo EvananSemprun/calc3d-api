@@ -19,6 +19,7 @@ export * from './calc/recarga';
 export * from './calc/filament-type-price';
 export * from './calc/store-pricing';
 export * from './calc/abono-en-moneda';
+export * from './calc/conciliacion-aviso';
 export * from './calc/breakeven';
 export * from './calc/loan';
 export * from './calc/cash';

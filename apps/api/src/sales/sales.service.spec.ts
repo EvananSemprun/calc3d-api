@@ -4,6 +4,7 @@ import { SalesService } from './sales.service';
 /** Prisma mockeado: cada método usado por el servicio es un jest.fn() plano. */
 function makePrisma() {
   return {
+    cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) },
     quote: { findFirst: jest.fn() },
     sale: {
       create: jest.fn(),
@@ -93,7 +94,7 @@ describe('SalesService', () => {
     });
 
     it('borra la venta si es del org', async () => {
-      prisma.sale.findFirst.mockResolvedValue({ id: 's-1', organizationId: ORG });
+      prisma.sale.findFirst.mockResolvedValue({ id: 's-1', organizationId: ORG, date: new Date('2026-09-01') });
       prisma.sale.delete.mockResolvedValue({ id: 's-1' });
 
       const res = await service.remove(ORG, 's-1');

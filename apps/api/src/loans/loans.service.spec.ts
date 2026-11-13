@@ -56,7 +56,7 @@ function baseFalsa({
     }),
   });
 
-  return { loan: delegado('loan'), loanPayment: delegado('loanPayment'), counterparty: delegado('counterparty'), _tablas: tablas };
+  return { cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) }, loan: delegado('loan'), loanPayment: delegado('loanPayment'), counterparty: delegado('counterparty'), _tablas: tablas };
 }
 
 const cashFalso = () => ({

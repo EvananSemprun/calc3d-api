@@ -14,6 +14,7 @@ import {
   type CashShortfallPlanQueryDto,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
+import { exigirConfirmacionDeConciliacion } from '../common/conciliacion-guard';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -261,6 +262,7 @@ export class CashService {
   }
 
   async addMovement(organizationId: string, dto: OwnerMovementCreateDto) {
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [dto.date], dto.confirmoConciliacion);
     // ⚠️ IDOR: una contraparte pedida por el cliente tiene que ser de ESTA
     // organización. Sin este chequeo, un id ajeno escribiría deuda en otra.
     const contraparte = dto.counterpartyId
@@ -286,7 +288,13 @@ export class CashService {
     return this.summary(organizationId);
   }
 
-  async removeMovement(organizationId: string, id: string) {
+  async removeMovement(organizationId: string, id: string, confirmoConciliacion?: boolean) {
+    const movimiento = await this.prisma.ownerMovement.findFirst({
+      where: { id, organizationId },
+      select: { date: true },
+    });
+    if (!movimiento) throw new NotFoundException('No existe ese movimiento');
+    await exigirConfirmacionDeConciliacion(this.prisma, organizationId, [movimiento.date], confirmoConciliacion);
     const { count } = await this.prisma.ownerMovement.deleteMany({ where: { id, organizationId } });
     if (!count) throw new NotFoundException('No existe ese movimiento');
     return this.summary(organizationId);

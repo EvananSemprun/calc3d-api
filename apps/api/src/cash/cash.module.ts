@@ -17,6 +17,7 @@ import {
   CashReconciliationConfirmSchema,
   CashReconciliationUpsertSchema,
   CashShortfallPlanQuerySchema,
+  ConfirmoConciliacionQuerySchema,
   CounterpartyUpsertSchema,
   OwnerMovementCreateSchema,
   type CashAccountUpsertDto,
@@ -25,6 +26,7 @@ import {
   type CashReconciliationConfirmDto,
   type CashReconciliationUpsertDto,
   type CashShortfallPlanQueryDto,
+  type ConfirmoConciliacionQueryDto,
   type CounterpartyUpsertDto,
   type OwnerMovementCreateDto,
 } from '@calc3d/shared';
@@ -100,8 +102,12 @@ export class CashController {
   }
 
   @Delete('movements/:id')
-  removeMovement(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.service.removeMovement(user.organizationId, id);
+  removeMovement(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(ConfirmoConciliacionQuerySchema)) q: ConfirmoConciliacionQueryDto,
+  ) {
+    return this.service.removeMovement(user.organizationId, id, q.confirmoConciliacion);
   }
 
   @Put('reconciliations')

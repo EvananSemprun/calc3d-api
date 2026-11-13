@@ -4,6 +4,7 @@ import { ExpensesService } from './expenses.service';
 /** Prisma mockeado: cada método usado por el servicio es un jest.fn() plano. */
 function makePrisma() {
   return {
+    cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) },
     expense: {
       create: jest.fn(),
       findFirst: jest.fn(),
@@ -233,7 +234,7 @@ describe('ExpensesService', () => {
     });
 
     it('aplica solo los campos presentes (spread condicional)', async () => {
-      prisma.expense.findFirst.mockResolvedValue({ id: 'e-3', organizationId: ORG });
+      prisma.expense.findFirst.mockResolvedValue({ id: 'e-3', organizationId: ORG, date: new Date('2026-09-01') });
       prisma.expense.update.mockResolvedValue({ id: 'e-3' });
 
       await service.update(ORG, 'e-3', { amount: 42 } as any);
@@ -255,7 +256,7 @@ describe('ExpensesService', () => {
     });
 
     it('borra el gasto si es del org', async () => {
-      prisma.expense.findFirst.mockResolvedValue({ id: 'e-4', organizationId: ORG });
+      prisma.expense.findFirst.mockResolvedValue({ id: 'e-4', organizationId: ORG, date: new Date('2026-09-01') });
       prisma.expense.delete.mockResolvedValue({ id: 'e-4' });
 
       const res = await service.remove(ORG, 'e-4');
@@ -276,7 +277,7 @@ function makeTx() {
   };
 }
 function makePrismaTx(tx: ReturnType<typeof makeTx>) {
-  return { $transaction: jest.fn(async (cb: (t: typeof tx) => unknown) => cb(tx)) };
+  return { cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) }, $transaction: jest.fn(async (cb: (t: typeof tx) => unknown) => cb(tx)) };
 }
 
 describe('ExpensesService.createWithDefinition', () => {
@@ -511,7 +512,7 @@ describe('ExpensesService — quién pagó', () => {
     conContrapartes(prisma);
     prisma.expense.create.mockResolvedValue({ id: 'e-1' });
     prisma.expense.update.mockResolvedValue({ id: 'e-1' });
-    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG, date: new Date('2026-09-01') });
     service = new ExpensesService(prisma as any);
   });
 
@@ -600,7 +601,7 @@ describe('ExpensesService — el proveedor', () => {
     conContrapartes(prisma);
     prisma.expense.create.mockResolvedValue({ id: 'e-1' });
     prisma.expense.update.mockResolvedValue({ id: 'e-1' });
-    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG, date: new Date('2026-09-01') });
     prisma.client.findFirst.mockImplementation(({ where }: any) =>
       Promise.resolve(CONTACTOS.find((c) => coincideContacto(c, where)) ?? null),
     );
@@ -675,7 +676,7 @@ describe('ExpensesService — corregir y borrar una compra', () => {
   const conCompras = (porMaterial: Record<string, { amount: number; quantity: number }>) =>
     prisma.expense.findFirst.mockImplementation(({ where, select }: any) => {
       // `ensureOwned` pregunta por id; `recalcularPrecioDelRollo`, por material.
-      if (!select) return Promise.resolve({ id: 'e-1', organizationId: ORG, materialId: 'm1' });
+      if (!select) return Promise.resolve({ id: 'e-1', organizationId: ORG, materialId: 'm1', date: new Date('2026-09-01') });
       return Promise.resolve(where?.materialId ? (porMaterial[where.materialId] ?? null) : null);
     });
 
@@ -782,8 +783,8 @@ describe('ExpensesService — el gasto nacido de una factura', () => {
    * rechazara todo pasaría igual.
    */
   const GASTOS = [
-    { id: 'e-factura', organizationId: ORG, materialId: 'm1', quantity: 1, amount: 25, purchaseInvoiceLineId: 'linea-1' },
-    { id: 'e-mano', organizationId: ORG, materialId: 'm1', quantity: 2, amount: 30, purchaseInvoiceLineId: null },
+    { id: 'e-factura', date: new Date('2026-09-01'), organizationId: ORG, materialId: 'm1', quantity: 1, amount: 25, purchaseInvoiceLineId: 'linea-1' },
+    { id: 'e-mano', date: new Date('2026-09-01'), organizationId: ORG, materialId: 'm1', quantity: 2, amount: 30, purchaseInvoiceLineId: null },
   ];
 
   beforeEach(() => {
@@ -1031,7 +1032,7 @@ describe('ExpensesService — recarga o con carrete', () => {
   });
 
   it('update lo corrige a `false` (me equivoqué, traía carrete)', async () => {
-    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG, date: new Date('2026-09-01') });
     prisma.expense.update.mockResolvedValue({ id: 'e-1' });
 
     await service.update(ORG, 'e-1', { isRefill: false } as any);
@@ -1040,7 +1041,7 @@ describe('ExpensesService — recarga o con carrete', () => {
   });
 
   it('update lo BORRA con `null` explícito: volver a "no se registró" es posible', async () => {
-    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG, date: new Date('2026-09-01') });
     prisma.expense.update.mockResolvedValue({ id: 'e-1' });
 
     await service.update(ORG, 'e-1', { isRefill: null } as any);
@@ -1049,7 +1050,7 @@ describe('ExpensesService — recarga o con carrete', () => {
   });
 
   it('update sin el campo NO lo toca: corregir el monto no borra la recarga', async () => {
-    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG });
+    prisma.expense.findFirst.mockResolvedValue({ id: 'e-1', organizationId: ORG, date: new Date('2026-09-01') });
     prisma.expense.update.mockResolvedValue({ id: 'e-1' });
 
     await service.update(ORG, 'e-1', { amount: 18 } as any);

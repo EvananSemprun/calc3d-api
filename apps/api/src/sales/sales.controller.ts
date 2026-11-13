@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  ConfirmoConciliacionQuerySchema,
   RangoQuerySchema,
   SaleCreateSchema,
   SaleUpdateSchema,
+  type ConfirmoConciliacionQueryDto,
   type RangoQueryDto,
   type SaleCreateDto,
   type SaleUpdateDto,
@@ -47,7 +49,11 @@ export class SalesController {
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.service.remove(user.organizationId, id);
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(ConfirmoConciliacionQuerySchema)) q: ConfirmoConciliacionQueryDto,
+  ) {
+    return this.service.remove(user.organizationId, id, q.confirmoConciliacion);
   }
 }

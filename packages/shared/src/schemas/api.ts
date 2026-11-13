@@ -116,6 +116,36 @@ export const RangoQuerySchema = z.object({
 });
 export type RangoQueryDto = z.infer<typeof RangoQuerySchema>;
 
+/**
+ * EL SEGUNDO SÍ cuando el movimiento cae dentro de una conciliación de caja
+ * (2026-11-12, fase B tarea 8).
+ *
+ * ⚠️ Es un candado BLANDO, como `confirmoFueraDePlazo`: con esto en `true` el
+ * movimiento se guarda igual. No impide nada —cargar un gasto olvidado de la
+ * semana pasada es lo normal— sino que no pase en silencio: sin él, el servidor
+ * devuelve 400 con un mensaje que dice qué conciliación queda desactualizada y
+ * cómo seguir. La regla de CUÁNDO pide confirmación vive en
+ * `conciliacionesQueSeInvalidan` (calc/conciliacion-aviso.ts), no en un
+ * servicio: el panel tiene que poder mostrar la advertencia sin adivinarla.
+ *
+ * Solo lo llevan los DTOs que mueven el saldo de caja (los que producen
+ * asientos en `cashEntries`). Una factura de compra NO: la caja la mueven sus
+ * abonos.
+ */
+export const CONFIRMO_CONCILIACION = z.boolean().optional();
+
+/**
+ * Lo mismo para los DELETE, que no llevan cuerpo: viaja en la URL
+ * (`?confirmoConciliacion=true`). Query string = texto, de ahí el `enum`.
+ */
+export const ConfirmoConciliacionQuerySchema = z.object({
+  confirmoConciliacion: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
+});
+export type ConfirmoConciliacionQueryDto = z.infer<typeof ConfirmoConciliacionQuerySchema>;
+
 export const LoginSchema = z.object({
   email: z.string().email('Correo inválido'),
   password: z.string().min(1, 'La contraseña es obligatoria'),
@@ -565,6 +595,7 @@ export type OrderUpdateDto = z.infer<typeof OrderUpdateSchema>;
  */
 const PaymentFields = z.object({
   date: FECHA,
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   /** USD. Solo cuando se cobró en dólares. */
   amount: z.number().positive('El abono debe ser mayor que 0').optional(),
   note: z.string().optional().nullable(),
@@ -634,6 +665,7 @@ const SaleKindNuevaSchema = SaleKindSchema.refine((k) => k === 'COUNTER', {
 
 export const SaleCreateSchema = z.object({
   date: FECHA,
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   amount: z.number().min(0, 'El monto no puede ser negativo'),
   kind: SaleKindNuevaSchema.default('COUNTER'),
   clientId: z.string().optional().nullable(),
@@ -662,6 +694,7 @@ export type ExpenseCategoryDto = z.infer<typeof ExpenseCategorySchema>;
 
 export const ExpenseCreateSchema = z.object({
   date: FECHA,
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   category: ExpenseCategorySchema.default('OTHER'),
   description: z.string().min(1, 'La descripción es obligatoria'),
   amount: z.number().min(0, 'El monto no puede ser negativo'),
@@ -718,6 +751,7 @@ export const ExpenseLinkKindSchema = z.enum(['material', 'printer', 'component']
 export type ExpenseLinkKind = z.infer<typeof ExpenseLinkKindSchema>;
 
 export const ExpenseWithDefinitionSchema = z.object({
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   expense: z.object({
     date: FECHA,
     amount: z.number().min(0, 'El monto no puede ser negativo'),
@@ -786,6 +820,7 @@ export type LoanUpdateDto = z.infer<typeof LoanUpdateSchema>;
 
 export const LoanPaymentCreateSchema = z.object({
   date: FECHA,
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   amount: z.number().positive('El pago tiene que ser mayor que cero'),
   /** Referencia bancaria o lo que sirva para reconciliar después. */
   reference: z.string().optional().nullable(),
@@ -808,6 +843,7 @@ export type LoanPaymentCreateDto = z.infer<typeof LoanPaymentCreateSchema>;
 /** Anular NO borra: el pago queda en el historial y el saldo se recalcula. */
 export const LoanPaymentVoidSchema = z.object({
   reason: z.string().trim().min(1, 'Di por qué se anula').max(200),
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
 });
 export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 
@@ -820,6 +856,7 @@ export type LoanPaymentVoidDto = z.infer<typeof LoanPaymentVoidSchema>;
 /** Plata PURA entre el bolsillo de la contraparte y la caja (no es un gasto). */
 export const OwnerMovementCreateSchema = z.object({
   date: FECHA,
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
   kind: z.enum(['CONTRIBUTION', 'WITHDRAWAL']),
   amount: z.number().positive('El monto tiene que ser mayor que cero'),
   concept: z.string().trim().min(1, 'Falta el concepto'),
@@ -1173,6 +1210,7 @@ export type PurchaseInvoiceUpsertDto = z.infer<typeof PurchaseInvoiceUpsertSchem
 export const PurchaseInvoicePaymentSchema = z
   .object({
     date: FECHA,
+    confirmoConciliacion: CONFIRMO_CONCILIACION,
     /**
      * En USD. ⚠️ **Opcional solo porque un abono en otra moneda NO lo trae**: el
      * servidor lo calcula con la tasa vigente y descarta el que llegue. Sin el
@@ -1260,6 +1298,8 @@ export const PurchaseVoidSchema = z.object({
    * y dice cuántos días pasaron.
    */
   confirmoFueraDePlazo: z.boolean().optional(),
+  /** Anular un abono (o una factura con abonos) saca plata de la caja: ver `CONFIRMO_CONCILIACION`. */
+  confirmoConciliacion: CONFIRMO_CONCILIACION,
 });
 export type PurchaseVoidDto = z.infer<typeof PurchaseVoidSchema>;
 

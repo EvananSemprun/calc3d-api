@@ -208,7 +208,10 @@ describe('Aislamiento multi-tenant — Caja', () => {
   });
 
   it('CashService.addMovement NO acepta una contraparte de otra organización', async () => {
-    const prisma = { counterparty: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const prisma = {
+      cashReconciliation: { findMany: jest.fn().mockResolvedValue([]) },
+      counterparty: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
     const service = new CashService(prisma as never);
 
     await expect(
