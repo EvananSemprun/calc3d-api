@@ -18,12 +18,23 @@ export interface ProductoDeCatalogo {
   categoryId: string | null;
 }
 
+/** Lo mínimo de una categoría para saber de quién es hija. */
+export interface CategoriaDeColeccion {
+  id: string;
+  parentId?: string | null;
+}
+
 /**
  * Devuelve los productos de la colección, en orden y sin repetir.
  *
  * - Los items se recorren por `position` (no por alfabeto ni por id).
  * - Una categoría trae sus productos en el orden en que vienen en `catalogo`, que es el
- *   orden de la categoría en la tienda.
+ *   orden de la categoría en la tienda. Una MADRE trae también los de sus hijas: es lo que
+ *   ya hace `?category=` en el catálogo público, y si la colección lo hiciera distinto el
+ *   dueño elegiría «Navidad» (madre) y se llevaría una colección vacía sin ningún error.
+ *   Por eso recibe `categorias` (lista plana con `parentId`, la forma más simple: es lo que
+ *   ya devuelve la API y no obliga a armar el árbol). Es parámetro OBLIGATORIO: con un
+ *   default vacío, olvidarlo reintroduciría la colección vacía en silencio.
  * - Un producto que entra por categoría Y suelto sale UNA vez (el primero que lo trae).
  * - `catalogo` trae solo lo VISIBLE: un producto oculto o borrado no está ahí, así que un
  *   item que lo nombra se saltea. El dato roto se resuelve en el borde, no rompe la portada.
@@ -33,6 +44,7 @@ export function resolverColeccion<P extends ProductoDeCatalogo>(
   items: readonly ItemDeColeccion[],
   exclusiones: readonly string[],
   catalogo: readonly P[],
+  categorias: readonly CategoriaDeColeccion[],
 ): P[] {
   const excluidos = new Set(exclusiones);
   const porId = new Map(catalogo.map((p) => [p.id, p]));
@@ -49,7 +61,11 @@ export function resolverColeccion<P extends ProductoDeCatalogo>(
 
   for (const item of ordenados) {
     if (item.categoryId) {
-      for (const p of catalogo) if (p.categoryId === item.categoryId) agregar(p);
+      // La categoría elegida y sus hijas directas (hay dos niveles, no más). Se recorre el
+      // catálogo una vez para conservar su orden, el mismo de `?category=`.
+      const entran = new Set([item.categoryId]);
+      for (const c of categorias) if (c.parentId === item.categoryId) entran.add(c.id);
+      for (const p of catalogo) if (p.categoryId && entran.has(p.categoryId)) agregar(p);
     } else if (item.productId) {
       agregar(porId.get(item.productId));
     }
@@ -83,17 +99,17 @@ export function coleccionEnVentana(
  * ⚠️ `now` es un PARÁMETRO (el día LOCAL, AAAA-MM-DD), nunca el reloj: el servidor corre
  * en UTC y desde las 20:00 de Caracas una colección se activaría o moriría un día antes.
  *
- * Vigente = visible y dentro de su ventana. Entre las vigentes gana la principal; si la
- * principal no está vigente, la de arranque más reciente (sin fecha cuenta como la más
- * antigua) y, a igualdad, la primera de la lista.
+ * Vigente = visible y dentro de su ventana. SOLO la principal puede ser la colección de la
+ * portada: si no está vigente (o no hay principal) devuelve null y quien llama cae a
+ * «Destacados». No se elige una sustituta a propósito: una colección SIN fechas vale
+ * siempre, así que la primera guardada y nunca promovida se adueñaría de la portada, en
+ * silencio y para siempre, el día que venza la principal.
  */
 export function coleccionVigente<C extends ColeccionConVentana>(
   colecciones: readonly C[],
   now: DiaNegocio,
 ): C | null {
-  const vigentes = colecciones.filter((c) => c.visible && coleccionEnVentana(c, now));
-  if (vigentes.length === 0) return null;
-  const principal = vigentes.find((c) => c.esPrincipal);
-  if (principal) return principal;
-  return vigentes.reduce((mejor, c) => ((c.startsAt ?? '') > (mejor.startsAt ?? '') ? c : mejor));
+  const principal = colecciones.find((c) => c.esPrincipal);
+  if (!principal || !principal.visible || !coleccionEnVentana(principal, now)) return null;
+  return principal;
 }
