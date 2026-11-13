@@ -43,6 +43,18 @@ export class StorePublicController {
     return this.service.coleccion();
   }
 
+  @Get('colecciones')
+  @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
+  colecciones() {
+    return this.service.colecciones();
+  }
+
+  @Get('coleccion/:slug')
+  @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
+  coleccionPorSlug(@Param('slug') slug: string) {
+    return this.service.coleccionPorSlug(slug);
+  }
+
   @Get('sale')
   @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
   sale() {

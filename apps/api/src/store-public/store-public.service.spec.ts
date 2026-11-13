@@ -1,5 +1,6 @@
 import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { StorePublicService } from './store-public.service';
+import { resolverColeccion } from '@calc3d/shared';
 
 /**
  * Regresión de seguridad del catálogo público — la ÚNICA superficie del sistema
@@ -952,5 +953,103 @@ describe('Colección de la portada', () => {
     expect(collectionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG }) }),
     );
+  });
+});
+
+describe('Página de una colección (/coleccion/<slug>/)', () => {
+  const fila = (extra: Record<string, unknown> = {}) => ({
+    id: 'col-interna-2',
+    organizationId: ORG,
+    slug: 'regalos',
+    nombre: 'Regalos (interno)',
+    titulo: 'Para regalar',
+    subtitulo: null as string | null,
+    verTodoTipo: 'NONE',
+    verTodoValor: null as string | null,
+    esPrincipal: false,
+    visible: true,
+    startsAt: null as Date | null,
+    endsAt: null as Date | null,
+    items: [{ id: 'i1', collectionId: 'col-interna-2', categoryId: 'cat1', productId: null, position: 0 }],
+    exclusions: [] as { id: string; collectionId: string; productId: string }[],
+    ...extra,
+  });
+  const CATS = [{ id: 'cat1', slug: 'llaveros', parentId: null }];
+  const OTRO = { ...PRODUCTO, id: 'sp2', slug: 'llavero-b', categoryId: 'cat1' };
+  const AJENO = { ...PRODUCTO, id: 'sp3', slug: 'sin-categoria', categoryId: null };
+  const CATALOGO = [PRODUCTO, OTRO, AJENO];
+
+  const con = (f: ReturnType<typeof fila> | null, extra = {}) =>
+    makeService({
+      findMany: jest.fn().mockResolvedValue(CATALOGO),
+      categoryFindMany: jest.fn().mockResolvedValue(CATS),
+      collectionFindFirst: jest.fn().mockResolvedValue(f),
+      collectionFindMany: jest.fn().mockResolvedValue(f ? [f] : []),
+      ...extra,
+    });
+
+  it('lista EXACTAMENTE los mismos productos que resolverColeccion, en su orden', async () => {
+    // Es la UNICA definición: si la página resolviera por su cuenta, el dueño aprobaría una
+    // lista en la vista previa y la página mostraría otra.
+    const f = fila({ exclusions: [{ id: 'e1', collectionId: 'col-interna-2', productId: 'sp1' }] });
+    const esperado = resolverColeccion(f.items, ['sp1'], CATALOGO, CATS).map((p) => p.slug);
+    expect(esperado).toEqual(['llavero-b']); // sanidad: la exclusión sí saca uno
+    const { service } = con(f);
+    const c = await service.coleccionPorSlug('regalos');
+    expect(c.productos.map((p) => p.slug)).toEqual(esperado);
+    expect(c.titulo).toBe('Para regalar');
+    expect(c.slug).toBe('regalos');
+  });
+
+  it('un slug inexistente da 404, no rompe', async () => {
+    const { service, collectionFindFirst } = con(null);
+    await expect(service.coleccionPorSlug('fantasma')).rejects.toBeInstanceOf(NotFoundException);
+    // Y la consulta es de la organización del entorno y solo de las visibles.
+    expect(collectionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: ORG, slug: 'fantasma', visible: true } }),
+    );
+  });
+
+  it('una colección FUERA DE SU VENTANA da 404: no hay portada fantasma', async () => {
+    const vencida = con(fila({ endsAt: new Date('2020-01-01T00:00:00Z') }));
+    await expect(vencida.service.coleccionPorSlug('regalos')).rejects.toBeInstanceOf(NotFoundException);
+    const futura = con(fila({ startsAt: new Date('2999-01-01T00:00:00Z') }));
+    await expect(futura.service.coleccionPorSlug('regalos')).rejects.toBeInstanceOf(NotFoundException);
+    // Su hermano alcanzable: sin ventana SÍ se sirve, aunque no sea la principal.
+    await expect(con(fila()).service.coleccionPorSlug('regalos')).resolves.toBeDefined();
+  });
+
+  it('no publica ids internos ni la fila cruda', async () => {
+    const c = await con(fila()).service.coleccionPorSlug('regalos');
+    const claves = [...clavesDe(c)];
+    for (const campo of [...PROHIBIDOS, 'nombre', 'esPrincipal', 'items', 'exclusions', 'verTodoTipo'])
+      expect(claves).not.toContain(campo);
+    expect(JSON.stringify(c)).not.toContain('col-interna-2');
+  });
+
+  it('colecciones() lista las visibles en ventana, con los mismos productos', async () => {
+    const f = fila();
+    const { service, collectionFindMany } = con(f);
+    const { colecciones } = await service.colecciones();
+    expect(colecciones.map((c) => c.slug)).toEqual(['regalos']);
+    expect(colecciones[0].productos.map((p) => p.slug)).toEqual(
+      resolverColeccion(f.items, [], CATALOGO, CATS).map((p) => p.slug),
+    );
+    expect(collectionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: ORG, visible: true } }),
+    );
+    // Una vencida no tiene página, así que no se lista.
+    const vencida = con(fila({ endsAt: new Date('2020-01-01T00:00:00Z') }));
+    expect((await vencida.service.colecciones()).colecciones).toEqual([]);
+  });
+
+  it('un «Ver todo» a una colección FUERA DE VENTANA degrada a NONE', async () => {
+    const colgada = { slug: 'otra', startsAt: null, endsAt: new Date('2020-01-01T00:00:00Z') };
+    const { service } = con(fila({ verTodoTipo: 'COLECCION', verTodoValor: 'otra' }), {
+      collectionFindFirst: jest.fn().mockResolvedValue(colgada),
+    });
+    // findFirst devuelve `colgada` también para la propia colección: se prueba con la lista.
+    const { colecciones } = await service.colecciones();
+    expect(colecciones[0].verTodo).toEqual({ tipo: 'NONE', valor: null });
   });
 });

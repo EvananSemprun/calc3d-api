@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { ObjectStorageService } from '../storage/object-storage.service';
-import { businessDateKey, coleccionVigente, esNuevo, resolverColeccion } from '@calc3d/shared';
+import { businessDateKey, coleccionEnVentana, coleccionVigente, esNuevo, resolverColeccion } from '@calc3d/shared';
 import { activeSale, type SaleWindow } from './active-sale';
 
 /**
@@ -151,8 +151,10 @@ interface PublicVerTodo {
   valor: string | null;
 }
 
-/** La colección que la portada muestra hoy. */
+/** Una colección de la tienda, ya resuelta. */
 interface PublicColeccion {
+  /** Su enlace público (`/coleccion/<slug>/`). Un id interno no sale nunca. */
+  slug: string;
   titulo: string;
   subtitulo: string | null;
   verTodo: PublicVerTodo;
@@ -370,6 +372,11 @@ export class StorePublicService {
    * no se resuelve nada por cuenta propia, o el dueño aprobaría una portada y saldría otra.
    *
    * ⚠️ El «hoy» es el día de NEGOCIO (Caracas), no el del servidor, que corre en UTC.
+   *
+   * ⚠️ SIN tope de productos, a propósito: una colección se cura a mano, así que es chica por
+   * construcción. Un tope acá sería una SEGUNDA constante que puede separarse de la de la
+   * tienda (`TOPE_DESTACADOS`), y esa divergencia es peor que el payload. Si alguna vez una
+   * colección crece, el arreglo es un tope con UNA sola constante compartida.
    */
   async coleccion(): Promise<{ coleccion: PublicColeccion | null }> {
     const organizationId = this.organizationId;
@@ -378,45 +385,99 @@ export class StorePublicService {
       where: { organizationId, esPrincipal: true },
       include: { items: true, exclusions: true },
     });
-    const dia = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
-    const vigente = coleccionVigente(
-      filas.map((f) => ({ ...f, startsAt: dia(f.startsAt), endsAt: dia(f.endsAt) })),
-      businessDateKey(new Date()),
-    );
+    const vigente = coleccionVigente(filas.map(conVentana), businessDateKey(new Date()));
     if (!vigente) return { coleccion: null };
+    return { coleccion: await this.armarColeccion(organizationId, vigente, await this.catalogoDeColecciones(organizationId)) };
+  }
 
+  /**
+   * Una colección por su enlace (`/coleccion/<slug>/`): título, subtítulo y los productos
+   * resueltos. 404 si no existe, está oculta o está FUERA DE SU VENTANA.
+   *
+   * ⚠️ 404 y no «mostrarla igual»: una colección vencida o apagada que siguiera abierta por
+   * URL sería una portada fantasma (una promo de Navidad en febrero) y contradiría al
+   * «Ver todo», que ya degrada a NONE cuando su destino no vale. Es lo mismo que hace
+   * `bySlug` con un producto oculto. Cualquier colección visible y en ventana se sirve, sea
+   * o no la principal: el «Ver todo» puede apuntar a una que no lo es.
+   */
+  async coleccionPorSlug(slug: string): Promise<PublicColeccion> {
+    const organizationId = this.organizationId;
+    const fila = await this.prisma.storeCollection.findFirst({
+      where: { organizationId, slug, visible: true },
+      include: { items: true, exclusions: true },
+    });
+    if (!fila || !coleccionEnVentana(conVentana(fila), businessDateKey(new Date()))) {
+      throw new NotFoundException('Colección no encontrada');
+    }
+    return this.armarColeccion(organizationId, fila, await this.catalogoDeColecciones(organizationId));
+  }
+
+  /** Las colecciones que tienen página hoy (visibles y en ventana), para que la tienda arme
+   *  una por una en el build con UNA sola petición. */
+  async colecciones(): Promise<{ colecciones: PublicColeccion[] }> {
+    const organizationId = this.organizationId;
+    const filas = await this.prisma.storeCollection.findMany({
+      where: { organizationId, visible: true },
+      orderBy: [{ createdAt: 'asc' }],
+      include: { items: true, exclusions: true },
+    });
+    const hoy = businessDateKey(new Date());
+    const vigentes = filas.filter((f) => coleccionEnVentana(conVentana(f), hoy));
+    if (vigentes.length === 0) return { colecciones: [] };
+    const catalogo = await this.catalogoDeColecciones(organizationId);
+    return { colecciones: await Promise.all(vigentes.map((f) => this.armarColeccion(organizationId, f, catalogo))) };
+  }
+
+  /** Lo que `resolverColeccion` necesita: el catálogo VISIBLE (en el orden de la tienda) y
+   *  las categorías planas con su madre. */
+  private async catalogoDeColecciones(organizationId: string) {
     const [categorias, productos] = await Promise.all([
       this.prisma.storeCategory.findMany({
         where: { organizationId },
         select: { id: true, slug: true, parentId: true },
       }),
-      // Solo lo VISIBLE, en el orden de la tienda: lo que `resolverColeccion` espera.
       this.prisma.storeProduct.findMany({
         where: { organizationId, visible: true },
         orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
         include: includeTarjeta(),
       }),
     ]);
-    const entran = resolverColeccion(
-      vigente.items,
-      vigente.exclusions.map((e) => e.productId),
-      productos,
-      categorias,
-    );
+    return { categorias, productos };
+  }
 
+  /** UNA sola lista blanca de la colección para la portada, la página y el listado. */
+  private async armarColeccion(
+    organizationId: string,
+    c: {
+      slug: string;
+      titulo: string;
+      subtitulo: string | null;
+      verTodoTipo: string;
+      verTodoValor: string | null;
+      items: { categoryId: string | null; productId: string | null; position: number }[];
+      exclusions: { productId: string }[];
+    },
+    catalogo: Awaited<ReturnType<StorePublicService['catalogoDeColecciones']>>,
+  ): Promise<PublicColeccion> {
+    const entran = resolverColeccion(
+      c.items,
+      c.exclusions.map((e) => e.productId),
+      catalogo.productos,
+      catalogo.categorias,
+    );
     return {
-      coleccion: {
-        titulo: vigente.titulo,
-        subtitulo: vigente.subtitulo,
-        verTodo: await this.verTodoVivo(organizationId, vigente, categorias),
-        productos: entran.map((p) => this.listCard(p)),
-      },
+      slug: c.slug,
+      titulo: c.titulo,
+      subtitulo: c.subtitulo,
+      verTodo: await this.verTodoVivo(organizationId, c, catalogo.categorias),
+      productos: entran.map((p) => this.listCard(p)),
     };
   }
 
   /** El «Ver todo» solo se publica si su destino EXISTE; si se borró u ocultó después de
    *  guardar la colección, degrada a NONE en vez de publicar un enlace muerto (la misma
-   *  regla que los banners: el admin valida solo al escribir). */
+   *  regla que los banners: el admin valida solo al escribir). Una colección destino cuenta
+   *  si tiene página: visible y dentro de su ventana, igual que `coleccionPorSlug`. */
   private async verTodoVivo(
     organizationId: string,
     c: { verTodoTipo: string; verTodoValor: string | null },
@@ -432,9 +493,11 @@ export class StorePublicService {
     if (c.verTodoTipo === 'COLECCION') {
       const destino = await this.prisma.storeCollection.findFirst({
         where: { organizationId, slug: c.verTodoValor, visible: true },
-        select: { slug: true },
+        select: { slug: true, startsAt: true, endsAt: true },
       });
-      return destino ? { tipo: 'COLECCION', valor: c.verTodoValor } : ninguno;
+      return destino && coleccionEnVentana(conVentana(destino), businessDateKey(new Date()))
+        ? { tipo: 'COLECCION', valor: c.verTodoValor }
+        : ninguno;
     }
     return ninguno;
   }
@@ -645,4 +708,11 @@ export class StorePublicService {
     if (!found) return null;
     return { label: found.label, currencyCode: found.currencyCode, rate: found.rate };
   }
+}
+
+/** Las fechas de la ventana se guardan a medianoche UTC y se leen como día de negocio
+ *  (`AAAA-MM-DD`): lo que esperan `coleccionVigente` y `coleccionEnVentana`. */
+function conVentana<T extends { startsAt?: Date | null; endsAt?: Date | null }>(f: T) {
+  const dia = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+  return { ...f, startsAt: dia(f.startsAt), endsAt: dia(f.endsAt) };
 }
